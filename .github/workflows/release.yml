@@ -38,7 +38,7 @@ jobs:
 
       - name: Install Python setuptools (macOS)
         if: matrix.platform == 'darwin'
-        run: pip3 install setuptools
+        run: pip3 install --break-system-packages setuptools
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
