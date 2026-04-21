@@ -74,5 +74,15 @@ jobs:
         with:
           files: artifacts/**/*
           generate_release_notes: true
+          body: |
+            ## macOS users
+            This app is not code-signed. macOS will show a "damaged" warning on first launch.
+
+            **To open:** Right-click (or Control-click) the app → click **Open** → click **Open** again in the dialog.
+
+            Or run this in Terminal after mounting the DMG:
+            ```
+            xattr -cr /Applications/CB8.app
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
