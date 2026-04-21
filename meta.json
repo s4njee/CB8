@@ -1,0 +1,443 @@
+{
+  "inputs": {
+    "src/main/libraryDatabase.ts": {
+      "bytes": 6033,
+      "imports": [
+        {
+          "path": "better-sqlite3",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "node:fs",
+          "kind": "import-statement",
+          "external": true
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/.pnpm/pend@1.2.0/node_modules/pend/index.js": {
+      "bytes": 1101,
+      "imports": [],
+      "format": "cjs"
+    },
+    "node_modules/.pnpm/yauzl@3.3.0/node_modules/yauzl/fd-slicer.js": {
+      "bytes": 8677,
+      "imports": [
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "util",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "stream",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "node_modules/.pnpm/pend@1.2.0/node_modules/pend/index.js",
+          "kind": "require-call",
+          "original": "pend"
+        },
+        {
+          "path": "events",
+          "kind": "require-call",
+          "external": true
+        }
+      ],
+      "format": "cjs"
+    },
+    "node_modules/.pnpm/buffer-crc32@0.2.13/node_modules/buffer-crc32/index.js": {
+      "bytes": 4517,
+      "imports": [
+        {
+          "path": "buffer",
+          "kind": "require-call",
+          "external": true
+        }
+      ],
+      "format": "cjs"
+    },
+    "node_modules/.pnpm/yauzl@3.3.0/node_modules/yauzl/index.js": {
+      "bytes": 39536,
+      "imports": [
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "zlib",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "node_modules/.pnpm/yauzl@3.3.0/node_modules/yauzl/fd-slicer.js",
+          "kind": "require-call",
+          "original": "./fd-slicer"
+        },
+        {
+          "path": "node_modules/.pnpm/buffer-crc32@0.2.13/node_modules/buffer-crc32/index.js",
+          "kind": "require-call",
+          "original": "buffer-crc32"
+        },
+        {
+          "path": "util",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "events",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "stream",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "stream",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "stream",
+          "kind": "require-call",
+          "external": true
+        }
+      ],
+      "format": "cjs"
+    },
+    "src/shared/imageFilter.ts": {
+      "bytes": 500,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/shared/naturalSort.ts": {
+      "bytes": 1711,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/shared/coverSelection.ts": {
+      "bytes": 821,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/main/imageDecoder.ts": {
+      "bytes": 4256,
+      "imports": [
+        {
+          "path": "zlib",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "@jsquash/jxl",
+          "kind": "dynamic-import",
+          "external": true
+        }
+      ],
+      "format": "esm"
+    },
+    "src/main/archiveLoader.ts": {
+      "bytes": 7437,
+      "imports": [
+        {
+          "path": "node_modules/.pnpm/yauzl@3.3.0/node_modules/yauzl/index.js",
+          "kind": "import-statement",
+          "original": "yauzl"
+        },
+        {
+          "path": "src/shared/imageFilter.ts",
+          "kind": "import-statement",
+          "original": "../shared/imageFilter"
+        },
+        {
+          "path": "src/shared/naturalSort.ts",
+          "kind": "import-statement",
+          "original": "../shared/naturalSort"
+        },
+        {
+          "path": "src/shared/coverSelection.ts",
+          "kind": "import-statement",
+          "original": "../shared/coverSelection"
+        },
+        {
+          "path": "src/main/imageDecoder.ts",
+          "kind": "import-statement",
+          "original": "./imageDecoder"
+        },
+        {
+          "path": "fs",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "node-unrar-js",
+          "kind": "import-statement",
+          "external": true
+        }
+      ],
+      "format": "esm"
+    },
+    "src/main/fileScanner.ts": {
+      "bytes": 2823,
+      "imports": [
+        {
+          "path": "node:fs/promises",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "node:path",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "./libraryDatabase",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "src/main/archiveLoader.ts",
+          "kind": "import-statement",
+          "original": "./archiveLoader"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/main/ipcHandlers.ts": {
+      "bytes": 3427,
+      "imports": [
+        {
+          "path": "electron",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "src/main/archiveLoader.ts",
+          "kind": "import-statement",
+          "original": "./archiveLoader"
+        },
+        {
+          "path": "./libraryDatabase",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "src/main/fileScanner.ts",
+          "kind": "import-statement",
+          "original": "./fileScanner"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/main/index.ts": {
+      "bytes": 1704,
+      "imports": [
+        {
+          "path": "electron",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "node:path",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "src/main/libraryDatabase.ts",
+          "kind": "import-statement",
+          "original": "./libraryDatabase"
+        },
+        {
+          "path": "src/main/ipcHandlers.ts",
+          "kind": "import-statement",
+          "original": "./ipcHandlers"
+        },
+        {
+          "path": "electron-squirrel-startup",
+          "kind": "require-call",
+          "external": true
+        }
+      ],
+      "format": "esm"
+    }
+  },
+  "outputs": {
+    "../../../../tmp/test.js": {
+      "imports": [
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "util",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "stream",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "events",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "buffer",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "zlib",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "util",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "events",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "stream",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "stream",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "stream",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "electron",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "node:path",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "better-sqlite3",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "node:fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "electron",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "zlib",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "@jsquash/jxl",
+          "kind": "dynamic-import",
+          "external": true
+        },
+        {
+          "path": "fs",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "node-unrar-js",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "node:fs/promises",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "node:path",
+          "kind": "require-call",
+          "external": true
+        },
+        {
+          "path": "electron-squirrel-startup",
+          "kind": "require-call",
+          "external": true
+        }
+      ],
+      "exports": [],
+      "entryPoint": "src/main/index.ts",
+      "inputs": {
+        "node_modules/.pnpm/pend@1.2.0/node_modules/pend/index.js": {
+          "bytesInOutput": 1414
+        },
+        "node_modules/.pnpm/yauzl@3.3.0/node_modules/yauzl/fd-slicer.js": {
+          "bytesInOutput": 9193
+        },
+        "node_modules/.pnpm/buffer-crc32@0.2.13/node_modules/buffer-crc32/index.js": {
+          "bytesInOutput": 6164
+        },
+        "node_modules/.pnpm/yauzl@3.3.0/node_modules/yauzl/index.js": {
+          "bytesInOutput": 33724
+        },
+        "src/main/index.ts": {
+          "bytesInOutput": 1670
+        },
+        "src/main/libraryDatabase.ts": {
+          "bytesInOutput": 5541
+        },
+        "src/main/ipcHandlers.ts": {
+          "bytesInOutput": 3143
+        },
+        "src/main/archiveLoader.ts": {
+          "bytesInOutput": 5140
+        },
+        "src/shared/imageFilter.ts": {
+          "bytesInOutput": 268
+        },
+        "src/shared/naturalSort.ts": {
+          "bytesInOutput": 737
+        },
+        "src/shared/coverSelection.ts": {
+          "bytesInOutput": 297
+        },
+        "src/main/imageDecoder.ts": {
+          "bytesInOutput": 2450
+        },
+        "src/main/fileScanner.ts": {
+          "bytesInOutput": 2110
+        }
+      },
+      "bytes": 73796
+    }
+  }
+}

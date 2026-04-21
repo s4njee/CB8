@@ -1,0 +1,57 @@
+/**
+ * Shared type definitions for the CB8 application.
+ * Used by both main and renderer processes.
+ */
+
+export interface ArchiveEntry {
+  filename: string;
+  index: number;
+}
+
+export interface ArchiveHandle {
+  filePath: string;
+  format: 'cbz' | 'cbr';
+  entries: ArchiveEntry[];
+  pageCount: number;
+}
+
+export interface ComicRecord {
+  id: number;
+  filePath: string;
+  title: string;
+  pageCount: number;
+  fileSize: number;
+  coverThumbnail: Buffer | null;
+  dateAdded: string;
+  tags: string[];
+  lastPage: number | null;
+  lastRead: string | null;
+}
+
+export interface QueryOptions {
+  search?: string;
+  tag?: string;
+  sortBy?: 'title' | 'dateAdded' | 'fileSize' | 'pageCount';
+  sortOrder?: 'asc' | 'desc';
+  offset?: number;
+  limit?: number;
+  excludeFoldered?: boolean;
+}
+
+export interface QueryResult {
+  records: ComicRecord[];
+  totalCount: number;
+}
+
+export interface ScanProgress {
+  discovered: number;
+  processed: number;
+  currentFile: string;
+}
+
+export interface NavigationState {
+  currentPage: number;
+  totalPages: number;
+  isFullscreen: boolean;
+  archiveFilename: string | null;
+}
