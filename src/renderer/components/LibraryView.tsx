@@ -1,6 +1,6 @@
 import React, { memo, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { isComicArchive } from '../../shared/dropValidator';
+import { isComicArchive, isSupportedFile } from '../../shared/dropValidator';
 import type { QueryOptions } from '../../shared/types';
 import { ContinueReadingShelf } from './ContinueReadingShelf';
 import {
@@ -24,6 +24,7 @@ import {
   removeComicsFromLibrary,
   removeComicsFromFolder,
   scanDirectory,
+  scanBooksDirectory,
 } from '../ipcClient';
 import type { LibrarySummary } from '../../shared/ipcTypes';
 
@@ -61,6 +62,7 @@ interface FolderContextMenu {
 
 interface Props {
   activeLibraryId: number | null;
+  activeView: 'comics' | 'books';
   onOpenComic: (filePath: string, resumePage?: number) => void;
   onComicsChanged: () => void;
   selectedIds: Set<number>;
@@ -161,7 +163,7 @@ const FolderCard = memo(function FolderCard({
         <div style={{
           position: 'absolute', right: 8, bottom: 8, padding: '3px 8px', borderRadius: 999,
           backgroundColor: 'rgba(0,0,0,0.72)', color: '#fff', fontSize: 12,
-        }}>{folder.comicCount} comic{folder.comicCount !== 1 ? 's' : ''}</div>
+        }}>{folder.comicCount} item{folder.comicCount !== 1 ? 's' : ''}</div>
       </div>
       <div style={{ padding: '6px 8px', fontSize: 12, color: '#d8e3ff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {folder.name}
@@ -236,7 +238,7 @@ const ComicCard = memo(function ComicCard({
 });
 
 export const LibraryView: React.FC<Props> = ({
-  activeLibraryId, onOpenComic, onComicsChanged, selectedIds, onSelectionChange, refreshKey,
+  activeLibraryId, activeView, onOpenComic, onComicsChanged, selectedIds, onSelectionChange, refreshKey,
 }) => {
   const [comics, setComics] = useState<ComicEntry[]>([]);
   const [folders, setFolders] = useState<FolderEntry[]>([]);
@@ -267,6 +269,7 @@ export const LibraryView: React.FC<Props> = ({
   const selectedIdsRef = useRef<Set<number>>(selectedIds);
   const activeFolderRef = useRef<{ id: number; name: string } | null>(activeFolder);
   const hasMore = comics.length < totalCount;
+  const isBooks = activeView === 'books';
   const currentSearch = useRef('');
   comicsRef.current = comics;
   selectedIdsRef.current = selectedIds;
@@ -314,9 +317,10 @@ export const LibraryView: React.FC<Props> = ({
       search: trimmedSearch || undefined,
       limit: PAGE_SIZE,
       offset,
-      sortBy: 'dateAdded',
-      sortOrder: 'desc',
+      sortBy: 'title',
+      sortOrder: 'asc',
       excludeFoldered: activeFolder == null && activeLibraryId == null && !trimmedSearch,
+      mediaType: activeView === 'books' ? 'book' : 'comic',
     };
     const result = activeFolder != null
       ? await queryFolderComics(activeFolder.id, opts)
@@ -330,7 +334,7 @@ export const LibraryView: React.FC<Props> = ({
       thumbnailUrl: parseThumb(rec.coverThumbnail),
     }));
     return { entries, total: result.totalCount };
-  }, [activeFolder, activeLibraryId]);
+  }, [activeFolder, activeLibraryId, activeView]);
 
   const loadFolders = useCallback(async (search?: string) => {
     if (activeFolder || activeLibraryId != null) {
@@ -398,7 +402,7 @@ export const LibraryView: React.FC<Props> = ({
 
   useEffect(() => {
     setActiveFolder(null);
-  }, [activeLibraryId]);
+  }, [activeLibraryId, activeView]);
 
   // Trigger loadMore when virtual rows near the end become visible
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -468,7 +472,14 @@ export const LibraryView: React.FC<Props> = ({
     const dirPath = await openDirectoryDialog();
     if (!dirPath) return;
     setScanning(true); setScanProgress(null);
-    try { await scanDirectory(dirPath); await loadInitial(searchQuery); onComicsChanged(); }
+    try {
+      if (activeView === 'books') {
+        await scanBooksDirectory(dirPath);
+      } else {
+        await scanDirectory(dirPath);
+      }
+      await loadInitial(searchQuery); onComicsChanged();
+    }
     catch (err) { console.error('Scan failed:', err); }
     finally { setScanning(false); setScanProgress(null); }
   };
@@ -520,7 +531,7 @@ export const LibraryView: React.FC<Props> = ({
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation(); setDragOver(false);
     const comicPaths = Array.from(e.dataTransfer.files)
-      .filter((file) => isComicArchive(file.name))
+      .filter((file) => isSupportedFile(file.name))
       .map((file) => getPathForFile(file))
       .filter((filePath) => filePath.length > 0);
     if (!comicPaths.length) return;
@@ -603,7 +614,7 @@ export const LibraryView: React.FC<Props> = ({
     });
 
     try {
-      const [libraries, folderSummaries] = await Promise.all([getLibraries(), getFolders()]);
+      const [libraries, folderSummaries] = await Promise.all([getLibraries(activeView === 'books' ? 'book' : 'comic'), getFolders()]);
       setContextMenu((current) => {
         if (!current || current.comic.id !== comic.id) return current;
         return {
@@ -699,7 +710,7 @@ export const LibraryView: React.FC<Props> = ({
     setContextCreating(true);
     setContextCreateError(null);
     try {
-      const library = await createLibrary(name);
+      const library = await createLibrary(name, activeView === 'books' ? 'book' : 'comic');
       if (!library) {
         setContextCreateError('Library was not created.');
         setContextCreating(false);
@@ -855,7 +866,7 @@ export const LibraryView: React.FC<Props> = ({
           <span style={{ fontSize: 24, color: '#5b9aff', fontWeight: 'bold' }}>Drop CBZ/CBR files to add</span>
         </div>
       )}
-      {adding && <div style={{ padding: '4px 16px', backgroundColor: '#1e3a5f', fontSize: 12, flexShrink: 0 }}>Adding comics...</div>}
+      {adding && <div style={{ padding: '4px 16px', backgroundColor: '#1e3a5f', fontSize: 12, flexShrink: 0 }}>Adding {isBooks ? 'books' : 'comics'}...</div>}
 
       <div style={{ padding: '8px 12px', backgroundColor: '#252525', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, borderBottom: '1px solid #333' }}>
         <form onSubmit={handleSearch} style={{ display: 'flex', gap: 6, flex: 1 }}>
@@ -924,8 +935,8 @@ export const LibraryView: React.FC<Props> = ({
         onClick={() => { onSelectionChange(new Set()); lastClickedIndex.current = null; }}>
         {visibleItemCount === 0 && !scanning ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16, color: '#666' }}>
-            <p style={{ fontSize: 18 }}>{activeFolder ? 'No comics in this folder' : activeLibraryId != null ? 'No comics in this library' : 'No comics'}</p>
-            {!activeFolder && <p style={{ fontSize: 14 }}>Drag &amp; drop CBZ/CBR files here, or use "Scan Directory".</p>}
+            <p style={{ fontSize: 18 }}>{activeFolder ? `No ${isBooks ? 'books' : 'comics'} in this folder` : activeLibraryId != null ? `No ${isBooks ? 'books' : 'comics'} in this library` : isBooks ? 'No books' : 'No comics'}</p>
+            {!activeFolder && <p style={{ fontSize: 14 }}>Drag &amp; drop {isBooks ? 'PDF, EPUB, or MOBI' : 'CBZ/CBR'} files here, or use &quot;Scan Directory&quot;.</p>}
           </div>
         ) : (
           <div style={{ height: rowVirtualizer.getTotalSize(), width: '100%', position: 'relative' }}>

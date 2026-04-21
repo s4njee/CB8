@@ -97,6 +97,7 @@ interface ComicRow {
   date_added: string;
   last_page: number | null;
   last_read: string | null;
+  media_type: string;
 }
 
 interface CountRow {
@@ -115,6 +116,7 @@ interface LibraryRow {
   id: number;
   name: string;
   comic_count: number;
+  media_type: string;
 }
 
 export class LibraryDatabase {
@@ -161,6 +163,17 @@ export class LibraryDatabase {
     }
 
     this.repairExistingThumbnails(db);
+
+    // Add media_type column
+    if (!comicColumns.some((c) => c.name === 'media_type')) {
+      db.prepare("ALTER TABLE comics ADD COLUMN media_type TEXT NOT NULL DEFAULT 'comic'").run();
+    }
+
+    // Add media_type column to libraries
+    const libColumns = db.prepare('PRAGMA table_info(libraries)').all() as { name: string }[];
+    if (!libColumns.some((c) => c.name === 'media_type')) {
+      db.prepare("ALTER TABLE libraries ADD COLUMN media_type TEXT NOT NULL DEFAULT 'comic'").run();
+    }
   }
 
   private repairExistingThumbnails(db: Database.Database): void {
@@ -192,8 +205,8 @@ export class LibraryDatabase {
 
   addComic(record: Omit<ComicRecord, 'id' | 'dateAdded'>): ComicRecord {
     const stmt = this.db.prepare(
-      `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, media_type)
+       VALUES (?, ?, ?, ?, ?, ?)`
     );
     const info = stmt.run(
       record.filePath,
@@ -201,6 +214,7 @@ export class LibraryDatabase {
       record.pageCount,
       record.fileSize,
       record.coverThumbnail,
+      record.mediaType ?? 'comic',
     );
     const id = info.lastInsertRowid as number;
 
@@ -221,7 +235,7 @@ export class LibraryDatabase {
 
   getComic(id: number): ComicRecord | null {
     const row = this.db.prepare(
-      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read
+      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read, media_type
        FROM comics WHERE id = ?`
     ).get(id) as ComicRow | undefined;
     if (!row) return null;
@@ -236,6 +250,11 @@ export class LibraryDatabase {
   queryComics(options: QueryOptions = {}): QueryResult {
     const conditions: string[] = [];
     const params: SqlParam[] = [];
+
+    if (options.mediaType) {
+      conditions.push('c.media_type = ?');
+      params.push(options.mediaType);
+    }
 
     if (options.search) {
       conditions.push('(c.title LIKE ? COLLATE NOCASE OR c.file_path LIKE ? COLLATE NOCASE)');
@@ -265,7 +284,7 @@ export class LibraryDatabase {
     ).get(...params) as CountRow).cnt;
 
     const rows = this.db.prepare(
-      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read
+      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read, c.media_type
        FROM comics c ${where}
        ORDER BY ${sortCol} ${sortDir}
        LIMIT ? OFFSET ?`
@@ -327,9 +346,9 @@ export class LibraryDatabase {
 
   // --- Library (collection) operations ---
 
-  createLibrary(name: string): { id: number; name: string } {
-    const info = this.db.prepare('INSERT INTO libraries (name) VALUES (?)').run(name);
-    return { id: info.lastInsertRowid as number, name };
+  createLibrary(name: string, mediaType: 'comic' | 'book' = 'comic'): { id: number; name: string; mediaType: 'comic' | 'book' } {
+    const info = this.db.prepare('INSERT INTO libraries (name, media_type) VALUES (?, ?)').run(name, mediaType);
+    return { id: info.lastInsertRowid as number, name, mediaType };
   }
 
   renameLibrary(id: number, newName: string): void {
@@ -340,15 +359,23 @@ export class LibraryDatabase {
     this.db.prepare('DELETE FROM libraries WHERE id = ?').run(id);
   }
 
-  getAllLibraries(): { id: number; name: string; comicCount: number }[] {
+  getAllLibraries(mediaType?: 'comic' | 'book'): { id: number; name: string; comicCount: number; mediaType: 'comic' | 'book' }[] {
+    const where = mediaType ? 'WHERE l.media_type = ?' : '';
+    const params = mediaType ? [mediaType] : [];
     const rows = this.db.prepare(
-      `SELECT l.id, l.name, COUNT(lc.comic_id) as comic_count
+      `SELECT l.id, l.name, l.media_type, COUNT(lc.comic_id) as comic_count
        FROM libraries l
        LEFT JOIN library_comics lc ON l.id = lc.library_id
+       ${where}
        GROUP BY l.id
        ORDER BY l.name COLLATE NOCASE`
-    ).all() as LibraryRow[];
-    return rows.map((r) => ({ id: r.id, name: r.name, comicCount: r.comic_count }));
+    ).all(...params) as LibraryRow[];
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      comicCount: r.comic_count,
+      mediaType: (r.media_type === 'book' ? 'book' : 'comic') as 'comic' | 'book',
+    }));
   }
 
   addComicsToLibrary(libraryId: number, comicIds: number[]): void {
@@ -391,6 +418,11 @@ export class LibraryDatabase {
     const conditions: string[] = ['c.id IN (SELECT comic_id FROM library_comics WHERE library_id = ?)'];
     const params: SqlParam[] = [libraryId];
 
+    if (options.mediaType) {
+      conditions.push('c.media_type = ?');
+      params.push(options.mediaType);
+    }
+
     if (options.search) {
       conditions.push('(c.title LIKE ? COLLATE NOCASE OR c.file_path LIKE ? COLLATE NOCASE)');
       const term = `%${options.search}%`;
@@ -412,7 +444,7 @@ export class LibraryDatabase {
     ).get(...params) as CountRow).cnt;
 
     const rows = this.db.prepare(
-      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read
+      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read, c.media_type
        FROM comics c ${where}
        ORDER BY ${sortCol} ${sortDir}
        LIMIT ? OFFSET ?`
@@ -440,6 +472,7 @@ export class LibraryDatabase {
       tags: tags.map((t) => t.name),
       lastPage: row.last_page ?? null,
       lastRead: row.last_read ?? null,
+      mediaType: (row.media_type === 'book' ? 'book' : 'comic') as 'comic' | 'book',
     };
   }
 
@@ -453,7 +486,7 @@ export class LibraryDatabase {
 
   getRecentlyRead(limit: number = 10): ComicRecord[] {
     const rows = this.db.prepare(
-      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read
+      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read, media_type
        FROM comics WHERE last_read IS NOT NULL
        ORDER BY last_read DESC LIMIT ?`
     ).all(limit) as ComicRow[];
@@ -462,7 +495,7 @@ export class LibraryDatabase {
 
   getComicByPath(filePath: string): ComicRecord | null {
     const row = this.db.prepare(
-      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read
+      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read, media_type
        FROM comics WHERE file_path = ?`
     ).get(filePath) as ComicRow | undefined;
     if (!row) return null;
@@ -534,6 +567,10 @@ export class LibraryDatabase {
   getFolderComics(folderId: number, options: QueryOptions = {}): QueryResult {
     const conditions: string[] = ['c.id IN (SELECT comic_id FROM folder_comics WHERE folder_id = ?)'];
     const params: SqlParam[] = [folderId];
+    if (options.mediaType) {
+      conditions.push('c.media_type = ?');
+      params.push(options.mediaType);
+    }
     if (options.search) {
       conditions.push('(c.title LIKE ? COLLATE NOCASE OR c.file_path LIKE ? COLLATE NOCASE)');
       const term = `%${options.search}%`;
@@ -546,7 +583,7 @@ export class LibraryDatabase {
     const offset = options.offset ?? 0;
     const totalCount = (this.db.prepare(`SELECT COUNT(*) as cnt FROM comics c ${where}`).get(...params) as CountRow).cnt;
     const rows = this.db.prepare(
-      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read FROM comics c ${where} ORDER BY ${sortCol} ${sortDir} LIMIT ? OFFSET ?`
+      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read, c.media_type FROM comics c ${where} ORDER BY ${sortCol} ${sortDir} LIMIT ? OFFSET ?`
     ).all(...params, limit, offset) as ComicRow[];
     return { records: rows.map((r) => this.rowToRecord(r)), totalCount };
   }

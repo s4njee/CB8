@@ -20,6 +20,7 @@ const PREFETCH_AHEAD = 3;
 export const App: React.FC = () => {
   const [view, setView] = useState<View>('library');
   const [activeLibraryId, setActiveLibraryId] = useState<number | null>(null);
+  const [activeView, setActiveView] = useState<'comics' | 'books'>('comics');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [pageCount, setPageCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
@@ -217,6 +218,7 @@ export const App: React.FC = () => {
       <div style={{ display: view === 'library' ? 'flex' : 'none', width: '100vw', height: '100vh', overflow: 'hidden' }}>
         <LibraryView
           activeLibraryId={activeLibraryId}
+          activeView={activeView}
           onOpenComic={openArchive}
           onComicsChanged={handleLibrariesChanged}
           selectedIds={selectedIds}
@@ -226,7 +228,9 @@ export const App: React.FC = () => {
         <LibrarySidebar
           key={sidebarRefreshKey.current}
           activeLibraryId={activeLibraryId}
+          activeView={activeView}
           onSelectLibrary={setActiveLibraryId}
+          onSelectView={setActiveView}
           onLibrariesChanged={handleLibrariesChanged}
         />
       </div>

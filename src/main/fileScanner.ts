@@ -5,8 +5,15 @@ import * as ArchiveLoader from './archiveLoader';
 import { generateThumbnail } from './thumbnailGenerator';
 import type { ScanProgress } from '../shared/types';
 
+const COMIC_EXTENSIONS = new Set(['.cbz', '.cbr']);
+const BOOK_EXTENSIONS = new Set(['.pdf', '.epub', '.mobi']);
+
 export interface FileScanner {
   scan(
+    directoryPath: string,
+    onProgress: (progress: ScanProgress) => void
+  ): Promise<number>;
+  scanBooks(
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void
   ): Promise<number>;
@@ -19,55 +26,70 @@ export class FileScannerImpl implements FileScanner {
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void
   ): Promise<number> {
+    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress);
+  }
+
+  async scanBooks(
+    directoryPath: string,
+    onProgress: (progress: ScanProgress) => void
+  ): Promise<number> {
+    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress);
+  }
+
+  private async scanFiles(
+    directoryPath: string,
+    extensions: Set<string>,
+    mediaType: 'comic' | 'book',
+    onProgress: (progress: ScanProgress) => void
+  ): Promise<number> {
     const progress: ScanProgress = {
       discovered: 0,
       processed: 0,
       currentFile: '',
     };
 
-    let newComicsCount = 0;
+    let newCount = 0;
     const filesToProcess: string[] = [];
 
-    // Step 1: Discover all CBZ/CBR files recursively
-    await this.discoverFiles(directoryPath, filesToProcess);
+    await this.discoverFiles(directoryPath, filesToProcess, extensions);
     progress.discovered = filesToProcess.length;
     onProgress({ ...progress });
 
-    // Step 2: Process each file
     for (const filePath of filesToProcess) {
       progress.currentFile = filePath;
       onProgress({ ...progress });
 
       try {
         if (!this.db.comicExistsByPath(filePath)) {
-          await this.processFile(filePath);
-          newComicsCount++;
+          if (mediaType === 'comic') {
+            await this.processComicFile(filePath);
+          } else {
+            await this.processBookFile(filePath);
+          }
+          newCount++;
         }
       } catch (err) {
-        console.error(`Failed to process comic at ${filePath}:`, err);
-        // Continue scanning even if one file fails
+        console.error(`Failed to process ${mediaType} at ${filePath}:`, err);
       }
 
       progress.processed++;
       onProgress({ ...progress });
-
-      // Yield control to the event loop periodically
       await new Promise((resolve) => setImmediate(resolve));
     }
 
-    return newComicsCount;
+    return newCount;
   }
 
-  private async discoverFiles(dirPath: string, files: string[]): Promise<void> {
+  private async discoverFiles(dirPath: string, files: string[], extensions: Set<string>): Promise<void> {
     try {
       const dir = await fs.opendir(dirPath);
       for await (const entry of dir) {
         const fullPath = path.join(dirPath, entry.name);
         if (entry.isDirectory()) {
-          await this.discoverFiles(fullPath, files);
+          await this.discoverFiles(fullPath, files, extensions);
         } else if (entry.isFile()) {
           const ext = path.extname(entry.name).toLowerCase();
-          if (ext === '.cbz' || ext === '.cbr') {
+          if (extensions.has(ext)) {
             files.push(fullPath);
           }
         }
@@ -77,7 +99,7 @@ export class FileScannerImpl implements FileScanner {
     }
   }
 
-  private async processFile(filePath: string): Promise<void> {
+  private async processComicFile(filePath: string): Promise<void> {
     const stats = await fs.stat(filePath);
     const handle = await ArchiveLoader.open(filePath);
     try {
@@ -97,9 +119,29 @@ export class FileScannerImpl implements FileScanner {
         fileSize: stats.size,
         coverThumbnail,
         tags: [],
+        mediaType: 'comic',
+        lastPage: null,
+        lastRead: null,
       });
     } finally {
       await ArchiveLoader.close(handle);
     }
+  }
+
+  private async processBookFile(filePath: string): Promise<void> {
+    const stats = await fs.stat(filePath);
+    const title = path.basename(filePath, path.extname(filePath));
+
+    this.db.addComic({
+      filePath,
+      title,
+      pageCount: 0,
+      fileSize: stats.size,
+      coverThumbnail: null,
+      tags: [],
+      mediaType: 'book',
+      lastPage: null,
+      lastRead: null,
+    });
   }
 }

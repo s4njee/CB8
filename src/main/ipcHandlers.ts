@@ -84,35 +84,50 @@ export function registerIpcHandlers(db: LibraryDatabase | null): void {
     });
   });
 
+  ipcMain.handle('library:scan-books', async (e, directoryPath: string) => {
+    if (!scanner) return 0;
+    const win = BrowserWindow.fromWebContents(e.sender);
+    return scanner.scanBooks(directoryPath, (progress) => {
+      win?.webContents.send('library:scan-progress', progress);
+    });
+  });
+
   ipcMain.handle('library:add-files', async (_e, filePaths: string[]) => {
     if (!db) return { added: 0, errors: [] };
     let added = 0;
     const errors: string[] = [];
+    const bookExts = new Set(['.pdf', '.epub', '.mobi']);
     for (const filePath of filePaths) {
       try {
         if (db.comicExistsByPath(filePath)) continue;
+        const ext = path.extname(filePath).toLowerCase();
         const stats = fs.statSync(filePath);
-        const handle = await ArchiveLoader.open(filePath);
-        try {
-          let coverImage: Buffer | null = null;
-          try {
-            coverImage = await ArchiveLoader.getCoverImage(handle);
-          } catch (err) {
-            console.warn(`Failed to extract cover from ${filePath}; using placeholder thumbnail.`, err);
-          }
-          const coverThumbnail = generateThumbnail(coverImage);
-          const title = path.basename(filePath, path.extname(filePath));
+        const title = path.basename(filePath, ext);
+
+        if (bookExts.has(ext)) {
           db.addComic({
-            filePath,
-            title,
-            pageCount: handle.pageCount,
-            fileSize: stats.size,
-            coverThumbnail,
-            tags: [],
+            filePath, title, pageCount: 0, fileSize: stats.size,
+            coverThumbnail: null, tags: [], mediaType: 'book', lastPage: null, lastRead: null,
           });
           added++;
-        } finally {
-          await ArchiveLoader.close(handle);
+        } else {
+          const handle = await ArchiveLoader.open(filePath);
+          try {
+            let coverImage: Buffer | null = null;
+            try {
+              coverImage = await ArchiveLoader.getCoverImage(handle);
+            } catch (err) {
+              console.warn(`Failed to extract cover from ${filePath}; using placeholder thumbnail.`, err);
+            }
+            const coverThumbnail = generateThumbnail(coverImage);
+            db.addComic({
+              filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
+              coverThumbnail, tags: [], mediaType: 'comic', lastPage: null, lastRead: null,
+            });
+            added++;
+          } finally {
+            await ArchiveLoader.close(handle);
+          }
         }
       } catch (err) {
         errors.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
@@ -160,12 +175,12 @@ export function registerIpcHandlers(db: LibraryDatabase | null): void {
 
   // --- Library collection channels ---
 
-  ipcMain.handle('libraries:list', () => {
-    return db?.getAllLibraries() ?? [];
+  ipcMain.handle('libraries:list', (_e, mediaType?: 'comic' | 'book') => {
+    return db?.getAllLibraries(mediaType) ?? [];
   });
 
-  ipcMain.handle('libraries:create', (_e, name: string) => {
-    return db?.createLibrary(name) ?? null;
+  ipcMain.handle('libraries:create', (_e, name: string, mediaType?: 'comic' | 'book') => {
+    return db?.createLibrary(name, mediaType ?? 'comic') ?? null;
   });
 
   ipcMain.handle('libraries:rename', (_e, id: number, newName: string) => {

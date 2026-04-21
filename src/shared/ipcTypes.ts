@@ -4,6 +4,7 @@ export interface LibrarySummary {
   id: number;
   name: string;
   comicCount: number;
+  mediaType: 'comic' | 'book';
 }
 
 export type ArchiveOpenResponse =
@@ -34,6 +35,7 @@ export interface IpcInvokeMap {
   'dialog:open-directory': { args: []; result: string | null };
   'library:query': { args: [options: QueryOptions]; result: QueryResult };
   'library:scan': { args: [directoryPath: string]; result: number };
+  'library:scan-books': { args: [directoryPath: string]; result: number };
   'library:add-files': { args: [filePaths: string[]]; result: AddFilesResponse };
   'library:add-tag': { args: [comicId: number, tag: string]; result: void };
   'library:remove-tag': { args: [comicId: number, tag: string]; result: void };
@@ -44,8 +46,8 @@ export interface IpcInvokeMap {
   'library:delete-tag': { args: [tag: string]; result: void };
   'library:add-tag-bulk': { args: [comicIds: number[], tag: string]; result: void };
   'library:remove-tag-bulk': { args: [comicIds: number[], tag: string]; result: void };
-  'libraries:list': { args: []; result: LibrarySummary[] };
-  'libraries:create': { args: [name: string]; result: { id: number; name: string } | null };
+  'libraries:list': { args: [mediaType?: 'comic' | 'book']; result: LibrarySummary[] };
+  'libraries:create': { args: [name: string, mediaType?: 'comic' | 'book']; result: { id: number; name: string; mediaType: 'comic' | 'book' } | null };
   'libraries:rename': { args: [id: number, newName: string]; result: void };
   'libraries:delete': { args: [id: number]; result: void };
   'libraries:add-comics': { args: [libraryId: number, comicIds: number[]]; result: void };
@@ -62,6 +64,7 @@ export interface IpcInvokeMap {
   'reading:update-progress': { args: [comicId: number, pageIndex: number]; result: void };
   'reading:recently-read': { args: [limit?: number]; result: import('./types').ComicRecord[] };
   'reading:get-comic-by-path': { args: [filePath: string]; result: import('./types').ComicRecord | null };
+  'shell:open-path': { args: [filePath: string]; result: string };
   'window:toggle-fullscreen': { args: []; result: void };
   'window:exit-fullscreen': { args: []; result: void };
 }
@@ -86,6 +89,7 @@ export const IPC_INVOKE_CHANNELS = [
   'dialog:open-directory',
   'library:query',
   'library:scan',
+  'library:scan-books',
   'library:add-files',
   'library:add-tag',
   'library:remove-tag',
@@ -114,6 +118,7 @@ export const IPC_INVOKE_CHANNELS = [
   'reading:update-progress',
   'reading:recently-read',
   'reading:get-comic-by-path',
+  'shell:open-path',
   'window:toggle-fullscreen',
   'window:exit-fullscreen',
 ] as const satisfies readonly IpcInvokeChannel[];

@@ -43,6 +43,10 @@ export async function scanDirectory(directoryPath: string): Promise<number> {
   return api.invoke('library:scan', directoryPath);
 }
 
+export async function scanBooksDirectory(directoryPath: string): Promise<number> {
+  return api.invoke('library:scan-books', directoryPath);
+}
+
 export function onScanProgress(callback: (progress: ScanProgress) => void): () => void {
   return api.on('library:scan-progress', callback);
 }
@@ -79,12 +83,12 @@ export function getPathForFile(file: File): string {
   return api.getPathForFile(file);
 }
 
-export async function getLibraries(): Promise<LibrarySummary[]> {
-  return api.invoke('libraries:list');
+export async function getLibraries(mediaType?: 'comic' | 'book'): Promise<LibrarySummary[]> {
+  return api.invoke('libraries:list', mediaType);
 }
 
-export async function createLibrary(name: string): Promise<{ id: number; name: string } | null> {
-  return api.invoke('libraries:create', name);
+export async function createLibrary(name: string, mediaType?: 'comic' | 'book'): Promise<{ id: number; name: string; mediaType: 'comic' | 'book' } | null> {
+  return api.invoke('libraries:create', name, mediaType);
 }
 
 export async function renameLibrary(id: number, newName: string): Promise<void> {
