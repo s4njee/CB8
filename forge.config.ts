@@ -13,7 +13,7 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({ authors: 's4njee' }),
     new MakerZIP({}, ['darwin', 'linux']),
     new MakerDeb({}),
     new MakerRpm({}),
