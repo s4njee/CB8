@@ -9,6 +9,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: 'book',
+    executableName: 'cb8',
   },
   rebuildConfig: {},
   makers: [
