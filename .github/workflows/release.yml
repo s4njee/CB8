@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -21,6 +22,7 @@ jobs:
             platform: win32
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +36,10 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      - name: Install Python setuptools (macOS)
+        if: matrix.platform == 'darwin'
+        run: pip3 install setuptools
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -41,6 +47,7 @@ jobs:
         run: pnpm run make
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
