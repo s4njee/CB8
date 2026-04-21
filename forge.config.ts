@@ -7,6 +7,7 @@ import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import path from 'node:path';
 import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 
 /** Modules that Vite externalises and the packaged app must ship. */
 const nativeExternals = [
@@ -44,6 +45,18 @@ const config: ForgeConfig = {
   hooks: {
     packageAfterCopy: async (_config, appDir) => {
       copyModules(appDir);
+    },
+    postPackage: async (_config, result) => {
+      if (process.platform !== 'darwin') return;
+      for (const outputPath of result.outputPaths) {
+        const appPath = path.join(outputPath, 'CB8.app');
+        if (fs.existsSync(appPath)) {
+          console.log(`Ad-hoc signing ${appPath}`);
+          execSync(`codesign --force --deep --sign - "${appPath}"`, {
+            stdio: 'inherit',
+          });
+        }
+      }
     },
   },
   rebuildConfig: {},
