@@ -5,6 +5,7 @@
   "description": "CB8 desktop comic book reader built with Electron, TypeScript, and React",
   "main": ".vite/build/index.js",
   "scripts": {
+    "prestart": "node scripts/brand-dev-electron.mjs",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",

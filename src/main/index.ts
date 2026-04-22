@@ -14,7 +14,13 @@ try {
 
 let db: LibraryDatabase | null = null;
 
+app.setName('CB8');
+
 const createWindow = (): void => {
+  if (process.platform === 'darwin') {
+    app.dock?.setIcon(path.join(__dirname, '../../book.png'));
+  }
+
   // Initialize database inside ready handler
   try {
     const userDataPath = app.getPath('userData');
