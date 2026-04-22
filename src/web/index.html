@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="description" content="CB8 — browse and read your comic and ebook library from any device on your local network." />
+  <title>CB8</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <nav id="navbar">
+      <a href="#/" class="nav-brand" id="nav-brand">CB8</a>
+      <div class="nav-search-wrap">
+        <input
+          id="search-input"
+          type="search"
+          placeholder="Search…"
+          autocomplete="off"
+          aria-label="Search library"
+        />
+      </div>
+      <div class="nav-actions">
+        <select id="sort-select" aria-label="Sort by">
+          <option value="title">Title</option>
+          <option value="dateAdded">Date added</option>
+          <option value="fileSize">File size</option>
+          <option value="pageCount">Pages</option>
+        </select>
+        <div class="media-toggle" role="group" aria-label="Media type">
+          <button class="media-btn active" data-type="" id="btn-all">All</button>
+          <button class="media-btn" data-type="comic" id="btn-comics">Comics</button>
+          <button class="media-btn" data-type="book" id="btn-books">Books</button>
+        </div>
+      </div>
+    </nav>
+
+    <div id="layout">
+      <aside id="sidebar">
+        <section class="sidebar-section">
+          <h2 class="sidebar-heading">Library</h2>
+          <ul class="sidebar-list" id="sidebar-all">
+            <li><a href="#/" class="sidebar-link active" id="link-all">All</a></li>
+            <li><a href="#/recent" class="sidebar-link" id="link-recent">Recently Read</a></li>
+          </ul>
+        </section>
+        <section class="sidebar-section" id="section-libraries">
+          <h2 class="sidebar-heading">Collections</h2>
+          <ul class="sidebar-list" id="library-list"></ul>
+        </section>
+        <section class="sidebar-section" id="section-folders">
+          <h2 class="sidebar-heading">Folders</h2>
+          <ul class="sidebar-list" id="folder-list"></ul>
+        </section>
+        <section class="sidebar-section" id="section-tags">
+          <h2 class="sidebar-heading">Tags</h2>
+          <ul class="sidebar-list tag-list" id="tag-list"></ul>
+        </section>
+      </aside>
+
+      <main id="main-content" role="main" aria-live="polite">
+        <div id="view-container"></div>
+      </main>
+    </div>
+
+    <!-- Reader overlay (hidden by default) -->
+    <div id="reader-overlay" class="reader-overlay hidden" role="dialog" aria-modal="true" aria-label="Reader">
+      <div id="reader-content"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

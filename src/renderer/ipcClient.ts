@@ -180,3 +180,24 @@ export async function getComicByPath(filePath: string): Promise<ComicRecord | nu
 export async function updateReadingLocation(comicId: number, location: string): Promise<void> {
   await api.invoke('reading:update-location', comicId, location);
 }
+
+// --- Web server settings ---
+
+export interface WebServerSettings {
+  enabled: boolean;
+  port: number;
+  url: string | null;
+  lanUrl: string | null;
+}
+
+export async function getWebServerSettings(): Promise<WebServerSettings> {
+  return api.invoke('webserver:get-settings');
+}
+
+export async function setWebServerSettings(enabled: boolean, port: number): Promise<WebServerSettings> {
+  return api.invoke('webserver:set-settings', enabled, port);
+}
+
+export function onOpenSettings(callback: () => void): () => void {
+  return api.on('open-settings', callback);
+}

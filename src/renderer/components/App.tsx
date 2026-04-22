@@ -6,6 +6,7 @@ import {
   archivePage,
   getComicByPath,
   onFileOpened,
+  onOpenSettings,
   toggleFullscreen,
   updateReadingProgress,
 } from '../ipcClient';
@@ -13,6 +14,7 @@ import { EpubReaderView } from './EpubReaderView';
 import { PdfReaderView } from './PdfReaderView';
 import { LibraryView } from './LibraryView';
 import { LibrarySidebar } from './LibrarySidebar';
+import { SettingsDialog } from './SettingsDialog';
 
 type View = 'library' | 'reader' | 'epub-reader' | 'pdf-reader';
 
@@ -43,6 +45,7 @@ export const App: React.FC = () => {
   const readerImageRef = useRef<HTMLImageElement>(null);
   const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
   const [, forceUpdate] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // LRU page cache: Map preserves insertion order, most recent at end
   const pageCache = useRef<Map<number, string>>(new Map());
@@ -218,6 +221,11 @@ export const App: React.FC = () => {
     return unsub;
   }, [openFile]);
 
+  useEffect(() => {
+    const unsub = onOpenSettings(() => setSettingsOpen(true));
+    return unsub;
+  }, []);
+
   // Global F11 fullscreen toggle (works in both views)
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
@@ -311,6 +319,8 @@ export const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>
   );
 };

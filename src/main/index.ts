@@ -1,7 +1,9 @@
-import { app, BrowserWindow, Menu, dialog } from 'electron';
+import { app, BrowserWindow, Menu, dialog, shell } from 'electron';
 import path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import { registerIpcHandlers } from './ipcHandlers';
+import { closeAllHandles } from './webServer';
+import type { WebServerHandle } from './webServer';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 try {
@@ -13,6 +15,12 @@ try {
 }
 
 let db: LibraryDatabase | null = null;
+
+/**
+ * Shared mutable reference so registerIpcHandlers can update the active
+ * server handle when the user enables/disables/reconfigures the web server.
+ */
+const webServerRef: { handle: WebServerHandle | null } = { handle: null };
 
 app.setName('CB8');
 
@@ -27,7 +35,7 @@ const createWindow = (): void => {
     const dbPath = path.join(userDataPath, 'library.db');
     db = new LibraryDatabase(dbPath);
     db.initialize();
-    registerIpcHandlers(db);
+    registerIpcHandlers(db, webServerRef);
   } catch (err) {
     console.error('Failed to initialize database or IPC:', err);
   }
@@ -65,6 +73,29 @@ const createWindow = (): void => {
         { role: 'quit' },
       ],
     },
+    {
+      label: 'Settings',
+      submenu: [
+        {
+          label: 'Web Server…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            mainWindow.webContents.send('open-settings');
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Open Web UI in Browser',
+          enabled: false, // updated at runtime by renderer after settings change
+          id: 'open-web-ui',
+          click: () => {
+            if (webServerRef.handle) {
+              shell.openExternal(webServerRef.handle.url);
+            }
+          },
+        },
+      ],
+    },
   ]);
   Menu.setApplicationMenu(menu);
 
@@ -84,6 +115,14 @@ app.on('ready', createWindow);
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('before-quit', async () => {
+  await closeAllHandles();
+  if (webServerRef.handle) {
+    webServerRef.handle.server.close();
+    webServerRef.handle = null;
   }
 });
 

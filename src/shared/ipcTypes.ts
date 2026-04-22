@@ -70,11 +70,14 @@ export interface IpcInvokeMap {
   'shell:open-path': { args: [filePath: string]; result: string };
   'window:toggle-fullscreen': { args: []; result: void };
   'window:exit-fullscreen': { args: []; result: void };
+  'webserver:get-settings': { args: []; result: { enabled: boolean; port: number; url: string | null; lanUrl: string | null } };
+  'webserver:set-settings': { args: [enabled: boolean, port: number]; result: { enabled: boolean; port: number; url: string | null; lanUrl: string | null } };
 }
 
 export interface IpcEventMap {
   'library:scan-progress': [progress: ScanProgress];
   'file-opened': [filePath: string];
+  'open-settings': [];
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap;
@@ -127,9 +130,12 @@ export const IPC_INVOKE_CHANNELS = [
   'shell:open-path',
   'window:toggle-fullscreen',
   'window:exit-fullscreen',
+  'webserver:get-settings',
+  'webserver:set-settings',
 ] as const satisfies readonly IpcInvokeChannel[];
 
 export const IPC_EVENT_CHANNELS = [
   'library:scan-progress',
   'file-opened',
+  'open-settings',
 ] as const satisfies readonly IpcEventChannel[];

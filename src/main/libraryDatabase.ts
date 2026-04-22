@@ -208,6 +208,16 @@ export class LibraryDatabase {
     // Schema already created in constructor; this is a no-op hook for callers.
   }
 
+  getAppMeta(key: string): string | null {
+    const row = this.db.prepare('SELECT value FROM app_meta WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  setAppMeta(key: string, value: string): void {
+    this.db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(key, value);
+  }
+
+
   addComic(record: Omit<ComicRecord, 'id' | 'dateAdded'>): ComicRecord {
     const stmt = this.db.prepare(
       `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, last_page, last_location, last_read, media_type)
