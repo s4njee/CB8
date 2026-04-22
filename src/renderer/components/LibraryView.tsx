@@ -11,6 +11,7 @@ import {
   createLibrary,
   createFolder,
   deleteFolder,
+  getComicByPath,
   getPathForFile,
   getFolders,
   getLibraries,
@@ -559,6 +560,17 @@ export const LibraryView: React.FC<Props> = ({
     setAdding(true);
     try {
       const result = await addComicFiles(comicPaths);
+      if (activeLibraryId != null) {
+        const records = await Promise.all(comicPaths.map((filePath) => getComicByPath(filePath)));
+        const matchingIds = records.flatMap((record) => {
+          if (!record) return [];
+          const expectedMediaType = activeView === 'books' ? 'book' : 'comic';
+          return record.mediaType === expectedMediaType ? [record.id] : [];
+        });
+        if (matchingIds.length > 0) {
+          await addComicsToLibrary(activeLibraryId, Array.from(new Set(matchingIds)));
+        }
+      }
       await loadInitial(searchQuery);
       if (result?.added > 0) onComicsChanged();
       if (result?.errors.length) console.error('Failed to add some comics:', result.errors);

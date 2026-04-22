@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { app, ipcMain, dialog, BrowserWindow } from 'electron';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
@@ -35,6 +35,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 export function registerIpcHandlers(
   db: LibraryDatabase | null,
   webServerRef?: { handle: WebServerHandle | null },
+  onRecentFilesChanged?: (filePath?: string) => void,
 ): void {
   const scanner = db ? new FileScannerImpl(db) : null;
 
@@ -278,10 +279,20 @@ export function registerIpcHandlers(
 
   ipcMain.handle('reading:update-progress', (_e, comicId: number, pageIndex: number) => {
     db?.updateReadingProgress(comicId, pageIndex);
+    const record = db?.getComic(comicId);
+    if (record) {
+      app.addRecentDocument(record.filePath);
+      onRecentFilesChanged?.(record.filePath);
+    }
   });
 
   ipcMain.handle('reading:update-location', (_e, comicId: number, location: string) => {
     db?.updateReadingLocation(comicId, location);
+    const record = db?.getComic(comicId);
+    if (record) {
+      app.addRecentDocument(record.filePath);
+      onRecentFilesChanged?.(record.filePath);
+    }
   });
 
   ipcMain.handle('reading:recently-read', (_e, limit?: number, mediaType?: 'comic' | 'book') => {

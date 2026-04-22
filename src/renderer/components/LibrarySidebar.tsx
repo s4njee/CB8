@@ -1,12 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
+  addComicFiles,
   addComicsToLibrary,
   addFoldersToLibrary,
   createLibrary,
   deleteLibrary,
+  getComicByPath,
+  getPathForFile,
   getLibraries,
   renameLibrary,
 } from '../ipcClient';
+import { isSupportedFile } from '../../shared/dropValidator';
 import type { LibrarySummary } from '../../shared/ipcTypes';
 
 type LibraryItem = LibrarySummary;
@@ -152,9 +156,13 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
   };
 
   const handleLibDragOver = (e: React.DragEvent, libId: number) => {
-    if (e.dataTransfer.types.includes('application/comic-ids') || e.dataTransfer.types.includes('application/folder-ids')) {
+    if (
+      e.dataTransfer.types.includes('application/comic-ids') ||
+      e.dataTransfer.types.includes('application/folder-ids') ||
+      e.dataTransfer.types.includes('Files')
+    ) {
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'link';
+      e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'link';
       setDropTargetId(libId);
     }
   };
@@ -167,13 +175,40 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
       const folderData = e.dataTransfer.getData('application/folder-ids');
       const comicIds = comicData ? JSON.parse(comicData) as number[] : [];
       const folderIds = folderData ? JSON.parse(folderData) as number[] : [];
-      if (comicIds.length > 0) await addComicsToLibrary(libId, comicIds);
+      const droppedFileIds = await addDroppedFilesToLibrary(e, libId);
+      const idsToAdd = Array.from(new Set([...comicIds, ...droppedFileIds]));
+      if (idsToAdd.length > 0) await addComicsToLibrary(libId, idsToAdd);
       if (folderIds.length > 0) await addFoldersToLibrary(libId, folderIds);
-      if (comicIds.length > 0 || folderIds.length > 0) {
+      if (idsToAdd.length > 0 || folderIds.length > 0) {
         await loadLibraries();
         onLibrariesChanged();
       }
     } catch { /* ignore */ }
+  };
+
+  const addDroppedFilesToLibrary = async (e: React.DragEvent, libId: number): Promise<number[]> => {
+    if (!e.dataTransfer.types.includes('Files')) return [];
+
+    const filePaths = Array.from(e.dataTransfer.files)
+      .filter((file) => isSupportedFile(file.name))
+      .filter((file) => isFileCompatibleWithLibrary(file.name, libId))
+      .map((file) => getPathForFile(file))
+      .filter((filePath) => filePath.length > 0);
+
+    if (filePaths.length === 0) return [];
+
+    const result = await addComicFiles(filePaths);
+    if (result?.errors.length) console.error('Failed to add some dropped files:', result.errors);
+
+    const records = await Promise.all(filePaths.map((filePath) => getComicByPath(filePath)));
+    return records.flatMap((record) => record ? [record.id] : []);
+  };
+
+  const isFileCompatibleWithLibrary = (filename: string, libId: number): boolean => {
+    const ext = filename.split('.').pop()?.toLowerCase();
+    const isBook = ext === 'pdf' || ext === 'epub' || ext === 'mobi';
+    const libraries = isBook ? bookLibraries : comicLibraries;
+    return libraries.some((lib) => lib.id === libId);
   };
 
   const selectLibrary = (lib: LibraryItem) => {

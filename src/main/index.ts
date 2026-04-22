@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog, shell, type MenuItemConstructorOptions } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import { registerIpcHandlers } from './ipcHandlers';
@@ -15,6 +16,9 @@ try {
 }
 
 let db: LibraryDatabase | null = null;
+let mainWindow: BrowserWindow | null = null;
+const pendingOpenFiles: string[] = [];
+const RECENT_FILE_LIMIT = 12;
 
 /**
  * Shared mutable reference so registerIpcHandlers can update the active
@@ -24,35 +28,45 @@ const webServerRef: { handle: WebServerHandle | null } = { handle: null };
 
 app.setName('CB8');
 
-const createWindow = (): void => {
-  if (process.platform === 'darwin') {
-    app.dock?.setIcon(path.join(__dirname, '../../book.png'));
+function openFileInWindow(filePath: string): void {
+  if (typeof app.addRecentDocument === 'function') {
+    app.addRecentDocument(filePath);
   }
 
-  // Initialize database inside ready handler
-  try {
-    const userDataPath = app.getPath('userData');
-    const dbPath = path.join(userDataPath, 'library.db');
-    db = new LibraryDatabase(dbPath);
-    db.initialize();
-    registerIpcHandlers(db, webServerRef);
-  } catch (err) {
-    console.error('Failed to initialize database or IPC:', err);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('file-opened', filePath);
+    return;
   }
 
-  const mainWindow = new BrowserWindow({
-    width: 1024,
-    height: 768,
-    title: 'CB8',
-    icon: path.join(__dirname, '../../book.png'),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
+  pendingOpenFiles.push(filePath);
+}
 
-  const menu = Menu.buildFromTemplate([
+function refreshRecentMenu(filePath?: string): void {
+  if (filePath && typeof app.addRecentDocument === 'function') {
+    app.addRecentDocument(filePath);
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    Menu.setApplicationMenu(buildApplicationMenu(mainWindow));
+  }
+}
+
+function buildRecentMenuItems(): MenuItemConstructorOptions[] {
+  const recentRecords = db?.getRecentlyRead(RECENT_FILE_LIMIT) ?? [];
+  const existingRecords = recentRecords.filter((record) => fs.existsSync(record.filePath));
+
+  if (existingRecords.length === 0) {
+    return [{ label: 'No Recent Files', enabled: false }];
+  }
+
+  return existingRecords.map((record) => ({
+    label: record.title || path.basename(record.filePath),
+    sublabel: record.filePath,
+    click: () => openFileInWindow(record.filePath),
+  }));
+}
+
+function buildApplicationMenu(win: BrowserWindow): Menu {
+  return Menu.buildFromTemplate([
     {
       label: 'File',
       submenu: [
@@ -60,14 +74,18 @@ const createWindow = (): void => {
           label: 'Open',
           accelerator: 'CmdOrCtrl+O',
           click: async () => {
-            const result = await dialog.showOpenDialog(mainWindow, {
+            const result = await dialog.showOpenDialog(win, {
               filters: [{ name: 'Supported Books and Comics', extensions: ['cbz', 'cbr', 'epub', 'pdf', 'mobi'] }],
               properties: ['openFile'],
             });
             if (!result.canceled && result.filePaths.length > 0) {
-              mainWindow.webContents.send('file-opened', result.filePaths[0]);
+              openFileInWindow(result.filePaths[0]);
             }
           },
+        },
+        {
+          label: 'Open Recent',
+          submenu: buildRecentMenuItems(),
         },
         { type: 'separator' },
         { role: 'quit' },
@@ -80,13 +98,13 @@ const createWindow = (): void => {
           label: 'Web Server…',
           accelerator: 'CmdOrCtrl+,',
           click: () => {
-            mainWindow.webContents.send('open-settings');
+            win.webContents.send('open-settings');
           },
         },
         { type: 'separator' },
         {
           label: 'Open Web UI in Browser',
-          enabled: false, // updated at runtime by renderer after settings change
+          enabled: false,
           id: 'open-web-ui',
           click: () => {
             if (webServerRef.handle) {
@@ -97,7 +115,37 @@ const createWindow = (): void => {
       ],
     },
   ]);
-  Menu.setApplicationMenu(menu);
+}
+
+const createWindow = (): void => {
+  if (process.platform === 'darwin') {
+    app.dock?.setIcon(path.join(__dirname, '../../book.png'));
+  }
+
+  // Initialize database inside ready handler
+  try {
+    const userDataPath = app.getPath('userData');
+    const dbPath = path.join(userDataPath, 'library.db');
+    db = new LibraryDatabase(dbPath);
+    db.initialize();
+    registerIpcHandlers(db, webServerRef, refreshRecentMenu);
+  } catch (err) {
+    console.error('Failed to initialize database or IPC:', err);
+  }
+
+  mainWindow = new BrowserWindow({
+    width: 1024,
+    height: 768,
+    title: 'CB8',
+    icon: path.join(__dirname, '../../book.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  Menu.setApplicationMenu(buildApplicationMenu(mainWindow));
 
   if (typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined') {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -106,6 +154,12 @@ const createWindow = (): void => {
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
     );
   }
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    for (const filePath of pendingOpenFiles.splice(0)) {
+      openFileInWindow(filePath);
+    }
+  });
 
   // mainWindow.webContents.openDevTools();
 };
@@ -116,6 +170,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  openFileInWindow(filePath);
 });
 
 app.on('before-quit', async () => {
