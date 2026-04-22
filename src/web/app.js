@@ -13,7 +13,7 @@
 import * as api from './api.js';
 import { renderLibrary } from './views/library.js';
 import { renderReader, destroyReader } from './views/reader.js';
-import { toggleAdminPanel, refreshSession, onAdminChange, isAuthenticated } from './admin.js';
+import { toggleAdminPanel, openAddComic, refreshSession, onAdminChange, isAuthenticated } from './admin.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -406,9 +406,12 @@ function wireControls() {
 
   // Admin button
   document.getElementById('admin-button')?.addEventListener('click', toggleAdminPanel);
+  document.getElementById('admin-add-button')?.addEventListener('click', openAddComic);
   onAdminChange((authed) => {
     document.body.classList.toggle('admin-authenticated', authed);
     document.getElementById('admin-button')?.classList.toggle('active', authed);
+    const addBtn = document.getElementById('admin-add-button');
+    if (addBtn) addBtn.hidden = !authed;
   });
 
   // Re-navigate when admin mutates the library

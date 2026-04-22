@@ -7,6 +7,7 @@
   "scripts": {
     "prestart": "node scripts/brand-dev-electron.mjs",
     "start": "electron-forge start",
+    "start:headless": "electron-forge start -- --headless",
     "package": "electron-forge package",
     "make": "electron-forge make",
     "test": "vitest run",

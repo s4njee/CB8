@@ -761,6 +761,26 @@ body.reader-open #tab-panel { display: none !important; }
   transition: color var(--trans), border-color var(--trans), background var(--trans);
 }
 .admin-button:hover { color: var(--text); background: var(--surface); }
+
+.admin-add-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  margin-right: 6px;
+  transition: color var(--trans), border-color var(--trans), background var(--trans);
+}
+.admin-add-button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.admin-add-button[hidden] { display: none; }
 .admin-button.active {
   color: var(--accent);
   border-color: var(--accent);

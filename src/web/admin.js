@@ -675,6 +675,15 @@ export function toggleAdminPanel() {
   openModal(renderMenu);
 }
 
+/** Opens the upload flow directly (used by the "+" button in the nav). */
+export function openAddComic() {
+  if (state.authenticated) {
+    openModal(renderUpload);
+  } else {
+    openModal((b) => renderLogin(b, { onSuccess: () => openModal(renderUpload) }));
+  }
+}
+
 export async function bulkDeleteComics(ids) {
   if (!state.authenticated || ids.length === 0) return { removed: [], failed: [] };
   const plural = ids.length === 1 ? 'item' : 'items';
