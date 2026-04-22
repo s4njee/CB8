@@ -2,11 +2,30 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import * as ArchiveLoader from './archiveLoader';
+import { extractEpubCover } from './epubCoverExtractor';
+import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
 import { generateThumbnail } from './thumbnailGenerator';
 import type { ScanProgress } from '../shared/types';
 
 const COMIC_EXTENSIONS = new Set(['.cbz', '.cbr']);
 const BOOK_EXTENSIONS = new Set(['.pdf', '.epub', '.mobi']);
+const COVER_EXTRACTION_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
 
 export interface FileScanner {
   scan(
@@ -60,7 +79,11 @@ export class FileScannerImpl implements FileScanner {
       onProgress({ ...progress });
 
       try {
-        if (!this.db.comicExistsByPath(filePath)) {
+        if (this.db.comicExistsByPath(filePath)) {
+          if (mediaType === 'book') {
+            await this.refreshBookMetadata(filePath);
+          }
+        } else {
           if (mediaType === 'comic') {
             await this.processComicFile(filePath);
           } else {
@@ -121,6 +144,7 @@ export class FileScannerImpl implements FileScanner {
         tags: [],
         mediaType: 'comic',
         lastPage: null,
+        lastLocation: null,
         lastRead: null,
       });
     } finally {
@@ -132,16 +156,63 @@ export class FileScannerImpl implements FileScanner {
     const stats = await fs.stat(filePath);
     const title = path.basename(filePath, path.extname(filePath));
 
+    const pageCount = await this.getBookPageCount(filePath);
+
     this.db.addComic({
       filePath,
       title,
-      pageCount: 0,
+      pageCount,
       fileSize: stats.size,
       coverThumbnail: null,
       tags: [],
       mediaType: 'book',
       lastPage: null,
+      lastLocation: null,
       lastRead: null,
     });
+
+    await this.refreshBookMetadata(filePath);
+  }
+
+  private async refreshBookMetadata(filePath: string): Promise<void> {
+    const pageCount = await this.getBookPageCount(filePath);
+    if (pageCount > 0) {
+      this.db.updatePageCountByPath(filePath, pageCount);
+    }
+
+    const coverThumbnail = await this.getBookCoverThumbnail(filePath);
+    if (coverThumbnail) {
+      this.db.updateCoverThumbnailByPath(filePath, coverThumbnail);
+    }
+  }
+
+  private async getBookPageCount(filePath: string): Promise<number> {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext !== '.pdf') return 0;
+
+    try {
+      return await withTimeout(getPdfPageCount(filePath), COVER_EXTRACTION_TIMEOUT_MS);
+    } catch (err) {
+      console.warn(`Failed to read PDF page count from ${filePath}.`, err);
+      return 0;
+    }
+  }
+
+  private async getBookCoverThumbnail(filePath: string): Promise<Buffer | null> {
+    const ext = path.extname(filePath).toLowerCase();
+
+    try {
+      if (ext === '.epub') {
+        const coverImage = await withTimeout(extractEpubCover(filePath), COVER_EXTRACTION_TIMEOUT_MS);
+        return coverImage ? generateThumbnail(coverImage) : null;
+      }
+      if (ext === '.pdf') {
+        return withTimeout(renderPdfFirstPageCover(filePath), COVER_EXTRACTION_TIMEOUT_MS);
+      }
+      return null;
+    } catch (err) {
+      console.warn(`Failed to extract book cover from ${filePath}; using placeholder thumbnail.`, err);
+      return null;
+    }
   }
 }

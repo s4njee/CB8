@@ -23,6 +23,7 @@ import {
   removeComics,
   removeComicsFromLibrary,
   removeComicsFromFolder,
+  refreshBookMetadata,
   scanDirectory,
   scanBooksDirectory,
 } from '../ipcClient';
@@ -35,6 +36,7 @@ interface ComicEntry {
   fileSize: number;
   filePath: string;
   thumbnailUrl: string | null;
+  mediaType: 'comic' | 'book';
 }
 
 interface FolderEntry {
@@ -63,7 +65,7 @@ interface FolderContextMenu {
 interface Props {
   activeLibraryId: number | null;
   activeView: 'comics' | 'books';
-  onOpenComic: (filePath: string, resumePage?: number) => void;
+  onOpenFile: (filePath: string) => void;
   onComicsChanged: () => void;
   selectedIds: Set<number>;
   onSelectionChange: (ids: Set<number>) => void;
@@ -101,6 +103,22 @@ function isSerializedBuffer(data: unknown): data is { type: 'Buffer'; data: numb
     data.type === 'Buffer' &&
     Array.isArray(data.data)
   );
+}
+
+function getFileExtension(filePath: string): string {
+  const filename = filePath.split(/[\\/]/).pop() ?? filePath;
+  const dotIndex = filename.lastIndexOf('.');
+  return dotIndex >= 0 ? filename.slice(dotIndex + 1).toLowerCase() : '';
+}
+
+function formatPageDetails(comic: ComicEntry): string {
+  if (comic.pageCount > 0) {
+    return `${comic.pageCount} page${comic.pageCount === 1 ? '' : 's'}`;
+  }
+
+  const ext = getFileExtension(comic.filePath);
+  if (comic.mediaType === 'book' && ext === 'epub') return 'Reflowable EPUB';
+  return 'Unknown';
 }
 
 interface FolderCardProps {
@@ -238,7 +256,7 @@ const ComicCard = memo(function ComicCard({
 });
 
 export const LibraryView: React.FC<Props> = ({
-  activeLibraryId, activeView, onOpenComic, onComicsChanged, selectedIds, onSelectionChange, refreshKey,
+  activeLibraryId, activeView, onOpenFile, onComicsChanged, selectedIds, onSelectionChange, refreshKey,
 }) => {
   const [comics, setComics] = useState<ComicEntry[]>([]);
   const [folders, setFolders] = useState<FolderEntry[]>([]);
@@ -258,6 +276,8 @@ export const LibraryView: React.FC<Props> = ({
   const [contextCreateName, setContextCreateName] = useState('');
   const [contextCreateError, setContextCreateError] = useState<string | null>(null);
   const [contextCreating, setContextCreating] = useState(false);
+  const [detailsComic, setDetailsComic] = useState<ComicEntry | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState(false);
   const [folderRenameName, setFolderRenameName] = useState('');
   const [folderRenameError, setFolderRenameError] = useState<string | null>(null);
@@ -332,6 +352,7 @@ export const LibraryView: React.FC<Props> = ({
       id: rec.id, title: rec.title, pageCount: rec.pageCount,
       fileSize: rec.fileSize, filePath: rec.filePath,
       thumbnailUrl: parseThumb(rec.coverThumbnail),
+      mediaType: rec.mediaType,
     }));
     return { entries, total: result.totalCount };
   }, [activeFolder, activeLibraryId, activeView]);
@@ -786,17 +807,33 @@ export const LibraryView: React.FC<Props> = ({
     onComicsChanged();
   };
 
-  const handleContextDetails = () => {
+  const handleContextDetails = async () => {
     if (!contextMenu) return;
     const { comic } = contextMenu;
-    window.alert([
-      comic.title,
-      '',
-      `Path: ${comic.filePath}`,
-      `Pages: ${comic.pageCount}`,
-      `Size: ${formatBytes(comic.fileSize)}`,
-    ].join('\n'));
     closeContextMenu();
+    setDetailsComic(comic);
+
+    const ext = getFileExtension(comic.filePath);
+    if (comic.mediaType === 'book' && ext === 'pdf' && comic.pageCount <= 0) {
+      setDetailsLoading(true);
+      try {
+        const refreshed = await refreshBookMetadata(comic.id);
+        if (refreshed) {
+          const updated = {
+            ...comic,
+            pageCount: refreshed.pageCount,
+            fileSize: refreshed.fileSize,
+            mediaType: refreshed.mediaType,
+          };
+          setDetailsComic(updated);
+          setComics((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
+        }
+      } catch (err) {
+        console.error('Failed to refresh book metadata:', err);
+      } finally {
+        setDetailsLoading(false);
+      }
+    }
   };
 
   const handleFolderDragOver = (e: React.DragEvent, folderId: number) => {
@@ -928,7 +965,7 @@ export const LibraryView: React.FC<Props> = ({
       )}
 
       {!activeFolder && activeLibraryId == null && (
-        <ContinueReadingShelf onOpenComic={onOpenComic} refreshKey={refreshKey ?? 0} />
+        <ContinueReadingShelf mediaType={isBooks ? 'book' : 'comic'} onOpenFile={onOpenFile} refreshKey={refreshKey ?? 0} />
       )}
 
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: 12 }}
@@ -983,7 +1020,7 @@ export const LibraryView: React.FC<Props> = ({
                         onDragStart={handleComicDragStart}
                         onClick={handleComicClick}
                         onContextMenu={handleComicContextMenu}
-                        onDoubleClick={onOpenComic}
+                        onDoubleClick={onOpenFile}
                         onCheckboxClick={handleCheckboxClick}
                       />
                     );
@@ -1154,9 +1191,60 @@ export const LibraryView: React.FC<Props> = ({
           )}
         </div>
       )}
+      {detailsComic && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setDetailsComic(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1100,
+            backgroundColor: 'rgba(0,0,0,0.58)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(560px, 100%)',
+              backgroundColor: '#202020',
+              color: '#e5e7eb',
+              border: '1px solid #3f3f46',
+              borderRadius: 8,
+              boxShadow: '0 18px 48px rgba(0,0,0,0.5)',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', borderBottom: '1px solid #333' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detailsComic.title}</div>
+                <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 2, textTransform: 'uppercase' }}>{getFileExtension(detailsComic.filePath) || detailsComic.mediaType}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailsComic(null)}
+                style={{ width: 28, height: 28, borderRadius: 4, border: '1px solid #444', backgroundColor: '#2a2a2a', color: '#ddd', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+                aria-label="Close details"
+              >x</button>
+            </div>
+            <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '92px minmax(0, 1fr)', gap: '10px 14px', fontSize: 13 }}>
+              <DetailLabel>Path</DetailLabel>
+              <div style={{ overflowWrap: 'anywhere', color: '#d1d5db' }}>{detailsComic.filePath}</div>
+              <DetailLabel>Pages</DetailLabel>
+              <div>{detailsLoading ? 'Reading metadata...' : formatPageDetails(detailsComic)}</div>
+              <DetailLabel>Size</DetailLabel>
+              <div>{formatBytes(detailsComic.fileSize)}</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+function DetailLabel({ children }: { children: React.ReactNode }) {
+  return <div style={{ color: '#9ca3af' }}>{children}</div>;
+}
 
 function ContextMenuGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (

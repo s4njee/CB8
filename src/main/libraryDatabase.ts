@@ -11,7 +11,11 @@ CREATE TABLE IF NOT EXISTS comics (
   page_count INTEGER NOT NULL,
   file_size INTEGER NOT NULL,
   cover_thumbnail BLOB,
-  date_added TEXT NOT NULL DEFAULT (datetime('now'))
+  date_added TEXT NOT NULL DEFAULT (datetime('now')),
+  last_page INTEGER,
+  last_location TEXT,
+  last_read TEXT,
+  media_type TEXT NOT NULL DEFAULT 'comic'
 );
 
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -96,6 +100,7 @@ interface ComicRow {
   cover_thumbnail: Buffer | null;
   date_added: string;
   last_page: number | null;
+  last_location: string | null;
   last_read: string | null;
   media_type: string;
 }
@@ -147,27 +152,27 @@ export class LibraryDatabase {
   }
 
   private migrateSchema(db: Database.Database): void {
+    const comicColumns = db.prepare('PRAGMA table_info(comics)').all() as { name: string }[];
+    if (!comicColumns.some((c) => c.name === 'last_page')) {
+      db.prepare('ALTER TABLE comics ADD COLUMN last_page INTEGER DEFAULT NULL').run();
+    }
+    if (!comicColumns.some((c) => c.name === 'last_location')) {
+      db.prepare('ALTER TABLE comics ADD COLUMN last_location TEXT DEFAULT NULL').run();
+    }
+    if (!comicColumns.some((c) => c.name === 'last_read')) {
+      db.prepare('ALTER TABLE comics ADD COLUMN last_read TEXT DEFAULT NULL').run();
+    }
+    if (!comicColumns.some((c) => c.name === 'media_type')) {
+      db.prepare("ALTER TABLE comics ADD COLUMN media_type TEXT NOT NULL DEFAULT 'comic'").run();
+    }
+
     const folderColumns = db.prepare('PRAGMA table_info(folders)').all() as { name: string }[];
     const hasCoverComicId = folderColumns.some((column) => column.name === 'cover_comic_id');
     if (!hasCoverComicId) {
       db.prepare('ALTER TABLE folders ADD COLUMN cover_comic_id INTEGER REFERENCES comics(id) ON DELETE SET NULL').run();
     }
 
-    // Add reading progress columns
-    const comicColumns = db.prepare('PRAGMA table_info(comics)').all() as { name: string }[];
-    if (!comicColumns.some((c) => c.name === 'last_page')) {
-      db.prepare('ALTER TABLE comics ADD COLUMN last_page INTEGER DEFAULT NULL').run();
-    }
-    if (!comicColumns.some((c) => c.name === 'last_read')) {
-      db.prepare('ALTER TABLE comics ADD COLUMN last_read TEXT DEFAULT NULL').run();
-    }
-
     this.repairExistingThumbnails(db);
-
-    // Add media_type column
-    if (!comicColumns.some((c) => c.name === 'media_type')) {
-      db.prepare("ALTER TABLE comics ADD COLUMN media_type TEXT NOT NULL DEFAULT 'comic'").run();
-    }
 
     // Add media_type column to libraries
     const libColumns = db.prepare('PRAGMA table_info(libraries)').all() as { name: string }[];
@@ -205,8 +210,8 @@ export class LibraryDatabase {
 
   addComic(record: Omit<ComicRecord, 'id' | 'dateAdded'>): ComicRecord {
     const stmt = this.db.prepare(
-      `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, media_type)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, last_page, last_location, last_read, media_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const info = stmt.run(
       record.filePath,
@@ -214,6 +219,9 @@ export class LibraryDatabase {
       record.pageCount,
       record.fileSize,
       record.coverThumbnail,
+      record.lastPage,
+      record.lastLocation,
+      record.lastRead,
       record.mediaType ?? 'comic',
     );
     const id = info.lastInsertRowid as number;
@@ -235,7 +243,7 @@ export class LibraryDatabase {
 
   getComic(id: number): ComicRecord | null {
     const row = this.db.prepare(
-      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read, media_type
+      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
        FROM comics WHERE id = ?`
     ).get(id) as ComicRow | undefined;
     if (!row) return null;
@@ -245,6 +253,14 @@ export class LibraryDatabase {
   comicExistsByPath(filePath: string): boolean {
     const row = this.db.prepare('SELECT 1 FROM comics WHERE file_path = ?').get(filePath);
     return row !== undefined;
+  }
+
+  updateCoverThumbnailByPath(filePath: string, coverThumbnail: Buffer | null): void {
+    this.db.prepare('UPDATE comics SET cover_thumbnail = ? WHERE file_path = ?').run(coverThumbnail, filePath);
+  }
+
+  updatePageCountByPath(filePath: string, pageCount: number): void {
+    this.db.prepare('UPDATE comics SET page_count = ? WHERE file_path = ?').run(pageCount, filePath);
   }
 
   queryComics(options: QueryOptions = {}): QueryResult {
@@ -284,7 +300,7 @@ export class LibraryDatabase {
     ).get(...params) as CountRow).cnt;
 
     const rows = this.db.prepare(
-      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read, c.media_type
+      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
        FROM comics c ${where}
        ORDER BY ${sortCol} ${sortDir}
        LIMIT ? OFFSET ?`
@@ -471,6 +487,7 @@ export class LibraryDatabase {
       dateAdded: row.date_added,
       tags: tags.map((t) => t.name),
       lastPage: row.last_page ?? null,
+      lastLocation: row.last_location ?? null,
       lastRead: row.last_read ?? null,
       mediaType: (row.media_type === 'book' ? 'book' : 'comic') as 'comic' | 'book',
     };
@@ -484,18 +501,30 @@ export class LibraryDatabase {
     ).run(pageIndex, comicId);
   }
 
-  getRecentlyRead(limit: number = 10): ComicRecord[] {
-    const rows = this.db.prepare(
-      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read, media_type
-       FROM comics WHERE last_read IS NOT NULL
-       ORDER BY last_read DESC LIMIT ?`
-    ).all(limit) as ComicRow[];
+  updateReadingLocation(comicId: number, location: string): void {
+    this.db.prepare(
+      `UPDATE comics SET last_location = ?, last_read = datetime('now') WHERE id = ?`
+    ).run(location, comicId);
+  }
+
+  getRecentlyRead(limit: number = 10, mediaType?: 'comic' | 'book'): ComicRecord[] {
+    const rows = mediaType
+      ? this.db.prepare(
+          `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
+           FROM comics WHERE last_read IS NOT NULL AND media_type = ?
+           ORDER BY last_read DESC LIMIT ?`
+        ).all(mediaType, limit) as ComicRow[]
+      : this.db.prepare(
+          `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
+           FROM comics WHERE last_read IS NOT NULL
+           ORDER BY last_read DESC LIMIT ?`
+        ).all(limit) as ComicRow[];
     return rows.map((r) => this.rowToRecord(r));
   }
 
   getComicByPath(filePath: string): ComicRecord | null {
     const row = this.db.prepare(
-      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_read, media_type
+      `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
        FROM comics WHERE file_path = ?`
     ).get(filePath) as ComicRow | undefined;
     if (!row) return null;
@@ -583,7 +612,7 @@ export class LibraryDatabase {
     const offset = options.offset ?? 0;
     const totalCount = (this.db.prepare(`SELECT COUNT(*) as cnt FROM comics c ${where}`).get(...params) as CountRow).cnt;
     const rows = this.db.prepare(
-      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read, c.media_type FROM comics c ${where} ORDER BY ${sortCol} ${sortDir} LIMIT ? OFFSET ?`
+      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_location, c.last_read, c.media_type FROM comics c ${where} ORDER BY ${sortCol} ${sortDir} LIMIT ? OFFSET ?`
     ).all(...params, limit, offset) as ComicRow[];
     return { records: rows.map((r) => this.rowToRecord(r)), totalCount };
   }

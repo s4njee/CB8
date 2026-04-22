@@ -23,6 +23,10 @@ export async function archiveClose(): Promise<void> {
   await api.invoke('archive:close');
 }
 
+export async function readBookFile(filePath: string): Promise<ArrayBuffer> {
+  return api.invoke('book:read-file', filePath);
+}
+
 // --- Dialog ---
 
 export async function openFileDialog(): Promise<string | null> {
@@ -77,6 +81,10 @@ export async function openDirectoryDialog(): Promise<string | null> {
 
 export async function addComicFiles(filePaths: string[]): Promise<AddFilesResponse> {
   return api.invoke('library:add-files', filePaths);
+}
+
+export async function refreshBookMetadata(comicId: number): Promise<ComicRecord | null> {
+  return api.invoke('library:refresh-book-metadata', comicId);
 }
 
 export function getPathForFile(file: File): string {
@@ -161,10 +169,14 @@ export async function updateReadingProgress(comicId: number, pageIndex: number):
   await api.invoke('reading:update-progress', comicId, pageIndex);
 }
 
-export async function getRecentlyRead(limit?: number): Promise<ComicRecord[]> {
-  return api.invoke('reading:recently-read', limit);
+export async function getRecentlyRead(limit?: number, mediaType?: 'comic' | 'book'): Promise<ComicRecord[]> {
+  return api.invoke('reading:recently-read', limit, mediaType);
 }
 
 export async function getComicByPath(filePath: string): Promise<ComicRecord | null> {
   return api.invoke('reading:get-comic-by-path', filePath);
+}
+
+export async function updateReadingLocation(comicId: number, location: string): Promise<void> {
+  await api.invoke('reading:update-location', comicId, location);
 }

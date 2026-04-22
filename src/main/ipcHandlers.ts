@@ -1,14 +1,34 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import * as fs from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as ArchiveLoader from './archiveLoader';
 import type { ArchiveHandle } from './archiveLoader';
 import { LibraryDatabase } from './libraryDatabase';
 import { FileScannerImpl } from './fileScanner';
+import { extractEpubCover } from './epubCoverExtractor';
+import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
 import { generateThumbnail } from './thumbnailGenerator';
 import type { QueryOptions } from '../shared/types';
 
 let currentHandle: ArchiveHandle | null = null;
+const COVER_EXTRACTION_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
 
 export function registerIpcHandlers(db: LibraryDatabase | null): void {
   const scanner = db ? new FileScannerImpl(db) : null;
@@ -50,12 +70,17 @@ export function registerIpcHandlers(db: LibraryDatabase | null): void {
     }
   });
 
+  ipcMain.handle('book:read-file', async (_e, filePath: string) => {
+    const bytes = await fsp.readFile(filePath);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  });
+
   // --- Dialog channels ---
 
   ipcMain.handle('dialog:open-file', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow();
     const result = await dialog.showOpenDialog(win!, {
-      filters: [{ name: 'Comic Archives', extensions: ['cbz', 'cbr'] }],
+      filters: [{ name: 'Supported Books and Comics', extensions: ['cbz', 'cbr', 'epub', 'pdf', 'mobi'] }],
       properties: ['openFile'],
     });
     return result.canceled ? null : result.filePaths[0];
@@ -105,10 +130,28 @@ export function registerIpcHandlers(db: LibraryDatabase | null): void {
         const title = path.basename(filePath, ext);
 
         if (bookExts.has(ext)) {
-          db.addComic({
-            filePath, title, pageCount: 0, fileSize: stats.size,
-            coverThumbnail: null, tags: [], mediaType: 'book', lastPage: null, lastRead: null,
+          let pageCount = 0;
+          if (ext === '.pdf') {
+            try {
+              pageCount = await withTimeout(getPdfPageCount(filePath), COVER_EXTRACTION_TIMEOUT_MS);
+            } catch (pageErr) {
+              console.warn(`Failed to read PDF page count from ${filePath}.`, pageErr);
+            }
+          }
+          const record = db.addComic({
+            filePath, title, pageCount, fileSize: stats.size,
+            coverThumbnail: null, tags: [], mediaType: 'book', lastPage: null, lastLocation: null, lastRead: null,
           });
+          if (ext === '.epub' || ext === '.pdf') {
+            try {
+              const coverThumbnail = ext === '.epub'
+                ? generateThumbnail(await withTimeout(extractEpubCover(filePath), COVER_EXTRACTION_TIMEOUT_MS))
+                : await withTimeout(renderPdfFirstPageCover(filePath), COVER_EXTRACTION_TIMEOUT_MS);
+              if (coverThumbnail) db.updateCoverThumbnailByPath(record.filePath, coverThumbnail);
+            } catch (coverErr) {
+              console.warn(`Failed to extract book cover from ${filePath}; using placeholder thumbnail.`, coverErr);
+            }
+          }
           added++;
         } else {
           const handle = await ArchiveLoader.open(filePath);
@@ -122,7 +165,7 @@ export function registerIpcHandlers(db: LibraryDatabase | null): void {
             const coverThumbnail = generateThumbnail(coverImage);
             db.addComic({
               filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
-              coverThumbnail, tags: [], mediaType: 'comic', lastPage: null, lastRead: null,
+              coverThumbnail, tags: [], mediaType: 'comic', lastPage: null, lastLocation: null, lastRead: null,
             });
             added++;
           } finally {
@@ -134,6 +177,24 @@ export function registerIpcHandlers(db: LibraryDatabase | null): void {
       }
     }
     return { added, errors };
+  });
+
+  ipcMain.handle('library:refresh-book-metadata', async (_e, comicId: number) => {
+    if (!db) return null;
+    const record = db.getComic(comicId);
+    if (!record || record.mediaType !== 'book') return record;
+
+    const ext = path.extname(record.filePath).toLowerCase();
+    if (ext === '.pdf' && record.pageCount <= 0) {
+      try {
+        const pageCount = await withTimeout(getPdfPageCount(record.filePath), COVER_EXTRACTION_TIMEOUT_MS);
+        if (pageCount > 0) db.updatePageCountByPath(record.filePath, pageCount);
+      } catch (pageErr) {
+        console.warn(`Failed to read PDF page count from ${record.filePath}.`, pageErr);
+      }
+    }
+
+    return db.getComic(comicId);
   });
 
   ipcMain.handle('library:add-tag', (_e, comicId: number, tag: string) => {
@@ -214,8 +275,12 @@ export function registerIpcHandlers(db: LibraryDatabase | null): void {
     db?.updateReadingProgress(comicId, pageIndex);
   });
 
-  ipcMain.handle('reading:recently-read', (_e, limit?: number) => {
-    return db?.getRecentlyRead(limit ?? 10) ?? [];
+  ipcMain.handle('reading:update-location', (_e, comicId: number, location: string) => {
+    db?.updateReadingLocation(comicId, location);
+  });
+
+  ipcMain.handle('reading:recently-read', (_e, limit?: number, mediaType?: 'comic' | 'book') => {
+    return db?.getRecentlyRead(limit ?? 10, mediaType) ?? [];
   });
 
   ipcMain.handle('reading:get-comic-by-path', (_e, filePath: string) => {

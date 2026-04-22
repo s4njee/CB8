@@ -11,6 +11,11 @@ import type { LibrarySummary } from '../../shared/ipcTypes';
 
 type LibraryItem = LibrarySummary;
 
+const CONTEXT_MENU_WIDTH = 220;
+const CONTEXT_MENU_MARGIN = 8;
+const CONTEXT_MENU_HEIGHT = 96;
+const RENAME_CONTEXT_MENU_HEIGHT = 178;
+
 interface LibraryContextMenu {
   x: number;
   y: number;
@@ -131,6 +136,21 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
     onLibrariesChanged();
   };
 
+  const getContextMenuPosition = () => {
+    if (!contextMenu) return { left: 0, top: 0 };
+
+    const menuHeight = contextRenaming
+      ? RENAME_CONTEXT_MENU_HEIGHT + (contextError ? 22 : 0)
+      : CONTEXT_MENU_HEIGHT;
+    const maxLeft = window.innerWidth - CONTEXT_MENU_WIDTH - CONTEXT_MENU_MARGIN;
+    const maxTop = window.innerHeight - menuHeight - CONTEXT_MENU_MARGIN;
+
+    return {
+      left: Math.max(CONTEXT_MENU_MARGIN, Math.min(contextMenu.x, maxLeft)),
+      top: Math.max(CONTEXT_MENU_MARGIN, Math.min(contextMenu.y, maxTop)),
+    };
+  };
+
   const handleLibDragOver = (e: React.DragEvent, libId: number) => {
     if (e.dataTransfer.types.includes('application/comic-ids') || e.dataTransfer.types.includes('application/folder-ids')) {
       e.preventDefault();
@@ -218,24 +238,8 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
       }}>Libraries</div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {/* Comics section */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px 2px' }}>
-          <div onClick={() => { onSelectLibrary(null); onSelectView('comics'); }} style={{
-            cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
-            color: activeLibraryId === null && activeView === 'comics' ? '#fff' : '#ccc',
-          }}>All Comics</div>
-          <button onClick={() => setCreatingFor('comics')} style={{
-            background: 'none', border: 'none', color: '#5b9aff', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
-          }} title="New comic library">+</button>
-        </div>
-        <div onClick={() => { onSelectLibrary(null); onSelectView('comics'); }} style={{
-          height: 0, borderLeft: activeLibraryId === null && activeView === 'comics' ? '3px solid #5b9aff' : '3px solid transparent',
-        }} />
-        {comicLibraries.map(renderLibraryItem)}
-        {creatingFor === 'comics' && renderCreateInput('comic')}
-
         {/* Books section */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 12px 2px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px 2px' }}>
           <div onClick={() => { onSelectLibrary(null); onSelectView('books'); }} style={{
             cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
             color: activeLibraryId === null && activeView === 'books' ? '#fff' : '#ccc',
@@ -249,6 +253,22 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
         }} />
         {bookLibraries.map(renderLibraryItem)}
         {creatingFor === 'books' && renderCreateInput('book')}
+
+        {/* Comics section */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 12px 2px' }}>
+          <div onClick={() => { onSelectLibrary(null); onSelectView('comics'); }} style={{
+            cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
+            color: activeLibraryId === null && activeView === 'comics' ? '#fff' : '#ccc',
+          }}>All Comics</div>
+          <button onClick={() => setCreatingFor('comics')} style={{
+            background: 'none', border: 'none', color: '#5b9aff', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
+          }} title="New comic library">+</button>
+        </div>
+        <div onClick={() => { onSelectLibrary(null); onSelectView('comics'); }} style={{
+          height: 0, borderLeft: activeLibraryId === null && activeView === 'comics' ? '3px solid #5b9aff' : '3px solid transparent',
+        }} />
+        {comicLibraries.map(renderLibraryItem)}
+        {creatingFor === 'comics' && renderCreateInput('comic')}
       </div>
 
       {contextMenu && (
@@ -256,8 +276,8 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
           style={{
-            position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 1000,
-            width: 220, backgroundColor: '#202020', color: '#ddd',
+            position: 'fixed', ...getContextMenuPosition(), zIndex: 1000,
+            width: CONTEXT_MENU_WIDTH, backgroundColor: '#202020', color: '#ddd',
             border: '1px solid #444', borderRadius: 6, boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
             padding: 6, fontSize: 13,
           }}

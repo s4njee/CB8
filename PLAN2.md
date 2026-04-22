@@ -203,3 +203,14 @@ Manual testing with at least one EPUB and one PDF file after each phase. Keep te
 - `pdfjs-dist` includes a web worker file that needs to be accessible at runtime. Ensure the Vite renderer config either bundles it or copies it to the output. The worker can be loaded from a CDN URL as a fallback, but for an offline Electron app it should be bundled.
 - Neither library needs to be added to the `nativeExternals` list in `forge.config.ts`.
 - Both libraries should be listed in `dependencies` (not `devDependencies`) in `package.json` since they run in the renderer at runtime.
+
+## Implementation Decisions
+
+- Use separate `EpubReaderView` and `PdfReaderView` components behind app routing.
+- Keep comic and book progress separate. EPUB now uses its own `last_location` field in the database.
+- Persist PDF progress with page index and timestamp.
+- Keep books and comics in separate library views. Books are the default view, and the sidebar lists books first.
+- Make the Continue Reading shelf switch entirely on the active media type.
+- Keep EPUB reading paginated with arrow-key navigation.
+- Use the standard Vite-bundled `pdf.worker.min.mjs` setup.
+- Keep the current implementation boundary partial where it makes sense, but do not collapse book state back into comic state.

@@ -12,6 +12,17 @@ import { execSync } from 'node:child_process';
 /** Modules that Vite externalises and the packaged app must ship. */
 const nativeExternals = [
   'better-sqlite3',
+  '@napi-rs/canvas',
+  '@napi-rs/canvas-darwin-arm64',
+  '@napi-rs/canvas-darwin-x64',
+  '@napi-rs/canvas-linux-arm-gnueabihf',
+  '@napi-rs/canvas-linux-arm64-gnu',
+  '@napi-rs/canvas-linux-arm64-musl',
+  '@napi-rs/canvas-linux-riscv64-gnu',
+  '@napi-rs/canvas-linux-x64-gnu',
+  '@napi-rs/canvas-linux-x64-musl',
+  '@napi-rs/canvas-win32-arm64-msvc',
+  '@napi-rs/canvas-win32-x64-msvc',
   'bindings',
   'file-uri-to-path',
   'prebuild-install',
@@ -37,7 +48,7 @@ function copyModules(appDir: string) {
 const config: ForgeConfig = {
   packagerConfig: {
     asar: {
-      unpack: '**/node_modules/{better-sqlite3,node-unrar-js}/**',
+      unpack: '**/node_modules/{better-sqlite3,node-unrar-js,@napi-rs/canvas,@napi-rs/canvas-*}/**',
     },
     icon: 'book',
     executableName: 'cb8',

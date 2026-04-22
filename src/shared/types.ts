@@ -25,6 +25,7 @@ export interface ComicRecord {
   dateAdded: string;
   tags: string[];
   lastPage: number | null;
+  lastLocation: string | null;
   lastRead: string | null;
   mediaType: 'comic' | 'book';
 }

@@ -9,10 +9,12 @@ import {
   toggleFullscreen,
   updateReadingProgress,
 } from '../ipcClient';
+import { EpubReaderView } from './EpubReaderView';
+import { PdfReaderView } from './PdfReaderView';
 import { LibraryView } from './LibraryView';
 import { LibrarySidebar } from './LibrarySidebar';
 
-type View = 'library' | 'reader';
+type View = 'library' | 'reader' | 'epub-reader' | 'pdf-reader';
 
 const PAGE_CACHE_MAX = 10;
 const PREFETCH_AHEAD = 3;
@@ -20,7 +22,7 @@ const PREFETCH_AHEAD = 3;
 export const App: React.FC = () => {
   const [view, setView] = useState<View>('library');
   const [activeLibraryId, setActiveLibraryId] = useState<number | null>(null);
-  const [activeView, setActiveView] = useState<'comics' | 'books'>('comics');
+  const [activeView, setActiveView] = useState<'comics' | 'books'>('books');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [pageCount, setPageCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
@@ -29,6 +31,13 @@ export const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [currentComicId, setCurrentComicId] = useState<number | null>(null);
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
+  const [bookReader, setBookReader] = useState<{
+    filePath: string;
+    comicId: number | null;
+    kind: 'epub-reader' | 'pdf-reader';
+    initialLocation?: string | null;
+    initialPage?: number;
+  } | null>(null);
   const currentComicIdRef = useRef<number | null>(null);
   const sidebarRefreshKey = useRef(0);
   const readerImageRef = useRef<HTMLImageElement>(null);
@@ -115,23 +124,56 @@ export const App: React.FC = () => {
     finally { setLoading(false); }
   }, [cacheGet, fetchPageData, prefetch, pageCount]);
 
-  const openArchive = useCallback(async (filePath: string, resumePage?: number) => {
+  const openFile = useCallback(async (filePath: string, resumePage?: number) => {
     try {
       clearCache();
+      const comic = await getComicByPath(filePath);
+      const comicId = comic?.id ?? null;
+      const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+      const mediaType = comic?.mediaType ?? (ext === 'epub' || ext === 'pdf' || ext === 'mobi' ? 'book' : 'comic');
+
+      if (mediaType === 'book') {
+        clearCache();
+        setBookReader(null);
+        setCurrentComicId(null);
+        currentComicIdRef.current = null;
+        setCurrentFilePath(filePath);
+        setFilename(filePath.split('/').pop()?.split('\\').pop() ?? filePath);
+        if (ext === 'pdf') {
+          setBookReader({
+            filePath,
+            comicId,
+            kind: 'pdf-reader',
+            initialPage: resumePage ?? comic?.lastPage ?? 0,
+          });
+          setView('pdf-reader');
+          return;
+        }
+        if (ext === 'epub') {
+          setBookReader({
+            filePath,
+            comicId,
+            kind: 'epub-reader',
+            initialLocation: comic?.lastLocation ?? null,
+          });
+          setView('epub-reader');
+          return;
+        }
+        window.alert(`Unsupported book format for in-app reader: ${filePath}`);
+        return;
+      }
+
       const result = await archiveOpen(filePath);
       if ('error' in result) { console.error('Failed to open archive:', result.error); return; }
+      setBookReader(null);
       setPageCount(result.pageCount);
       setFilename(filePath.split('/').pop()?.split('\\').pop() ?? filePath);
       setCurrentFilePath(filePath);
       setView('reader');
 
-      // Look up comic in DB for ID and reading progress
-      const comic = await getComicByPath(filePath);
-      const comicId = comic?.id ?? null;
       setCurrentComicId(comicId);
       currentComicIdRef.current = comicId;
 
-      // Determine start page: explicit resume > saved progress > 0
       let startPage = 0;
       if (resumePage != null && resumePage >= 0 && resumePage < result.pageCount) {
         startPage = resumePage;
@@ -148,6 +190,7 @@ export const App: React.FC = () => {
     setView('library');
     setPageCount(0); setCurrentPage(0); setImageSrc(null); setFilename(null);
     setCurrentComicId(null); setCurrentFilePath(null); currentComicIdRef.current = null;
+    setBookReader(null);
     setLibraryRefreshKey((k) => k + 1);
   }, [clearCache]);
 
@@ -171,9 +214,9 @@ export const App: React.FC = () => {
   }, [nextPage, previousPage]);
 
   useEffect(() => {
-    const unsub = onFileOpened(openArchive);
+    const unsub = onFileOpened(openFile);
     return unsub;
-  }, [openArchive]);
+  }, [openFile]);
 
   // Global F11 fullscreen toggle (works in both views)
   useEffect(() => {
@@ -219,7 +262,7 @@ export const App: React.FC = () => {
         <LibraryView
           activeLibraryId={activeLibraryId}
           activeView={activeView}
-          onOpenComic={openArchive}
+          onOpenFile={openFile}
           onComicsChanged={handleLibrariesChanged}
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
@@ -234,6 +277,24 @@ export const App: React.FC = () => {
           onLibrariesChanged={handleLibrariesChanged}
         />
       </div>
+
+      {view === 'epub-reader' && bookReader?.kind === 'epub-reader' && (
+        <EpubReaderView
+          filePath={bookReader.filePath}
+          comicId={bookReader.comicId}
+          initialLocation={bookReader.initialLocation}
+          onBack={backToLibrary}
+        />
+      )}
+
+      {view === 'pdf-reader' && bookReader?.kind === 'pdf-reader' && (
+        <PdfReaderView
+          filePath={bookReader.filePath}
+          comicId={bookReader.comicId}
+          initialPage={bookReader.initialPage}
+          onBack={backToLibrary}
+        />
+      )}
 
       {view === 'reader' && (
         <div style={{ backgroundColor: '#000', width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

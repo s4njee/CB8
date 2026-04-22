@@ -47,7 +47,7 @@ const createWindow = (): void => {
           accelerator: 'CmdOrCtrl+O',
           click: async () => {
             const result = await dialog.showOpenDialog(mainWindow, {
-              filters: [{ name: 'Comic Archives', extensions: ['cbz', 'cbr'] }],
+              filters: [{ name: 'Supported Books and Comics', extensions: ['cbz', 'cbr', 'epub', 'pdf', 'mobi'] }],
               properties: ['openFile'],
             });
             if (!result.canceled && result.filePaths.length > 0) {
