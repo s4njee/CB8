@@ -14,7 +14,13 @@ try {
 
 let db: LibraryDatabase | null = null;
 
+app.setName('CB8');
+
 const createWindow = (): void => {
+  if (process.platform === 'darwin') {
+    app.dock?.setIcon(path.join(__dirname, '../../book.png'));
+  }
+
   // Initialize database inside ready handler
   try {
     const userDataPath = app.getPath('userData');
@@ -47,7 +53,7 @@ const createWindow = (): void => {
           accelerator: 'CmdOrCtrl+O',
           click: async () => {
             const result = await dialog.showOpenDialog(mainWindow, {
-              filters: [{ name: 'Comic Archives', extensions: ['cbz', 'cbr'] }],
+              filters: [{ name: 'Supported Books and Comics', extensions: ['cbz', 'cbr', 'epub', 'pdf', 'mobi'] }],
               properties: ['openFile'],
             });
             if (!result.canceled && result.filePaths.length > 0) {

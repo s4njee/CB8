@@ -25,7 +25,9 @@ export interface ComicRecord {
   dateAdded: string;
   tags: string[];
   lastPage: number | null;
+  lastLocation: string | null;
   lastRead: string | null;
+  mediaType: 'comic' | 'book';
 }
 
 export interface QueryOptions {
@@ -36,6 +38,7 @@ export interface QueryOptions {
   offset?: number;
   limit?: number;
   excludeFoldered?: boolean;
+  mediaType?: 'comic' | 'book';
 }
 
 export interface QueryResult {

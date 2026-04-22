@@ -23,6 +23,10 @@ export async function archiveClose(): Promise<void> {
   await api.invoke('archive:close');
 }
 
+export async function readBookFile(filePath: string): Promise<ArrayBuffer> {
+  return api.invoke('book:read-file', filePath);
+}
+
 // --- Dialog ---
 
 export async function openFileDialog(): Promise<string | null> {
@@ -41,6 +45,10 @@ export async function queryLibraryComics(libraryId: number, options: QueryOption
 
 export async function scanDirectory(directoryPath: string): Promise<number> {
   return api.invoke('library:scan', directoryPath);
+}
+
+export async function scanBooksDirectory(directoryPath: string): Promise<number> {
+  return api.invoke('library:scan-books', directoryPath);
 }
 
 export function onScanProgress(callback: (progress: ScanProgress) => void): () => void {
@@ -75,16 +83,20 @@ export async function addComicFiles(filePaths: string[]): Promise<AddFilesRespon
   return api.invoke('library:add-files', filePaths);
 }
 
+export async function refreshBookMetadata(comicId: number): Promise<ComicRecord | null> {
+  return api.invoke('library:refresh-book-metadata', comicId);
+}
+
 export function getPathForFile(file: File): string {
   return api.getPathForFile(file);
 }
 
-export async function getLibraries(): Promise<LibrarySummary[]> {
-  return api.invoke('libraries:list');
+export async function getLibraries(mediaType?: 'comic' | 'book'): Promise<LibrarySummary[]> {
+  return api.invoke('libraries:list', mediaType);
 }
 
-export async function createLibrary(name: string): Promise<{ id: number; name: string } | null> {
-  return api.invoke('libraries:create', name);
+export async function createLibrary(name: string, mediaType?: 'comic' | 'book'): Promise<{ id: number; name: string; mediaType: 'comic' | 'book' } | null> {
+  return api.invoke('libraries:create', name, mediaType);
 }
 
 export async function renameLibrary(id: number, newName: string): Promise<void> {
@@ -157,10 +169,14 @@ export async function updateReadingProgress(comicId: number, pageIndex: number):
   await api.invoke('reading:update-progress', comicId, pageIndex);
 }
 
-export async function getRecentlyRead(limit?: number): Promise<ComicRecord[]> {
-  return api.invoke('reading:recently-read', limit);
+export async function getRecentlyRead(limit?: number, mediaType?: 'comic' | 'book'): Promise<ComicRecord[]> {
+  return api.invoke('reading:recently-read', limit, mediaType);
 }
 
 export async function getComicByPath(filePath: string): Promise<ComicRecord | null> {
   return api.invoke('reading:get-comic-by-path', filePath);
+}
+
+export async function updateReadingLocation(comicId: number, location: string): Promise<void> {
+  await api.invoke('reading:update-location', comicId, location);
 }

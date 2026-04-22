@@ -4,6 +4,7 @@ const externals = [
   'electron',
   'electron/main',
   'better-sqlite3',
+  '@napi-rs/canvas',
   'node-unrar-js',
   'yauzl',
   '@jsquash/jxl',
