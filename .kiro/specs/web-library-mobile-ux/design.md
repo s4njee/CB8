@@ -2,24 +2,29 @@
 
 ## Overview
 
-This design transforms the CB8 web library's mobile experience from a sidebar-driven navigation model to a modern tab-bar + filter-strip pattern, while enlarging cards, adding progress/format badges, and improving empty states. All changes are scoped to the existing vanilla JS/CSS/HTML stack in `src/web/` with minimal server-side additions. Desktop layout (> 640px) remains untouched.
+This design transforms the CB8 web library's mobile experience from a sidebar-driven model to a bottom tab-bar + filter-strip pattern, while enlarging cards, adding progress/format badges, improving empty states, adding a "Recently Read" sort, and introducing a headless server mode so CB8 can run on a NAS or server without the Electron GUI. All client changes fit within the existing vanilla JS/HTML/CSS stack in `src/web/`; server-side changes are localized to three files. Desktop layout (> 640px) is unchanged except for a single new sort option.
 
 ### Key Design Decisions
 
-1. **CSS-only visibility toggling** — The tab bar, media strip, and sort sheet are rendered in the DOM at all times but shown/hidden via the existing 640px media query. This avoids JS-based resize listeners and keeps the approach consistent with the current codebase.
-2. **No new files** — All changes fit within the existing `index.html`, `style.css`, `app.js`, `views/library.js`, and `api.js`. No build step is introduced.
-3. **Server-side `fileExt` filter and `lastRead` sort** — Two small additions to `QueryOptions`, `SORT_COLUMN_MAP`, and `parseQueryOptions` in `webServer.ts` / `libraryDatabase.ts` enable file-type filtering and recently-read sorting without new endpoints.
-4. **Progressive enhancement** — Badges, filter chips, and the sort sheet degrade gracefully: if `fileExt` or `lastRead` data is missing, the UI simply omits the badge or sorts items to the end.
+1. **CSS-only visibility toggling.** The Tab_Bar, Tab_Panel host, Media_Strip, File_Type_Strip, Sort_Sheet, and their desktop counterparts are all rendered into the DOM once; the 640px media query in `style.css` toggles which are displayed. No JS resize listeners.
+2. **No new client files.** All client changes fit within `src/web/index.html`, `src/web/style.css`, `src/web/app.js`, `src/web/views/library.js`, and `src/web/api.js`.
+3. **Minimal server changes.** `fileExt` filtering and `lastRead` sorting are added by editing `src/shared/types.ts` (extend `QueryOptions`), `src/main/webServer.ts` (parse new query param), and `src/main/libraryDatabase.ts` (extend `SORT_COLUMN_MAP` and `queryComics`/`queryComicsByLibrary`/`getFolderComics` WHERE clauses). No new files, no new dependencies.
+4. **Headless mode** lives in `src/main/index.ts` as a pre-ready check; it reuses `startWebServer` and `LibraryDatabase` unchanged.
+5. **Progressive enhancement.** Badges and filter chips degrade gracefully: if `fileExt`, `lastPage`, or `lastLocation` is missing, the badge is simply not rendered.
 
 ### Scope Boundary
 
-- Only `src/web/*` (client) and `src/main/webServer.ts` + `src/main/libraryDatabase.ts` (server) are modified.
-- The Electron renderer (`src/renderer/`) is not affected.
-- No new npm dependencies are added.
+- **Modified files:** `src/web/index.html`, `src/web/style.css`, `src/web/app.js`, `src/web/views/library.js`, `src/web/api.js`, `src/main/index.ts`, `src/main/webServer.ts`, `src/main/libraryDatabase.ts`, `src/shared/types.ts`.
+- **Unchanged:** `src/renderer/` (Electron renderer), `src/main/ipcHandlers.ts`, all other server modules.
+- **No new npm dependencies, no new build step, no new runtime files.**
+
+### Incidental Fix
+
+`queryComicsByLibrary` in `libraryDatabase.ts` omits `c.last_location` from its SELECT list (present in `queryComics` and `getFolderComics`), causing `lastLocation` to always appear as `null` for records fetched under `#/library/:id`. Since Requirement 9.2 depends on `lastLocation` for EPUB progress badges, add `c.last_location` to that SELECT list as part of this work.
 
 ## Architecture
 
-The existing architecture is a vanilla-JS SPA with hash-based routing (`app.js`), a thin API client (`api.js`), two view modules (`views/library.js`, `views/reader.js`), and a single stylesheet (`style.css`). The server is a Node.js HTTP server (`webServer.ts`) backed by a SQLite database (`libraryDatabase.ts`).
+The current architecture is a vanilla-JS SPA with hash-based routing (`app.js`), a thin API client (`api.js`), two view modules (`views/library.js`, `views/reader.js`), and a single stylesheet (`style.css`). The server is a Node.js HTTP server (`webServer.ts`) backed by SQLite via `libraryDatabase.ts`. Headless mode adds no new architectural layer; it simply skips window creation.
 
 ### Current Mobile Flow
 
@@ -40,16 +45,17 @@ The existing architecture is a vanilla-JS SPA with hash-based routing (`app.js`)
 
 ```
 ┌──────────────────────────┐
-│  Navbar (search + sort   │  ← sticky, compact
-│  button only on mobile)  │
+│  Navbar (search + sort   │  ← fixed top, compact
+│  button only)            │
 ├──────────────────────────┤
-│  Media Strip (All/Comics/│  ← new, inline pills
-│  Books) + File-Type Chips│
+│  Media Strip (All/Comics/│  ← inline pills
+│  Books)                  │
+│  File-Type Strip (chips) │  ← inline pills
 ├──────────────────────────┤
 │  Card Grid (150px cards, │  ← larger, with badges
 │  progress + format)      │
 ├──────────────────────────┤
-│  Tab Bar (All, Recent,   │  ← new, fixed bottom
+│  Tab Bar (All, Recent,   │  ← fixed bottom
 │  Collections, Folders,   │
 │  Tags)                   │
 └──────────────────────────┘
@@ -66,223 +72,262 @@ graph LR
     LIB["views/library.js"]
     API["api.js"]
   end
-  subgraph Server ["src/main/"]
-    WS["webServer.ts"]
-    DB["libraryDatabase.ts"]
+  subgraph Server ["src/main/ + src/shared/"]
+    INDEX["main/index.ts"]
+    WS["main/webServer.ts"]
+    DB["main/libraryDatabase.ts"]
     TYPES["shared/types.ts"]
   end
 
-  HTML -- "add tab-bar, sort-sheet markup" --> HTML
-  CSS -- "tab-bar, media-strip, badge, card sizing, sort-sheet styles" --> CSS
-  APP -- "wire tab-bar nav, sort-sheet, media-strip, sub-nav panels" --> APP
-  LIB -- "render badges, filter chips, improved empty states, stable card dims" --> LIB
-  API -- "pass fileExt + lastRead params" --> API
+  HTML -- "add tab-bar, tab-panel, sort-sheet markup" --> HTML
+  CSS -- "tab-bar/panel, media/filetype strips, badges, card sizing, sticky navbar" --> CSS
+  APP -- "tab-bar nav, tab-panel open/close, sort-sheet, new state fields" --> APP
+  LIB -- "render badges, filter chips, contextual empty states, fade-in thumbs" --> LIB
+  API -- "pass fileExt + sortBy=lastRead params" --> API
+  INDEX -- "headless mode: detect flag, skip window, force web server" --> INDEX
   WS -- "parse fileExt query param" --> WS
-  DB -- "add lastRead sort, fileExt filter" --> DB
-  TYPES -- "extend QueryOptions" --> TYPES
+  DB -- "extend SORT_COLUMN_MAP (lastRead), WHERE clause for fileExt, fix SELECT list" --> DB
+  TYPES -- "extend QueryOptions with fileExt and lastRead" --> TYPES
 ```
 
 ## Components and Interfaces
 
 ### 1. Tab Bar (`index.html` + `style.css` + `app.js`)
 
-A `<nav id="tab-bar">` element appended as the last child of `#app`, containing five `<button>` elements. Each button stores a `data-tab` attribute (`all`, `recent`, `collections`, `folders`, `tags`).
+A `<nav id="tab-bar">` element appended as the last child of `#app`, containing five `<button>` elements with `data-tab` values: `all`, `recent`, `collections`, `folders`, `tags`.
+
+**Markup sketch:**
+```html
+<nav id="tab-bar" aria-label="Primary">
+  <button data-tab="all"         aria-label="All">…</button>
+  <button data-tab="recent"      aria-label="Recent">…</button>
+  <button data-tab="collections" aria-label="Collections">…</button>
+  <button data-tab="folders"     aria-label="Folders">…</button>
+  <button data-tab="tags"        aria-label="Tags">…</button>
+</nav>
+```
+
+Each button contains an inline SVG icon and a small text label below it.
 
 **Behaviour (wired in `app.js`):**
 - `all` → `window.location.hash = '#/'`
 - `recent` → `window.location.hash = '#/recent'`
-- `collections` / `folders` / `tags` → opens a sub-navigation panel (see §2)
+- `collections` / `folders` / `tags` → call `openTabPanel('collections' | 'folders' | 'tags')` (see §2) without changing the hash. Tapping the same tab again while its panel is open calls `closeTabPanel()`.
 
 **Visibility:**
-- Shown only at ≤ 640px via CSS media query.
-- Hidden when `#reader-overlay` is not `.hidden` (toggled by `app.js` during `navigate()`).
+- Hidden by default; shown at `@media (max-width: 640px)`.
+- Additionally hidden when the reader overlay is open: `#reader-overlay:not(.hidden) ~ #tab-bar { display: none; }` — or toggled via a class on `<body>` set inside `navigate()`.
 
 **Active state:**
-- `app.js` `navigate()` calls a new `updateTabBarActive(route)` function that sets `.active` on the matching tab button.
+- `updateTabBarActive(route, tabPanel)` is called from `navigate()` and whenever the Tab_Panel opens or closes. It clears `.active` on all tab buttons and sets it on the one matching the current route (All/Recent) or the open panel (Collections/Folders/Tags).
 
-### 2. Sub-Navigation Panels (`app.js`)
+**CSS sizing:**
+- New CSS var `--tab-bar-h: 56px`.
+- `#main-content` receives `padding-bottom: var(--tab-bar-h)` on mobile so the last row of cards is not hidden behind the Tab_Bar.
 
-When the user taps Collections, Folders, or Tags in the tab bar, a panel slides up from the bottom (or replaces the main content area) showing a scrollable list of items. Each item is an `<a>` linking to the appropriate hash route.
+### 2. Tab Panel (`index.html` + `style.css` + `app.js`)
+
+A single `<div id="tab-panel" hidden>` element in `index.html`, positioned as a fixed overlay between `#main-content` (bottom-padded by `--tab-bar-h`) and the Tab_Bar. Only one Tab_Panel content set is visible at a time; `openTabPanel(kind)` repopulates the same container.
+
+**Structure:**
+```html
+<div id="tab-panel" hidden role="dialog" aria-modal="false">
+  <header class="tab-panel-header">
+    <h2></h2>
+    <button class="tab-panel-close" aria-label="Close">✕</button>
+  </header>
+  <ul class="tab-panel-list"></ul>
+</div>
+```
 
 **Implementation:**
-- A single `<div id="tab-panel">` element in `index.html`, positioned above the tab bar, hidden by default.
-- `app.js` populates it dynamically from the already-fetched sidebar data (libraries, folders, tags arrays cached from `populateSidebar()`).
-- Tapping an item navigates to the route and closes the panel.
-- If the list is empty, a short message is shown (e.g., "No collections").
+- `app.js` caches `libraries`, `folders`, and `tags` arrays in module scope when `populateSidebar()` fetches them.
+- `openTabPanel('collections' | 'folders' | 'tags')` sets the header title ("Collections" / "Folders" / "Tags"), repopulates `.tab-panel-list` from the cached array, unsets the `hidden` attribute, and updates the Tab_Bar's active state.
+- Each `<li>` contains an `<a>` whose click handler calls `closeTabPanel()` and lets the hash-change fire naturally (browser default).
+- `closeTabPanel()` sets the `hidden` attribute again and updates the Tab_Bar.
+- If the cached array is empty, render a single `<li class="tab-panel-empty">` with "No collections" / "No folders" / "No tags".
+- Tapping the currently-active Collections/Folders/Tags tab button while its panel is open calls `closeTabPanel()`.
+
+**Visibility:**
+- Mobile-only (hidden via media query on desktop). On desktop the sidebar handles this navigation.
+- `z-index` above `#main-content` but below the Tab_Bar (so the Tab_Bar stays tappable).
 
 ### 3. Media Strip (`views/library.js` + `style.css`)
 
-A `<div class="media-strip">` rendered by `renderLibrary()` between the library header and the grid. Contains three pill buttons: All, Comics, Books.
+A `<div class="media-strip" role="group" aria-label="Media type">` rendered by `renderLibrary()` between the `.library-header` and the `.comics-grid`, containing three pill `<button>`s: All, Comics, Books.
 
 **Behaviour:**
-- Tapping a pill updates `state.mediaType` and re-renders the library.
-- The active pill gets the `.active` class (accent colour highlight).
+- Tapping a pill updates `state.mediaType` and calls `navigate()` to re-query.
+- The active pill gets `.active`.
+- State is shared with the desktop `.media-toggle` buttons — `state.mediaType` is the single source of truth, and both UIs reflect it.
 
 **Visibility:**
-- Rendered only at ≤ 640px. On desktop, the existing navbar media-toggle buttons remain.
-- The navbar `.media-toggle` group is hidden at ≤ 640px via CSS.
+- Rendered into the DOM whenever the library view renders.
+- Shown only at `max-width: 640px` via CSS (`display: none` above the breakpoint).
+- At the same breakpoint, `.nav-actions > .media-toggle { display: none; }` hides the desktop toggle.
 
-### 4. File-Type Filter Chips (`views/library.js` + `style.css`)
+### 4. File-Type Filter Strip (`views/library.js` + `style.css`)
 
-A `<div class="filetype-strip">` rendered below the media strip, containing horizontally scrollable pill buttons: All, EPUB, PDF, CBZ, CBR, MOBI.
+A `<div class="filetype-strip" role="group" aria-label="File type">` rendered below the Media_Strip, containing six horizontally scrollable pill `<button>`s with `data-ext` values `''`, `epub`, `pdf`, `cbz`, `cbr`, `mobi`.
 
 **Behaviour:**
-- Tapping a chip sets a `fileExt` filter parameter and re-fetches the grid.
-- Independent of the media-type filter — both can be active simultaneously.
-- The active chip gets the `.active` class.
+- Tapping a chip sets `state.fileExt` and calls `navigate()` to re-query.
+- The active chip gets `.active`.
+- Composes with `state.mediaType` — both filters are AND-ed server-side.
 
 **API integration:**
-- `api.js` passes `fileExt` as a query parameter to `/api/comics`.
-- `webServer.ts` `parseQueryOptions()` reads `query.fileExt` and adds it to `QueryOptions`.
-- `libraryDatabase.ts` `queryComics()` adds a `WHERE` clause: `LOWER(SUBSTR(c.file_path, -N)) = ?` matching the extension.
+- `api.js` passes `fileExt` in the query string when non-empty.
+- `webServer.ts` `parseQueryOptions()` reads `query.fileExt` and lowercases it into `QueryOptions.fileExt`.
+- `libraryDatabase.ts` `queryComics`, `queryComicsByLibrary`, and `getFolderComics` append the WHERE clause:
+  ```
+  LOWER(c.file_path) LIKE ?    -- param: '%.epub'
+  ```
 
-### 5. Sort Control (`app.js` + `style.css`)
+**Visibility:**
+- Shown only at `max-width: 640px` via CSS.
 
-**Mobile (≤ 640px):**
-- A sort button (icon + current sort label) is rendered in the navbar or library header.
-- Tapping it opens a `<div id="sort-sheet">` — a bottom-sheet overlay listing: Title, Date added, File size, Pages, Recently Read.
-- Selecting an option updates `state.sortBy`, closes the sheet, and re-renders.
+### 5. Sort Control (`index.html` + `style.css` + `app.js`)
 
 **Desktop (> 640px):**
-- The existing `<select id="sort-select">` gains a new `<option value="lastRead">Recently Read</option>`.
+- The existing `<select id="sort-select">` gains a new `<option value="lastRead">Recently Read</option>`. No layout changes.
+
+**Mobile (≤ 640px):**
+- The `<select id="sort-select">` is hidden via CSS.
+- A new `<button id="sort-button">` is rendered adjacent to it in the Navbar with a sort-icon SVG and a `<span class="sort-button-label">` showing the label of the currently active option.
+- Tapping `#sort-button` unsets the `hidden` attribute on `<div id="sort-sheet">`, a bottom-sheet overlay listing the five options as tappable rows.
+- Selecting an option updates `state.sortBy`, updates `#sort-select.value` (so desktop/mobile stay in sync), updates `.sort-button-label`, closes the sheet, and calls `navigate()`.
+- Tapping the sheet's backdrop or its close button calls `closeSortSheet()` without changing the sort.
+
+**Sort_Sheet markup:**
+```html
+<div id="sort-sheet" hidden role="dialog" aria-modal="true" aria-label="Sort by">
+  <div class="sort-sheet-backdrop"></div>
+  <div class="sort-sheet-panel">
+    <button data-sort="title">Title</button>
+    <button data-sort="dateAdded">Date added</button>
+    <button data-sort="fileSize">File size</button>
+    <button data-sort="pageCount">Pages</button>
+    <button data-sort="lastRead">Recently Read</button>
+  </div>
+</div>
+```
 
 **API integration:**
-- `sortBy=lastRead` is passed to the server.
-- `SORT_COLUMN_MAP` gains: `lastRead: 'c.last_read'`.
+- `sortBy=lastRead` is sent to the server.
+- `SORT_COLUMN_MAP` gains `lastRead: "COALESCE(c.last_read, '')"`. The empty-string fallback ensures NULL `last_read` rows sort before any real datetime string when ascending (and after, when descending) — satisfying Requirement 13.3 and 13.4.
 - `QueryOptions.sortBy` type is extended to include `'lastRead'`.
-- Items with `NULL` `last_read` sort to the end (SQLite `NULLS LAST` or `COALESCE` trick).
 
 ### 6. Card Enhancements (`views/library.js` + `style.css`)
 
 #### 6a. Larger Cards
-- CSS variable `--card-w` changes from `130px` to `150px` at ≤ 640px.
 
-#### 6b. Format Badge
-- Replaces the current `card-badge` ("Comic" / "Book") with the uppercase `fileExt` value (e.g., "EPUB", "CBZ").
-- Styling: book formats (epub, pdf, mobi) get a blue-tinted colour; comic formats (cbz, cbr) keep the default muted colour.
+- Root `--card-w` stays at `160px`; the mobile media-query override changes from `130px` to `150px`.
+- Mobile `.comics-grid` gap bumps from `10px` to `12px`, horizontal padding from `12px` to `10px` (per Requirement 4.4 minimum).
 
-#### 6c. Progress Badge
-- A new `<div class="progress-badge">` overlaid on the thumbnail.
-- For comics/PDFs: shows `${Math.round(lastPage / pageCount * 100)}%` when `lastPage > 0 && pageCount > 0`.
-- For EPUBs: shows "In progress" when `lastLocation` is non-null.
-- Positioned bottom-left of the thumbnail, above the progress bar.
+#### 6b. Format Badge (replaces current `.card-badge`)
+
+- In `createCard(record)`, compute:
+  ```js
+  const ext = (record.fileExt || '').toLowerCase();
+  const isBook = ext === 'epub' || ext === 'pdf' || ext === 'mobi';
+  const label = ext ? ext.toUpperCase()
+                    : (record.mediaType === 'book' ? 'Book' : 'Comic');
+  ```
+- Render a single `<div class="card-badge ${isBook || record.mediaType === 'book' ? 'book' : ''}">` with `textContent = label`. No additional badge.
+- Keep the existing top-right absolute positioning.
+
+#### 6c. Progress Badge (new element)
+
+- Render iff the record has reading progress:
+  ```js
+  let progressLabel = null;
+  if (record.pageCount > 0 && record.lastPage != null && record.lastPage > 0) {
+    const pct = Math.max(1, Math.min(100, Math.round(record.lastPage / record.pageCount * 100)));
+    progressLabel = pct + '%';
+  } else if (record.lastLocation) {
+    progressLabel = 'In progress';
+  }
+  ```
+- When `progressLabel` is non-null, append `<div class="progress-badge">${progressLabel}</div>` to `.card-thumb-wrap`.
+- CSS positions the badge at `position: absolute; bottom: 6px; left: 6px;` (above the 3px `.progress-bar`) so it does not overlap the Format_Badge (top-right) or the card title (below the thumb wrap).
 
 #### 6d. Stable Dimensions
-- The existing `aspect-ratio: 2 / 3` on `.card-thumb-wrap` already reserves space. Verify it is set and the image fades in (the existing `.loading` class sets `opacity: 0`).
-- Add a neutral background colour (`var(--surface)`) to `.card-thumb-wrap` as a placeholder.
+
+- The existing `.card-thumb-wrap { aspect-ratio: 2 / 3; background: var(--surface); overflow: hidden; }` already reserves space and provides a placeholder — keep it in place.
+- The existing `.card-thumb.loading { opacity: 0; }` with `transition: opacity 0.2s;` and the `load` event handler that removes `.loading` provide the fade-in — keep it in place. No extra code required for Requirement 12.3.
 
 #### 6e. Thumbnail Error Placeholder
-- On `img.onerror`, instead of just reducing opacity, replace the `src` with an inline SVG data URI showing a book icon.
+
+- Replace the current `img.addEventListener('error', …)` (which sets `opacity: 0.15`) with:
+  ```js
+  img.addEventListener('error', () => {
+    img.classList.remove('loading');
+    img.src = PLACEHOLDER_BOOK_SVG_DATA_URI;
+  });
+  ```
+- `PLACEHOLDER_BOOK_SVG_DATA_URI` is a module-level constant in `views/library.js`: `'data:image/svg+xml;utf8,...'` containing a simple book icon on a muted background.
 
 ### 7. Improved Empty States (`views/library.js`)
 
-Replace the single generic empty state with context-specific variants:
+Replace the single generic `renderEmpty()` with `renderEmpty(reason)`:
 
-| Condition | Icon | Message |
-|-----------|------|---------|
-| Server unreachable | Cloud-off | "Cannot reach the server. Check your connection." |
-| Search/filter no results | Search | "No items match your search or filters." |
-| Recently Read empty | Clock | "Nothing read yet. Open a book or comic to get started." |
-| Thumbnail load failure | Image-off | (placeholder graphic in card, not a full empty state) |
+| `reason`       | Icon (inline SVG) | Message                                                    | Trigger                                                                                   |
+|----------------|-------------------|------------------------------------------------------------|-------------------------------------------------------------------------------------------|
+| `'offline'`    | Cloud-off         | "Cannot reach the server. Check your connection."          | API rejection or non-2xx during initial page load of the current view.                    |
+| `'no-results'` | Search            | "No items match your search or filters."                   | Zero records AND any of `state.search`, `state.mediaType`, `state.fileExt`, or tag route. |
+| `'no-recent'`  | Clock             | "Nothing read yet. Open a book or comic to get started."   | Recent view (`route.type === 'recent'`) returns zero records AND no filter active.        |
+| `'empty'`      | Book              | "No items found."                                          | Any other view returns zero records AND no filter active.                                 |
 
-The `renderEmpty()` function in `library.js` accepts a `reason` parameter to select the appropriate variant.
+The trigger classification happens in `loadNextPage()`'s error and empty-result branches. On error, `renderEmpty('offline')`; on empty result with filters active, `renderEmpty('no-results')`; else the route-dependent fallback.
+
+Each empty state is rendered inside the `.comics-grid` container (grid cleared first) so it sits where the cards would go and does not shift layout.
 
 ### 8. Sticky Navbar (`style.css`)
 
-At ≤ 640px:
-- `#navbar` gets `position: fixed; top: 0; left: 0; right: 0; z-index: 100;`.
-- `#main-content` gets `padding-top: var(--nav-h)` to prevent overlap with the first row of cards.
-- Navbar height is kept compact (existing 52px is fine).
+Add at `@media (max-width: 640px)`:
+
+```css
+#navbar  { position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
+#layout  { padding-top: var(--nav-h); }
+#main-content { padding-bottom: calc(var(--tab-bar-h) + env(safe-area-inset-bottom, 0px)); }
+```
+
+- `--nav-h` is the existing 52px.
+- `--tab-bar-h` is the new 56px token.
+- The `env(safe-area-inset-bottom)` allowance keeps the last row reachable on iOS Safari.
+- `#layout` already has `display: flex; flex: 1; min-height: 0; overflow: hidden;` — the `padding-top` shifts its flex children below the fixed Navbar. On mobile, sidebar is hidden, so `#main-content` takes the full width.
 
 ### 9. Search Accessibility
 
-The search input already has `aria-label="Search library"` and `type="search"`. At ≤ 640px, the search input continues to be displayed in the navbar. The `nav-search-wrap` flex grows to fill available space after the brand and sort button.
+The existing `.nav-search-wrap` has `flex: 1; min-width: 0; max-width: 400px;`. On mobile we remove the `max-width` to let search fill all available horizontal space after the brand and sort button:
 
-## Data Models
-
-### Extended `QueryOptions` (shared/types.ts)
-
-```typescript
-export interface QueryOptions {
-  search?: string;
-  tag?: string;
-  sortBy?: 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead';
-  sortOrder?: 'asc' | 'desc';
-  offset?: number;
-  limit?: number;
-  excludeFoldered?: boolean;
-  mediaType?: 'comic' | 'book';
-  fileExt?: string;  // new: filter by file extension (e.g., 'epub', 'cbz')
+```css
+@media (max-width: 640px) {
+  .nav-search-wrap { max-width: none; }
 }
 ```
 
-### Extended `SORT_COLUMN_MAP` (libraryDatabase.ts)
-
-```typescript
-const SORT_COLUMN_MAP: Record<string, string> = {
-  title: 'c.title COLLATE NOCASE',
-  dateAdded: 'c.date_added',
-  fileSize: 'c.file_size',
-  pageCount: 'c.page_count',
-  lastRead: "COALESCE(c.last_read, '0')",  // NULLs sort to end in DESC
-};
-```
-
-### Extended `parseQueryOptions` (webServer.ts)
-
-```typescript
-if (query.fileExt) options.fileExt = query.fileExt.toLowerCase();
-```
-
-### Extended `queryComics` WHERE clause (libraryDatabase.ts)
-
-```typescript
-if (options.fileExt) {
-  const ext = '.' + options.fileExt;
-  conditions.push("LOWER(SUBSTR(c.file_path, ?)) = ?");
-  params.push(-ext.length, ext);
-}
-```
-
-### `WebComicRecord` (webServer.ts) — unchanged
-
-The existing `WebComicRecord` already exposes `fileExt`, `lastPage`, `pageCount`, `lastLocation`, and `lastRead`, which is everything the client needs for badges and sorting.
-
-### Client-Side State (app.js)
-
-```javascript
-const state = {
-  mediaType: '',       // '' | 'comic' | 'book'
-  sortBy: 'title',
-  search: '',
-  fileExt: '',         // new: '' | 'epub' | 'pdf' | 'cbz' | 'cbr' | 'mobi'
-  route: null,
-  tabPanel: null,      // new: null | 'collections' | 'folders' | 'tags'
-};
-```
-
+No JS change.
 
 ### 10. Headless Server Mode (`src/main/index.ts`)
 
-CB8 gains a headless mode that runs the embedded HTTP web server without creating an Electron BrowserWindow, enabling deployment on servers, NAS devices, and headless machines.
+Headless mode runs CB8's embedded HTTP web server without creating an Electron `BrowserWindow`.
 
-#### Headless Detection
+#### Detection
 
-A new `isHeadless` constant is computed at the top of `src/main/index.ts`, before `app.on('ready', ...)`:
+A module-level constant computed before `app.on('ready', …)`:
 
-```typescript
+```ts
 const isHeadless =
   process.argv.includes('--headless') ||
   process.env.CB8_HEADLESS === '1';
 ```
 
-Both `process.argv` and `process.env` are checked so the user can choose whichever is more convenient for their deployment (CLI flag for manual use, environment variable for systemd/Docker).
+Both sources are checked so the user can choose whichever fits their deployment (CLI flag for manual use, env var for systemd/Docker).
 
-#### Startup Flow (headless path)
+#### Startup Flow
 
-Inside the `app.on('ready', ...)` handler, the existing `createWindow()` call is wrapped in a conditional. When `isHeadless` is true, a new `startHeadless()` function runs instead:
-
-```typescript
+```ts
 app.on('ready', () => {
   if (isHeadless) {
     startHeadless();
@@ -290,17 +335,7 @@ app.on('ready', () => {
     createWindow();
   }
 });
-```
 
-`startHeadless()` performs the following steps in order:
-
-1. **Hide dock icon on macOS**: `app.dock?.hide()` — prevents a bouncing icon in the macOS dock when there is no window.
-2. **Initialize database**: Same `LibraryDatabase` constructor and `db.initialize()` call as `createWindow()`, using the standard `app.getPath('userData')` path.
-3. **Register IPC handlers**: `registerIpcHandlers(db, webServerRef)` — the web server's API routes call into `LibraryDatabase` directly (not through IPC), but `registerIpcHandlers` also wires up the web server auto-start logic and settings persistence, so it is still called. The `onRecentFilesChanged` callback is omitted (no menu to refresh).
-4. **Force-start the web server**: Regardless of the stored `web_server_enabled` setting, call `startWebServer(db, port)` directly. The port is read from the stored `web_server_port` app_meta key (falling back to 8008). This ensures the server always starts in headless mode.
-5. **Console output**: The existing `startWebServer()` already logs `[CB8] Web UI: http://localhost:<port>` and `[CB8] LAN: http://<lan-ip>:<port>` via its `server.listen` callback. No additional logging is needed.
-
-```typescript
 function startHeadless(): void {
   if (process.platform === 'darwin') {
     app.dock?.hide();
@@ -311,6 +346,7 @@ function startHeadless(): void {
     const dbPath = path.join(userDataPath, 'library.db');
     db = new LibraryDatabase(dbPath);
     db.initialize();
+    // No onRecentFilesChanged callback — there is no menu in headless mode.
     registerIpcHandlers(db, webServerRef);
   } catch (err) {
     console.error('[CB8] Failed to initialize database or IPC:', err);
@@ -318,11 +354,13 @@ function startHeadless(): void {
   }
 
   const rawPort = db!.getAppMeta('web_server_port');
-  const port = rawPort ? parseInt(rawPort, 10) : 8008;
-  const safePort = isNaN(port) ? 8008 : Math.max(1024, Math.min(65535, port));
+  const parsed = rawPort ? parseInt(rawPort, 10) : NaN;
+  const port = Number.isFinite(parsed)
+    ? Math.max(1024, Math.min(65535, parsed))
+    : 8008;
 
   try {
-    webServerRef.handle = startWebServer(db!, safePort);
+    webServerRef.handle = startWebServer(db!, port);
   } catch (err) {
     console.error('[CB8] Failed to start web server in headless mode:', err);
     process.exit(1);
@@ -330,27 +368,31 @@ function startHeadless(): void {
 }
 ```
 
+Notes:
+- `registerIpcHandlers` is still called because its auto-start branch is guarded by the stored `web_server_enabled` setting; calling it is harmless in headless mode and keeps the IPC surface available for any future web-settings writes. The subsequent direct `startWebServer` call force-starts the server regardless of the stored preference (Requirement 14.4).
+- If `ipcHandlers.ts`'s auto-start branch happens to also start the server, the subsequent direct `startWebServer` call will attempt to bind the same port and `EADDRINUSE` will be logged. To avoid this, check `webServerRef.handle` before calling `startWebServer`:
+  ```ts
+  if (!webServerRef.handle) webServerRef.handle = startWebServer(db!, port);
+  ```
+- Console output is already handled by `startWebServer`'s `listen` callback — no extra logging needed.
+
 #### `window-all-closed` Behaviour
 
-The existing handler quits the app on non-macOS platforms when all windows close. In headless mode there are never any windows, so Electron fires this event immediately. The handler is updated to be a no-op in headless mode:
-
-```typescript
+```ts
 app.on('window-all-closed', () => {
-  if (isHeadless) return; // keep process alive — serving HTTP
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  if (isHeadless) return;                  // keep serving HTTP
+  if (process.platform !== 'darwin') app.quit();
 });
 ```
 
 #### Graceful Shutdown
 
-The existing `app.on('before-quit', ...)` handler already closes archive handles and the web server. For headless mode, SIGINT and SIGTERM are additionally handled to trigger `app.quit()`:
+The existing `app.on('before-quit', …)` already closes archive handles and the web server. For headless mode, SIGINT/SIGTERM trigger `app.quit()`:
 
-```typescript
+```ts
 if (isHeadless) {
   const shutdown = () => {
-    console.log('[CB8] Shutting down headless server...');
+    console.log('[CB8] Shutting down headless server…');
     app.quit();
   };
   process.on('SIGINT', shutdown);
@@ -358,155 +400,234 @@ if (isHeadless) {
 }
 ```
 
-This ensures `before-quit` fires, which closes the HTTP server and archive handles.
-
 #### Unchanged Modules
 
-- **`webServer.ts`**: No changes. `startWebServer()` accepts a `LibraryDatabase` and port — it does not depend on `BrowserWindow`.
-- **`libraryDatabase.ts`**: No changes. The database is a standalone SQLite wrapper with no Electron GUI dependencies.
-- **`ipcHandlers.ts`**: No changes. IPC handlers that reference `BrowserWindow.fromWebContents()` will simply get `null` when there is no window, which is already handled (the web server uses direct `db` calls, not IPC).
+- `webServer.ts`: unchanged for headless. Already binds to `0.0.0.0` so LAN access works.
+- `libraryDatabase.ts`: unchanged for headless.
+- `ipcHandlers.ts`: unchanged. Any IPC handlers that look up `BrowserWindow.fromWebContents(...)` simply never fire in headless mode (no renderer).
 
 #### Design Decisions
 
-1. **`process.argv` over `app.commandLine`**: `process.argv` is simpler and works identically. `app.commandLine` is Chromium's switch parser and would require `--headless` to be passed as `--headless=true` or similar — less ergonomic.
-2. **Force-start web server**: In headless mode the web server is the entire point, so the stored `web_server_enabled` preference is bypassed. The stored port is still respected.
-3. **`process.exit(1)` on init failure**: In headless mode there is no GUI to show an error dialog, so a non-zero exit code is the appropriate signal to the process supervisor (systemd, Docker, etc.).
-4. **No new files**: All changes fit within `src/main/index.ts`. The web server and database modules are reused as-is.
+1. **`process.argv` over `app.commandLine`** — `process.argv` is simpler and works identically. `app.commandLine` is Chromium's switch parser and would require awkward `--headless=true` syntax.
+2. **Force-start the web server** — in headless mode the web server is the entire point of the process, so the stored `web_server_enabled` preference is bypassed. The stored `web_server_port` is still respected (with the same 1024–65535 clamp used elsewhere).
+3. **`process.exit(1)` on init failure** — there is no GUI to show an error dialog, so a non-zero exit code signals the process supervisor (systemd, Docker, etc.).
+4. **No new files** — all changes fit within `src/main/index.ts`.
+
+## Data Models
+
+### Extended `QueryOptions` (`src/shared/types.ts`)
+
+```ts
+export interface QueryOptions {
+  search?: string;
+  tag?: string;
+  sortBy?: 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead';
+  sortOrder?: 'asc' | 'desc';
+  offset?: number;
+  limit?: number;
+  excludeFoldered?: boolean;
+  mediaType?: 'comic' | 'book';
+  fileExt?: string;   // lowercase extension without the dot, e.g. 'epub' | 'pdf' | 'cbz' | 'cbr' | 'mobi'
+}
+```
+
+### Extended `SORT_COLUMN_MAP` (`libraryDatabase.ts`)
+
+```ts
+const SORT_COLUMN_MAP: Record<string, string> = {
+  title:     'c.title COLLATE NOCASE',
+  dateAdded: 'c.date_added',
+  fileSize:  'c.file_size',
+  pageCount: 'c.page_count',
+  lastRead:  "COALESCE(c.last_read, '')",
+};
+```
+
+The empty-string default for NULL `last_read` rows makes them sort before any real datetime string (which starts with a digit) when ascending, and after when descending — satisfying Requirement 13.3 and 13.4.
+
+### Extended `parseQueryOptions` (`webServer.ts`)
+
+```ts
+if (query.fileExt) {
+  options.fileExt = String(query.fileExt).toLowerCase().replace(/^\./, '');
+}
+```
+
+### Extended WHERE clauses (`libraryDatabase.ts`)
+
+Add to `queryComics`, `queryComicsByLibrary`, and `getFolderComics`:
+
+```ts
+if (options.fileExt) {
+  conditions.push('LOWER(c.file_path) LIKE ?');
+  params.push('%.' + options.fileExt);
+}
+```
+
+Also fix `queryComicsByLibrary`: add `c.last_location` to its SELECT list (currently omitted — see §Incidental Fix).
+
+### `WebComicRecord` (`webServer.ts`) — unchanged
+
+The existing `WebComicRecord` already exposes `fileExt`, `lastPage`, `pageCount`, `lastLocation`, and `lastRead`, which is everything the client needs.
+
+### Client-Side State (`app.js`)
+
+```js
+const state = {
+  mediaType: '',       // '' | 'comic' | 'book'
+  sortBy:    'title',  // 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead'
+  search:    '',
+  fileExt:   '',       // '' | 'epub' | 'pdf' | 'cbz' | 'cbr' | 'mobi'
+  route:     null,
+  tabPanel:  null,     // null | 'collections' | 'folders' | 'tags'
+};
+```
+
+`state.tabPanel` is the only field that is not persisted to the URL — it is purely a UI state for which mobile sub-nav sheet (if any) is open.
 
 ## Correctness Properties
 
-*A property is a characteristic or behavior that should hold true across all valid executions of a system — essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+*A property is a characteristic or behavior that should hold true across all valid executions of a system.*
 
-The testable properties in this feature centre on the server-side query logic (filter composition, sort ordering) and the pure client-side badge computation functions. Most of the 14 requirements are CSS/layout or UI-interaction concerns that are best covered by example-based tests; the properties below capture the universal invariants.
+The testable properties centre on the server-side query logic (filter composition, sort ordering) and the pure client-side badge computation functions. Most of the 14 requirements are CSS/layout or UI-interaction concerns best covered by example-based tests; the properties below capture the universal invariants.
 
-### Property 1: Filter Composition — mediaType and fileExt
+### Property 1: Filter Composition — `mediaType` and `fileExt`
 
-*For any* combination of `mediaType` (one of `''`, `'comic'`, `'book'`) and `fileExt` (one of `''`, `'epub'`, `'pdf'`, `'cbz'`, `'cbr'`, `'mobi'`), and *for any* set of comic records in the database, the records returned by `queryComics({ mediaType, fileExt })` SHALL satisfy both filters simultaneously: every returned record's `mediaType` matches the filter (when non-empty) AND every returned record's file path ends with `.{fileExt}` (when non-empty).
+*For any* combination of `mediaType` (one of `''`, `'comic'`, `'book'`) and `fileExt` (one of `''`, `'epub'`, `'pdf'`, `'cbz'`, `'cbr'`, `'mobi'`), and *for any* set of comic records in the database, the records returned by `queryComics({ mediaType, fileExt })` SHALL satisfy both filters simultaneously: every returned record's `mediaType` matches the filter (when non-empty) AND every returned record's `file_path` ends with `.{fileExt}` (case-insensitive) when `fileExt` is non-empty.
 
-**Validates: Requirements 8.2, 8.3, 8.5**
+**Validates: Requirements 8.2, 8.3, 8.4**
 
 ### Property 2: Progress Badge Percentage Computation
 
-*For any* `lastPage` in `[1, pageCount]` and *for any* `pageCount` in `[1, 100000]`, the progress badge text SHALL equal `Math.round(lastPage / pageCount * 100) + '%'`. When `lastPage` is `0` or `null`, or `pageCount` is `0` or `null`, no badge SHALL be produced.
+*For any* `lastPage` in `[1, pageCount]` and *for any* `pageCount` in `[1, 100000]`, the progress badge text SHALL equal `Math.max(1, Math.min(100, Math.round(lastPage / pageCount * 100))) + '%'`. When `lastPage` is `0` or `null`, AND `lastLocation` is `null`, no badge SHALL be produced. When `lastPage` is `0` or `null` AND `lastLocation` is a non-empty string, the badge SHALL be the literal text "In progress".
 
-**Validates: Requirements 9.1, 9.3**
+**Validates: Requirements 9.1, 9.2, 9.3**
 
 ### Property 3: Format Badge Text and Style Class
 
-*For any* `fileExt` string from the set `{'epub', 'pdf', 'mobi', 'cbz', 'cbr'}`, the format badge text SHALL equal `fileExt.toUpperCase()`, AND the badge SHALL receive the `'book'` style class if `fileExt` is one of `{'epub', 'pdf', 'mobi'}` and the default (comic) style class if `fileExt` is one of `{'cbz', 'cbr'}`.
+*For any* `fileExt` string from the set `{'epub', 'pdf', 'mobi', 'cbz', 'cbr'}`, the Format_Badge text SHALL equal `fileExt.toUpperCase()`, AND the badge SHALL receive the `book` style class iff `fileExt ∈ {'epub', 'pdf', 'mobi'}`. When `fileExt` is empty, the badge text SHALL be `'Book'` or `'Comic'` depending on `record.mediaType`.
 
-**Validates: Requirements 10.1, 10.3**
+**Validates: Requirements 10.1, 10.2, 10.4**
 
-### Property 4: lastRead Sort Ordering
+### Property 4: `lastRead` Sort Ordering
 
-*For any* set of comic records with varying `lastRead` timestamps (including `null`), when sorted by `sortBy='lastRead'` with `sortOrder='desc'`, the returned records SHALL be ordered such that: (a) all records with a non-null `lastRead` appear before all records with a null `lastRead`, and (b) among records with non-null `lastRead`, they are ordered by `lastRead` descending (most recent first).
+*For any* set of comic records with varying `lastRead` timestamps (including `null`), when sorted by `sortBy='lastRead'` with `sortOrder='desc'`, the returned records SHALL be ordered such that (a) all records with a non-null `lastRead` appear before all records with `lastRead === null`, and (b) among records with non-null `lastRead`, they are ordered by `lastRead` descending (most recent first). When `sortOrder='asc'`, records with `lastRead === null` SHALL appear first, and non-null records SHALL be in ascending timestamp order.
 
-**Validates: Requirements 14.2, 14.3, 14.4**
+**Validates: Requirements 13.2, 13.3, 13.4**
 
 ## Error Handling
 
 ### Client-Side Errors
 
-| Error | Handling |
-|-------|----------|
-| API fetch failure (network error, 5xx) | `renderLibrary()` catches the error and calls `renderEmpty('offline')`, showing the "Cannot reach the server" empty state. |
-| API returns 0 results for search/filter | `renderEmpty('no-results')` is called with the search/filter context message. |
-| Thumbnail image fails to load | `img.onerror` replaces `src` with an inline SVG data URI placeholder (book icon on dark background). Existing opacity reduction is replaced. |
-| CDN script load failure (reader) | Existing handling in `reader.js` already shows an error message. No change needed. |
-| Invalid hash route | Existing `parseRoute()` falls back to `{ type: 'all' }`. No change needed. |
+| Error                                       | Handling                                                                                                            |
+|---------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| API fetch failure (network error, 5xx) during initial page load | `loadNextPage()` catches the error and calls `renderEmpty('offline')`.                         |
+| API returns 0 results when any filter is active | `renderEmpty('no-results')`.                                                                                    |
+| API returns 0 results on `#/recent` with no filter active | `renderEmpty('no-recent')`.                                                                            |
+| API returns 0 results on any other route with no filter active | `renderEmpty('empty')`.                                                                         |
+| Thumbnail image fails to load               | `img.onerror` replaces `src` with the inline SVG data URI placeholder. Dimensions are preserved by the wrapper's `aspect-ratio`. |
+| Invalid hash route                          | Existing `parseRoute()` falls back to `{ type: 'all' }`. No change needed.                                          |
+| Tab_Panel opened with empty list            | Single `<li class="tab-panel-empty">` with "No collections" / "No folders" / "No tags".                             |
 
 ### Server-Side Errors
 
-| Error | Handling |
-|-------|----------|
-| Invalid `fileExt` query param | Treated as a normal filter — if no records match, an empty result set is returned. No error thrown. |
-| Invalid `sortBy` value | Existing `SORT_COLUMN_MAP` fallback to `title` sort handles unknown values. The new `lastRead` key is added to the map. |
-| `last_read` column is NULL | `COALESCE(c.last_read, '0')` ensures NULLs sort to the end when sorting descending. |
+| Error                                 | Handling                                                                                                |
+|---------------------------------------|---------------------------------------------------------------------------------------------------------|
+| Invalid `fileExt` query param         | Treated as a normal filter — the WHERE clause matches no rows and an empty page is returned. No error.  |
+| Invalid `sortBy` value                | Existing `SORT_COLUMN_MAP[...] ?? SORT_COLUMN_MAP.title` fallback handles unknown values.               |
+| `last_read` column is NULL            | `COALESCE(c.last_read, '')` places NULLs at the string-sort boundary (before any real datetime).        |
 
 ### Headless Mode Errors
 
-| Error | Handling |
-|-------|----------|
-| Database initialization failure in headless mode | `startHeadless()` logs the error to stderr and calls `process.exit(1)` so the process supervisor can detect the failure. |
-| Web server port already in use in headless mode | `startWebServer()` logs a warning (`EADDRINUSE`). `startHeadless()` catches the error and exits with code 1. |
-| SIGINT / SIGTERM received | The `shutdown` handler calls `app.quit()`, which triggers `before-quit` to close the HTTP server and release archive handles before the process exits. |
+| Error                                                 | Handling                                                                                                  |
+|-------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| Database initialization failure in headless mode      | `startHeadless()` logs the error to stderr and calls `process.exit(1)`.                                   |
+| Web server port already in use in headless mode       | `startWebServer()` logs a warning (`EADDRINUSE`). `startHeadless()` catches the exception and exits with 1. |
+| SIGINT / SIGTERM received                             | `shutdown` handler calls `app.quit()`, which triggers the existing `before-quit` cleanup.                 |
+| `registerIpcHandlers` auto-start already started the server | Guarded by `if (!webServerRef.handle)` before calling `startWebServer` directly (see §10 Notes).    |
 
 ### Edge Cases
 
-- **fileExt filter with mediaType filter**: Both filters are AND-composed in the SQL WHERE clause. If a user selects mediaType=comic and fileExt=epub, zero results are returned (correct behaviour — EPUBs are books, not comics).
-- **Progress badge for items at 0%**: `lastPage = 0` means "never opened" — no badge is shown. `lastPage = 1` on a 100-page item shows "1%".
-- **Format badge for unknown extensions**: If `fileExt` is empty or unrecognised, the badge falls back to the existing "Comic"/"Book" label.
-- **Headless mode with `--headless` and `CB8_HEADLESS=1` both set**: Both are checked with OR logic; setting both is harmless and equivalent to setting either one.
-- **Headless mode on macOS**: `app.dock?.hide()` is called; the optional chaining handles the case where `dock` is undefined (non-macOS platforms).
-- **`window-all-closed` in headless mode**: The handler returns early, preventing Electron from quitting the process. The process stays alive until SIGINT/SIGTERM.
+- **`fileExt` with `mediaType` that cannot match** (e.g., `mediaType='comic' & fileExt='epub'`): both filters are AND-composed in SQL, so an empty result set is returned — correct behaviour.
+- **Progress badge when `lastPage === 0`** (= "never opened"): no badge is shown. When `lastPage >= 1`, the percentage is clamped to the 1–100 range so a 1/100-page read shows "1%" not "0%".
+- **Format badge for unknown extensions**: if `fileExt` is empty or missing, falls back to the mediaType-based label ("Book" or "Comic").
+- **Headless mode with both `--headless` and `CB8_HEADLESS=1`**: harmless — either one activates headless mode; setting both is equivalent to setting one.
+- **Headless mode on macOS**: `app.dock?.hide()` uses optional chaining to handle non-macOS callers (where `dock` is `undefined`).
+- **`window-all-closed` in headless mode**: the handler returns early, preventing Electron from quitting.
+- **Tab_Panel open + user taps a card link in a route that is already active**: the hash-change fires anyway (browser default) and `closeTabPanel()` still runs, so the panel closes and the grid refreshes.
 
 ## Testing Strategy
 
 ### Unit Tests (Example-Based)
 
-Most requirements (1–7, 11–13) are CSS/layout and UI-interaction concerns. These are best tested with:
+Most requirements (1–7, 9–12) are CSS/layout and UI-interaction concerns. These are tested with:
 
-- **DOM snapshot tests**: Render components with JSDOM and assert element presence, class names, and attributes.
-- **CSS rule verification**: Check computed styles at specific viewport widths (requires a browser-like environment or manual verification).
-- **Event handler tests**: Simulate clicks on tab bar buttons, media strip pills, sort sheet options, and verify state changes and hash navigation.
+- **DOM tests** using JSDOM via Vitest: render the SPA shell, assert element presence, class names, `data-` attributes, and hash-change side effects.
+- **CSS rule verification**: assert computed styles at specific viewport widths via `matchMedia` mocking or manual verification.
+- **Event-handler tests**: simulate clicks/taps on Tab_Bar buttons, Media_Strip pills, File_Type_Strip chips, and Sort_Sheet options, and verify `state` mutations and `window.location.hash` changes.
 
 Key example tests:
-1. Tab bar renders 5 tabs with correct labels and data-tab attributes.
-2. Tapping each tab navigates to the correct hash route.
-3. Sub-navigation panel shows collections/folders/tags lists from API data.
-4. Empty sub-navigation panel shows "No collections" / "No folders" / "No tags" message.
-5. Media strip renders 3 pills; tapping one updates `state.mediaType`.
-6. File-type chip strip renders 6 chips; tapping one updates `state.fileExt`.
-7. Sort sheet lists 5 options including "Recently Read".
-8. Empty state variants show correct icon and message for each reason.
-9. Card thumbnail error handler replaces src with placeholder SVG.
-10. Format badge shows "EPUB" not "Book" for an epub record.
+
+1. Tab_Bar renders 5 `<button data-tab="…">` elements with correct labels.
+2. Tapping All / Recent tabs sets `window.location.hash` correctly.
+3. Tapping Collections / Folders / Tags opens the Tab_Panel with the correct list and title, without changing the hash.
+4. Empty Tab_Panel shows "No collections" / "No folders" / "No tags".
+5. Tapping the active Collections tab a second time closes the Tab_Panel.
+6. Media_Strip renders 3 pills; tapping one updates `state.mediaType` and re-queries.
+7. File_Type_Strip renders 6 chips; tapping one updates `state.fileExt` and re-queries.
+8. Sort_Sheet renders 5 options including "Recently Read"; selecting one updates `state.sortBy`, updates the mobile sort-button label and the desktop sort-select value, and closes the sheet.
+9. Empty state variants render the correct icon and message for each `reason` value.
+10. Card thumbnail `error` event replaces `src` with the placeholder SVG and keeps the wrapper dimensions.
+11. Format_Badge renders "EPUB" (not "Book") for an epub record, and "Book" for a record with empty `fileExt` and `mediaType='book'`.
+12. Progress_Badge renders "42%" for `lastPage=42, pageCount=100` and "In progress" for an EPUB with `lastLocation='epubcfi(/…)'` and `lastPage=null`.
+13. On mobile media query, Sidebar and hamburger are hidden; Tab_Bar is displayed.
+14. On desktop media query, Tab_Bar, Tab_Panel, Media_Strip, File_Type_Strip, and Sort_Sheet are all hidden.
 
 ### Property-Based Tests
 
-Property-based testing applies to the four properties identified above. These test pure logic that varies meaningfully with input.
+Property-based testing applies to the four properties identified above, using [fast-check](https://github.com/dubzzz/fast-check) (already available in this project's Vitest setup).
 
-**Library**: [fast-check](https://github.com/dubzzz/fast-check) (already available in the Node.js/Vitest ecosystem used by this project).
+**Configuration**: minimum 100 iterations per property test.
 
-**Configuration**: Minimum 100 iterations per property test.
-
-**Tag format**: Each test is tagged with a comment referencing the design property:
+**Tag format** (one comment per test):
 ```
 // Feature: web-library-mobile-ux, Property {N}: {title}
 ```
 
 **Property test plan:**
 
-1. **Filter Composition** (Property 1): Generate random arrays of comic record objects with random `mediaType` and `filePath` (ending in random extensions). Apply `queryComics`-equivalent filter logic. Assert all returned records match both the `mediaType` and `fileExt` filters.
-
-2. **Progress Badge Computation** (Property 2): Generate random `lastPage` ∈ [0, pageCount] and `pageCount` ∈ [1, 100000]. Call the badge computation function. Assert the output matches `Math.round(lastPage / pageCount * 100) + '%'` when lastPage > 0, and is null/undefined when lastPage is 0 or null.
-
-3. **Format Badge Text and Style** (Property 3): Generate random `fileExt` from the valid set. Call the badge rendering logic. Assert text equals `fileExt.toUpperCase()` and class is `'book'` for epub/pdf/mobi, default otherwise.
-
-4. **lastRead Sort Ordering** (Property 4): Generate random arrays of records with random `lastRead` timestamps (some null). Sort using the `COALESCE(last_read, '0')` logic. Assert non-null records come before null records, and non-null records are in descending timestamp order.
+1. **Filter Composition** (Property 1): generate random arrays of comic records with random `mediaType` and `filePath` ending in random extensions. Run the `queryComics`-equivalent filter logic in pure JS, then assert all returned records match both the `mediaType` and `fileExt` filters.
+2. **Progress Badge Computation** (Property 2): generate random `(lastPage, lastLocation, pageCount)` tuples. Call the badge computation function. Assert the output matches the spec from the property.
+3. **Format Badge Text and Style** (Property 3): generate random `fileExt` from the valid set plus empty. Call the badge rendering logic. Assert text equals `fileExt.toUpperCase()` and class is `book` for epub/pdf/mobi, default otherwise; empty `fileExt` falls back to mediaType label.
+4. **`lastRead` Sort Ordering** (Property 4): generate random arrays of records with random `lastRead` timestamps (some null). Sort using the `COALESCE(last_read, '')` logic. Assert the ordering invariants for both `asc` and `desc`.
 
 ### Integration Tests
 
-- Verify the full request cycle: client sends `?fileExt=epub&mediaType=book&sortBy=lastRead`, server returns correctly filtered and sorted results.
-- Verify the `lastRead` sort option appears in the `<select>` on desktop and in the sort sheet on mobile.
+- Issue `GET /api/comics?fileExt=epub&mediaType=book&sortBy=lastRead&sortOrder=desc` against a seeded SQLite database and assert the returned records satisfy all three constraints.
+- Verify the `lastRead` option appears in the desktop `<select>` and in the mobile Sort_Sheet.
+- Verify `queryComicsByLibrary` now returns records with non-null `lastLocation` for EPUBs that have been read (regression fix).
 
 ### Headless Mode Tests (Example-Based)
 
-Headless mode is best tested with example-based integration tests rather than property-based tests, since the behaviour is deterministic (flag on/off) and tests Electron lifecycle wiring rather than input-varying logic.
+Headless mode is deterministic (flag on/off) and tests Electron lifecycle wiring rather than input-varying logic — example-based tests are sufficient.
 
-Key example tests:
-1. When `process.argv` includes `--headless`, `isHeadless` is `true`.
-2. When `process.env.CB8_HEADLESS` is `'1'`, `isHeadless` is `true`.
-3. When neither flag nor env var is set, `isHeadless` is `false`.
-4. In headless mode, `createWindow()` is not called (no `BrowserWindow` created).
-5. In headless mode, the web server starts regardless of the stored `web_server_enabled` setting.
-6. In headless mode, `window-all-closed` does not quit the app.
+Key example tests (may require mocking the `electron` module):
+
+1. `process.argv.includes('--headless')` → `isHeadless === true`.
+2. `process.env.CB8_HEADLESS === '1'` → `isHeadless === true`.
+3. Neither set → `isHeadless === false`.
+4. In headless mode, `createWindow` is not called (no `BrowserWindow` instance).
+5. In headless mode, `startWebServer` is called even when `web_server_enabled === 'false'` in app_meta.
+6. In headless mode, `window-all-closed` does NOT call `app.quit()`.
 7. In headless mode on macOS, `app.dock.hide()` is called.
+8. In headless mode, a SIGINT event triggers `app.quit()`.
 
 ### Manual / Visual Testing
 
-- Verify CSS breakpoint behaviour at 640px boundary (tab bar appears/disappears, sidebar toggles).
-- Verify card grid visual stability during thumbnail loading (no CLS).
-- Verify badge positioning does not obscure card title.
-- Verify sticky navbar does not overlap first card row.
-- Verify desktop layout is unchanged (no regression).
+- Verify the 640px breakpoint boundary: Tab_Bar/Tab_Panel/Media_Strip/File_Type_Strip appear at 640px and hide at 641px; Sidebar inverts.
+- Verify the Card_Grid has no CLS while thumbnails load (Lighthouse or DevTools Performance panel).
+- Verify Progress_Badge positioning: does not overlap title or Format_Badge; is visible above the progress bar.
+- Verify sticky Navbar does not overlap the first row of cards and remains tappable while scrolling.
+- Verify the Tab_Bar is not obscured on iOS Safari (safe-area inset respected).
+- Verify desktop (> 640px) layout is visually identical to main except for the new "Recently Read" sort option.
+- Verify headless mode end-to-end: run `CB8_HEADLESS=1 npm start` (or `./out/CB8 --headless`), open the printed URL from a second device on the LAN, browse the library, send SIGINT, confirm clean shutdown.
