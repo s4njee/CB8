@@ -13,16 +13,34 @@
 import * as api from './api.js';
 import { renderLibrary } from './views/library.js';
 import { renderReader, destroyReader } from './views/reader.js';
+import { toggleAdminPanel, refreshSession, onAdminChange, isAuthenticated } from './admin.js';
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 const state = {
-  mediaType: '',      // '' | 'comic' | 'book'
-  sortBy: 'title',
-  search: '',
-  route: null,        // parsed route object
+  mediaType: '',       // '' | 'comic' | 'book'
+  sortBy:    'title',  // 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead'
+  search:    '',
+  fileExt:   '',       // '' | 'epub' | 'pdf' | 'cbz' | 'cbr' | 'mobi'
+  route:     null,
+  tabPanel:  null,     // null | 'collections' | 'folders' | 'tags'
+};
+
+// Cached sidebar data (also used to populate the mobile Tab_Panel).
+const sidebarCache = {
+  libraries: [],
+  folders: [],
+  tags: [],
+};
+
+const SORT_LABELS = {
+  title: 'Title',
+  dateAdded: 'Date added',
+  fileSize: 'File size',
+  pageCount: 'Pages',
+  lastRead: 'Recently Read',
 };
 
 // ---------------------------------------------------------------------------
@@ -39,6 +57,22 @@ export function showToast(msg) {
   el.textContent = msg;
   toastContainer.appendChild(el);
   setTimeout(() => el.remove(), 3000);
+}
+
+// Expose a subset of app state + updaters for view modules.
+export function getState() {
+  return state;
+}
+export function setMediaType(next) {
+  state.mediaType = next || '';
+  document.querySelectorAll('.media-btn').forEach((b) => {
+    b.classList.toggle('active', (b.dataset.type || '') === state.mediaType);
+  });
+  navigate();
+}
+export function setFileExt(next) {
+  state.fileExt = next || '';
+  navigate();
 }
 
 // ---------------------------------------------------------------------------
@@ -69,11 +103,15 @@ async function navigate() {
   const route = parseRoute(window.location.hash);
   state.route = route;
   updateSidebarActive(route);
+  updateTabBarActive();
 
   const overlay = document.getElementById('reader-overlay');
   const viewContainer = document.getElementById('view-container');
 
   if (route.type === 'read') {
+    closeTabPanel();
+    closeSortSheet();
+    document.body.classList.add('reader-open');
     overlay.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
     await renderReader(
@@ -85,17 +123,19 @@ async function navigate() {
   } else {
     destroyReader();
     overlay.classList.add('hidden');
+    document.body.classList.remove('reader-open');
     document.body.style.overflow = '';
     await renderLibrary(viewContainer, route, {
       mediaType: state.mediaType,
       sortBy: state.sortBy,
       search: state.search,
+      fileExt: state.fileExt,
     });
   }
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar population
+// Sidebar population (also populates the mobile Tab_Panel cache)
 // ---------------------------------------------------------------------------
 
 async function populateSidebar() {
@@ -105,6 +145,10 @@ async function populateSidebar() {
       api.fetchFolders(),
       api.fetchTags(),
     ]);
+
+    sidebarCache.libraries = libraries;
+    sidebarCache.folders = folders;
+    sidebarCache.tags = tags;
 
     const libList = document.getElementById('library-list');
     libList.innerHTML = '';
@@ -172,6 +216,132 @@ function updateSidebarActive(route) {
 }
 
 // ---------------------------------------------------------------------------
+// Tab bar
+// ---------------------------------------------------------------------------
+
+function updateTabBarActive() {
+  const route = state.route || { type: 'all' };
+  const panelKinds = new Set(['collections', 'folders', 'tags']);
+  document.querySelectorAll('#tab-bar button').forEach((btn) => {
+    const tab = btn.dataset.tab;
+    let active = false;
+    if (state.tabPanel && panelKinds.has(tab)) {
+      active = tab === state.tabPanel;
+    } else if (!state.tabPanel) {
+      if (tab === 'all' && route.type === 'all') active = true;
+      else if (tab === 'recent' && route.type === 'recent') active = true;
+    }
+    btn.classList.toggle('active', active);
+  });
+}
+
+function openTabPanel(kind) {
+  state.tabPanel = kind;
+  const panel = document.getElementById('tab-panel');
+  const title = document.getElementById('tab-panel-title');
+  const list = panel.querySelector('.tab-panel-list');
+
+  const titles = { collections: 'Collections', folders: 'Folders', tags: 'Tags' };
+  title.textContent = titles[kind];
+
+  list.innerHTML = '';
+  const items = tabPanelItems(kind);
+  if (items.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'tab-panel-empty';
+    const emptyLabels = {
+      collections: 'No collections',
+      folders: 'No folders',
+      tags: 'No tags',
+    };
+    li.textContent = emptyLabels[kind];
+    list.appendChild(li);
+  } else {
+    for (const it of items) {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = it.href;
+      a.addEventListener('click', () => closeTabPanel());
+      const name = document.createElement('span');
+      name.textContent = it.label;
+      a.appendChild(name);
+      if (it.count != null) {
+        const count = document.createElement('span');
+        count.className = 'tab-panel-count';
+        count.textContent = String(it.count);
+        a.appendChild(count);
+      }
+      li.appendChild(a);
+      list.appendChild(li);
+    }
+  }
+
+  panel.hidden = false;
+  updateTabBarActive();
+}
+
+function closeTabPanel() {
+  state.tabPanel = null;
+  const panel = document.getElementById('tab-panel');
+  if (panel) panel.hidden = true;
+  updateTabBarActive();
+}
+
+function tabPanelItems(kind) {
+  if (kind === 'collections') {
+    return sidebarCache.libraries.map((lib) => ({
+      href: `#/library/${lib.id}`,
+      label: lib.name,
+      count: lib.comicCount,
+    }));
+  }
+  if (kind === 'folders') {
+    return sidebarCache.folders.map((f) => ({
+      href: `#/folder/${f.id}`,
+      label: f.name,
+      count: f.comicCount,
+    }));
+  }
+  if (kind === 'tags') {
+    return sidebarCache.tags.map((name) => ({
+      href: `#/tag/${encodeURIComponent(name)}`,
+      label: name,
+    }));
+  }
+  return [];
+}
+
+// ---------------------------------------------------------------------------
+// Sort sheet
+// ---------------------------------------------------------------------------
+
+function openSortSheet() {
+  const sheet = document.getElementById('sort-sheet');
+  sheet.querySelectorAll('button[data-sort]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.sort === state.sortBy);
+  });
+  sheet.hidden = false;
+}
+
+function closeSortSheet() {
+  const sheet = document.getElementById('sort-sheet');
+  if (sheet) sheet.hidden = true;
+}
+
+function updateSortLabel() {
+  const label = document.querySelector('#sort-button .sort-button-label');
+  if (label) label.textContent = SORT_LABELS[state.sortBy] || 'Title';
+}
+
+function applySort(value) {
+  state.sortBy = value;
+  const select = document.getElementById('sort-select');
+  if (select) select.value = value;
+  updateSortLabel();
+  navigate();
+}
+
+// ---------------------------------------------------------------------------
 // Controls wiring
 // ---------------------------------------------------------------------------
 
@@ -187,42 +357,72 @@ function wireControls() {
     }, 280);
   });
 
-  // Sort
+  // Desktop sort <select>
   const sortSelect = document.getElementById('sort-select');
   sortSelect.addEventListener('change', () => {
-    state.sortBy = sortSelect.value;
-    navigate();
+    applySort(sortSelect.value);
   });
 
-  // Media type buttons
-  document.querySelectorAll('.media-btn').forEach((btn) => {
+  // Mobile sort button
+  const sortButton = document.getElementById('sort-button');
+  sortButton?.addEventListener('click', openSortSheet);
+
+  // Sort sheet interactions
+  const sortSheet = document.getElementById('sort-sheet');
+  sortSheet?.querySelector('.sort-sheet-backdrop')?.addEventListener('click', closeSortSheet);
+  sortSheet?.querySelectorAll('button[data-sort]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.media-btn').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.mediaType = btn.dataset.type;
-      navigate();
+      applySort(btn.dataset.sort);
+      closeSortSheet();
     });
   });
 
-  // Mobile sidebar toggle
-  const sidebarToggle = document.createElement('button');
-  sidebarToggle.id = 'sidebar-toggle';
-  sidebarToggle.setAttribute('aria-label', 'Toggle sidebar');
-  sidebarToggle.innerHTML = '☰';
-  document.getElementById('navbar').prepend(sidebarToggle);
-
-  const sidebar = document.getElementById('sidebar');
-  sidebarToggle.addEventListener('click', () => {
-    sidebar.classList.toggle('open');
-  });
-  // Close sidebar on navigation
-  sidebar.addEventListener('click', (e) => {
-    if (e.target.closest('a')) sidebar.classList.remove('open');
+  // Media type buttons (desktop toggle)
+  document.querySelectorAll('.media-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setMediaType(btn.dataset.type || '');
+    });
   });
 
-  // Keyboard: Escape closes reader
+  // Tab bar
+  document.querySelectorAll('#tab-bar button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      if (tab === 'all') {
+        closeTabPanel();
+        window.location.hash = '#/';
+      } else if (tab === 'recent') {
+        closeTabPanel();
+        window.location.hash = '#/recent';
+      } else if (tab === 'collections' || tab === 'folders' || tab === 'tags') {
+        if (state.tabPanel === tab) closeTabPanel();
+        else openTabPanel(tab);
+      }
+    });
+  });
+
+  // Tab panel close button
+  document.querySelector('.tab-panel-close')?.addEventListener('click', closeTabPanel);
+
+  // Admin button
+  document.getElementById('admin-button')?.addEventListener('click', toggleAdminPanel);
+  onAdminChange((authed) => {
+    document.body.classList.toggle('admin-authenticated', authed);
+    document.getElementById('admin-button')?.classList.toggle('active', authed);
+  });
+
+  // Re-navigate when admin mutates the library
+  window.addEventListener('cb8:library-changed', () => {
+    populateSidebar();
+    navigate();
+  });
+
+  // Keyboard: Escape closes reader / open overlays
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !document.getElementById('reader-overlay').classList.contains('hidden')) {
+    if (e.key !== 'Escape') return;
+    if (!document.getElementById('sort-sheet').hidden) { closeSortSheet(); return; }
+    if (!document.getElementById('tab-panel').hidden) { closeTabPanel(); return; }
+    if (!document.getElementById('reader-overlay').classList.contains('hidden')) {
       window.location.hash = '#/';
     }
   });
@@ -234,9 +434,13 @@ function wireControls() {
 
 async function init() {
   wireControls();
+  updateSortLabel();
+  await refreshSession();
   await populateSidebar();
   window.addEventListener('hashchange', navigate);
   await navigate();
 }
+
+export { isAuthenticated };
 
 init().catch(console.error);

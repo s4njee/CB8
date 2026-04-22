@@ -33,12 +33,13 @@ export interface ComicRecord {
 export interface QueryOptions {
   search?: string;
   tag?: string;
-  sortBy?: 'title' | 'dateAdded' | 'fileSize' | 'pageCount';
+  sortBy?: 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead';
   sortOrder?: 'asc' | 'desc';
   offset?: number;
   limit?: number;
   excludeFoldered?: boolean;
   mediaType?: 'comic' | 'book';
+  fileExt?: string;
 }
 
 export interface QueryResult {

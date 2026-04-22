@@ -87,6 +87,7 @@ const SORT_COLUMN_MAP: Record<string, string> = {
   dateAdded: 'c.date_added',
   fileSize: 'c.file_size',
   pageCount: 'c.page_count',
+  lastRead: "COALESCE(c.last_read, '')",
 };
 
 type SqlParam = string | number | bigint | Buffer | null;
@@ -299,6 +300,11 @@ export class LibraryDatabase {
       conditions.push('c.id NOT IN (SELECT comic_id FROM folder_comics)');
     }
 
+    if (options.fileExt) {
+      conditions.push('LOWER(c.file_path) LIKE ?');
+      params.push('%.' + options.fileExt.toLowerCase());
+    }
+
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const sortCol = SORT_COLUMN_MAP[options.sortBy ?? 'title'] ?? SORT_COLUMN_MAP.title;
     const sortDir = options.sortOrder === 'desc' ? 'DESC' : 'ASC';
@@ -459,6 +465,11 @@ export class LibraryDatabase {
       conditions.push('c.id NOT IN (SELECT comic_id FROM folder_comics)');
     }
 
+    if (options.fileExt) {
+      conditions.push('LOWER(c.file_path) LIKE ?');
+      params.push('%.' + options.fileExt.toLowerCase());
+    }
+
     const where = `WHERE ${conditions.join(' AND ')}`;
     const sortCol = SORT_COLUMN_MAP[options.sortBy ?? 'title'] ?? SORT_COLUMN_MAP.title;
     const sortDir = options.sortOrder === 'desc' ? 'DESC' : 'ASC';
@@ -470,7 +481,7 @@ export class LibraryDatabase {
     ).get(...params) as CountRow).cnt;
 
     const rows = this.db.prepare(
-      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_read, c.media_type
+      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
        FROM comics c ${where}
        ORDER BY ${sortCol} ${sortDir}
        LIMIT ? OFFSET ?`
@@ -614,6 +625,10 @@ export class LibraryDatabase {
       conditions.push('(c.title LIKE ? COLLATE NOCASE OR c.file_path LIKE ? COLLATE NOCASE)');
       const term = `%${options.search}%`;
       params.push(term, term);
+    }
+    if (options.fileExt) {
+      conditions.push('LOWER(c.file_path) LIKE ?');
+      params.push('%.' + options.fileExt.toLowerCase());
     }
     const where = `WHERE ${conditions.join(' AND ')}`;
     const sortCol = SORT_COLUMN_MAP[options.sortBy ?? 'title'] ?? SORT_COLUMN_MAP.title;

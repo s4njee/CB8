@@ -3,8 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import { registerIpcHandlers } from './ipcHandlers';
-import { closeAllHandles } from './webServer';
+import { closeAllHandles, startWebServer } from './webServer';
 import type { WebServerHandle } from './webServer';
+
+const isHeadless =
+  process.argv.includes('--headless') ||
+  process.env.CB8_HEADLESS === '1';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 try {
@@ -164,9 +168,55 @@ const createWindow = (): void => {
   // mainWindow.webContents.openDevTools();
 };
 
-app.on('ready', createWindow);
+function startHeadless(): void {
+  if (process.platform === 'darwin') {
+    app.dock?.hide();
+  }
+
+  try {
+    const userDataPath = app.getPath('userData');
+    const dbPath = path.join(userDataPath, 'library.db');
+    db = new LibraryDatabase(dbPath);
+    db.initialize();
+    registerIpcHandlers(db, webServerRef);
+  } catch (err) {
+    console.error('[CB8] Failed to initialize database or IPC:', err);
+    process.exit(1);
+  }
+
+  const rawPort = db!.getAppMeta('web_server_port');
+  const parsed = rawPort ? parseInt(rawPort, 10) : NaN;
+  const port = Number.isFinite(parsed)
+    ? Math.max(1024, Math.min(65535, parsed))
+    : 8008;
+
+  try {
+    if (!webServerRef.handle) {
+      webServerRef.handle = startWebServer(db!, port);
+    }
+  } catch (err) {
+    console.error('[CB8] Failed to start web server in headless mode:', err);
+    process.exit(1);
+  }
+
+  const shutdown = (): void => {
+    console.log('[CB8] Shutting down headless server…');
+    app.quit();
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+app.on('ready', () => {
+  if (isHeadless) {
+    startHeadless();
+  } else {
+    createWindow();
+  }
+});
 
 app.on('window-all-closed', () => {
+  if (isHeadless) return;
   if (process.platform !== 'darwin') {
     app.quit();
   }

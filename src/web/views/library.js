@@ -6,10 +6,39 @@
  */
 
 import * as api from '../api.js';
+import { getState, setMediaType, setFileExt } from '../app.js';
+import { isAuthenticated, bulkDeleteComics, onAdminChange } from '../admin.js';
 
 const PAGE_SIZE = 48;
 
-let currentFetch = null;   // AbortController not available in all contexts but we track the state
+const FILETYPE_PILLS = [
+  { ext: '',     label: 'All' },
+  { ext: 'epub', label: 'EPUB' },
+  { ext: 'pdf',  label: 'PDF' },
+  { ext: 'cbz',  label: 'CBZ' },
+  { ext: 'cbr',  label: 'CBR' },
+  { ext: 'mobi', label: 'MOBI' },
+];
+
+const MEDIA_PILLS = [
+  { type: '',      label: 'All' },
+  { type: 'comic', label: 'Comics' },
+  { type: 'book',  label: 'Books' },
+];
+
+// Inline neutral book placeholder (used when a thumbnail fails to load).
+const PLACEHOLDER_BOOK_SVG_DATA_URI =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 96" preserveAspectRatio="xMidYMid slice">
+       <rect width="64" height="96" fill="#1c1c1c"/>
+       <g fill="none" stroke="#444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+         <path d="M18 24h28v48H18z"/>
+         <path d="M18 24v48"/><path d="M22 32h20"/><path d="M22 40h20"/><path d="M22 48h14"/>
+       </g>
+     </svg>`,
+  );
+
 let offset = 0;
 let totalCount = 0;
 let loading = false;
@@ -19,6 +48,13 @@ let currentRoute = null;
 let currentOptions = null;
 let container = null;
 let grid = null;
+
+// Selection state (admin only)
+const selection = new Set();
+const orderedIds = [];
+let lastClickedId = null;
+let selectionBar = null;
+let adminUnsubscribe = null;
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -31,6 +67,28 @@ export async function renderLibrary(el, route, options) {
   totalCount = 0;
   loading = false;
   container = el;
+
+  // Reset selection on each render
+  selection.clear();
+  orderedIds.length = 0;
+  lastClickedId = null;
+  updateSelectionBar();
+
+  // Subscribe once to admin auth changes so entering/leaving admin mode
+  // re-renders the selection affordances on the grid.
+  if (!adminUnsubscribe) {
+    adminUnsubscribe = onAdminChange(() => {
+      selection.clear();
+      lastClickedId = null;
+      if (grid) {
+        grid.querySelectorAll('.comic-card').forEach((card) => {
+          syncCardSelection(card);
+          ensureCheckbox(card);
+        });
+      }
+      updateSelectionBar();
+    });
+  }
 
   // Disconnect any previous observer
   if (observer) { observer.disconnect(); observer = null; }
@@ -52,6 +110,9 @@ export async function renderLibrary(el, route, options) {
   header.appendChild(titleEl);
   header.appendChild(countEl);
   el.appendChild(header);
+
+  el.appendChild(buildMediaStrip());
+  el.appendChild(buildFileTypeStrip());
 
   grid = document.createElement('div');
   grid.className = 'comics-grid';
@@ -83,6 +144,46 @@ export async function renderLibrary(el, route, options) {
 }
 
 // ---------------------------------------------------------------------------
+// Mobile filter strips
+// ---------------------------------------------------------------------------
+
+function buildMediaStrip() {
+  const strip = document.createElement('div');
+  strip.className = 'media-strip';
+  strip.setAttribute('role', 'group');
+  strip.setAttribute('aria-label', 'Media type');
+  const current = getState().mediaType || '';
+  for (const { type, label } of MEDIA_PILLS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'strip-pill' + (type === current ? ' active' : '');
+    btn.dataset.type = type;
+    btn.textContent = label;
+    btn.addEventListener('click', () => setMediaType(type));
+    strip.appendChild(btn);
+  }
+  return strip;
+}
+
+function buildFileTypeStrip() {
+  const strip = document.createElement('div');
+  strip.className = 'filetype-strip';
+  strip.setAttribute('role', 'group');
+  strip.setAttribute('aria-label', 'File type');
+  const current = getState().fileExt || '';
+  for (const { ext, label } of FILETYPE_PILLS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'strip-pill' + (ext === current ? ' active' : '');
+    btn.dataset.ext = ext;
+    btn.textContent = label;
+    btn.addEventListener('click', () => setFileExt(ext));
+    strip.appendChild(btn);
+  }
+  return strip;
+}
+
+// ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
 
@@ -99,6 +200,7 @@ async function loadNextPage() {
       offset,
       limit: PAGE_SIZE,
       sortBy: currentOptions.sortBy || 'title',
+      sortOrder: currentOptions.sortBy === 'lastRead' ? 'desc' : undefined,
     };
 
     let result;
@@ -123,15 +225,16 @@ async function loadNextPage() {
     if (countEl) countEl.textContent = `${totalCount.toLocaleString()} item${totalCount !== 1 ? 's' : ''}`;
 
     if (result.records.length === 0 && offset === 0) {
-      renderEmpty();
+      renderEmpty(emptyReasonForRoute());
     } else {
       for (const record of result.records) {
         grid.appendChild(createCard(record));
+        orderedIds.push(record.id);
       }
     }
   } catch (err) {
     console.error('[CB8] Library load error:', err);
-    if (offset === 0) renderEmpty();
+    if (offset === 0) renderEmpty('offline');
   } finally {
     loading = false;
     const spinner = document.getElementById('grid-spinner');
@@ -139,9 +242,39 @@ async function loadNextPage() {
   }
 }
 
+function emptyReasonForRoute() {
+  const s = getState();
+  const hasFilter = Boolean(
+    s.search || s.mediaType || s.fileExt ||
+    (currentRoute && currentRoute.type === 'tag'),
+  );
+  if (hasFilter) return 'no-results';
+  if (currentRoute && currentRoute.type === 'recent') return 'no-recent';
+  return 'empty';
+}
+
 // ---------------------------------------------------------------------------
 // Card rendering
 // ---------------------------------------------------------------------------
+
+function formatBadgeFor(record) {
+  const ext = (record.fileExt || '').toLowerCase();
+  const isBookExt = ext === 'epub' || ext === 'pdf' || ext === 'mobi';
+  const label = ext
+    ? ext.toUpperCase()
+    : (record.mediaType === 'book' ? 'Book' : 'Comic');
+  const bookClass = isBookExt || (!ext && record.mediaType === 'book');
+  return { label, bookClass };
+}
+
+function progressLabelFor(record) {
+  if (record.pageCount > 0 && record.lastPage != null && record.lastPage > 0) {
+    const pct = Math.max(1, Math.min(100, Math.round((record.lastPage / record.pageCount) * 100)));
+    return `${pct}%`;
+  }
+  if (record.lastLocation) return 'In progress';
+  return null;
+}
 
 function createCard(record) {
   const card = document.createElement('div');
@@ -163,17 +296,29 @@ function createCard(record) {
   img.addEventListener('load', () => img.classList.remove('loading'));
   img.addEventListener('error', () => {
     img.classList.remove('loading');
-    img.style.opacity = '0.15';
+    img.src = PLACEHOLDER_BOOK_SVG_DATA_URI;
   });
 
+  const { label: badgeLabel, bookClass } = formatBadgeFor(record);
   const badge = document.createElement('div');
-  badge.className = `card-badge${record.mediaType === 'book' ? ' book' : ''}`;
-  badge.textContent = record.mediaType === 'book' ? 'Book' : 'Comic';
+  badge.className = `card-badge${bookClass ? ' book' : ''}`;
+  badge.textContent = badgeLabel;
 
   thumbWrap.appendChild(img);
   thumbWrap.appendChild(badge);
 
-  // Progress bar
+  ensureCheckbox(card);
+
+  // Progress badge
+  const progressLabel = progressLabelFor(record);
+  if (progressLabel) {
+    const pb = document.createElement('div');
+    pb.className = 'progress-badge';
+    pb.textContent = progressLabel;
+    thumbWrap.appendChild(pb);
+  }
+
+  // Progress bar (existing)
   if (record.lastPage && record.pageCount > 0) {
     const pct = Math.min(100, Math.round((record.lastPage / record.pageCount) * 100));
     const bar = document.createElement('div');
@@ -200,29 +345,269 @@ function createCard(record) {
   card.appendChild(thumbWrap);
   card.appendChild(info);
 
-  // Navigation
+  // Navigation / selection
   const open = () => { window.location.hash = `#/read/${record.id}`; };
-  card.addEventListener('click', open);
+  card.addEventListener('click', (e) => {
+    if (!isAuthenticated()) { open(); return; }
+    e.preventDefault();
+    if (e.shiftKey) selectRangeTo(record.id);
+    else toggleSelection(record.id);
+  });
+  card.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    open();
+  });
   card.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+  card.addEventListener('contextmenu', (e) => {
+    if (!isAuthenticated()) return;
+    e.preventDefault();
+    openContextMenu(e.clientX, e.clientY, record.id);
   });
 
   return card;
 }
 
-function renderEmpty() {
+// ---------------------------------------------------------------------------
+// Right-click context menu (admin only)
+// ---------------------------------------------------------------------------
+
+let contextMenu = null;
+
+function closeContextMenu() {
+  contextMenu?.remove();
+  contextMenu = null;
+  document.removeEventListener('click', onDocClickCloseMenu, true);
+  document.removeEventListener('keydown', onDocKeyCloseMenu, true);
+  window.removeEventListener('resize', closeContextMenu);
+  window.removeEventListener('scroll', closeContextMenu, true);
+}
+
+function onDocClickCloseMenu(e) {
+  if (contextMenu && !contextMenu.contains(e.target)) closeContextMenu();
+}
+
+function onDocKeyCloseMenu(e) {
+  if (e.key === 'Escape') closeContextMenu();
+}
+
+function openContextMenu(x, y, targetId) {
+  closeContextMenu();
+
+  // If the right-clicked card isn't already selected, treat it as the sole target.
+  const targets = selection.has(targetId) ? Array.from(selection) : [targetId];
+
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-action="open">Open</button>
+    <button type="button" role="menuitem" data-action="select">
+      ${selection.has(targetId) ? 'Deselect' : 'Select'}
+    </button>
+    <div class="context-menu-sep"></div>
+    <button type="button" role="menuitem" class="danger" data-action="delete">
+      Delete${targets.length > 1 ? ` ${targets.length} items` : ''}
+    </button>
+  `;
+
+  // Position, clamped to the viewport
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - 4;
+  const maxY = window.innerHeight - rect.height - 4;
+  menu.style.left = `${Math.max(4, Math.min(x, maxX))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, maxY))}px`;
+  contextMenu = menu;
+
+  menu.querySelector('[data-action="open"]').addEventListener('click', () => {
+    closeContextMenu();
+    window.location.hash = `#/read/${targetId}`;
+  });
+  menu.querySelector('[data-action="select"]').addEventListener('click', () => {
+    closeContextMenu();
+    toggleSelection(targetId);
+  });
+  menu.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+    closeContextMenu();
+    const { removed } = await bulkDeleteComics(targets);
+    for (const id of removed) {
+      selection.delete(id);
+      grid?.querySelector(`.comic-card[data-id="${id}"]`)?.remove();
+      const idx = orderedIds.indexOf(id);
+      if (idx >= 0) orderedIds.splice(idx, 1);
+    }
+    lastClickedId = null;
+    updateSelectionBar();
+  });
+
+  // Defer so this event doesn't immediately close the menu
+  setTimeout(() => {
+    document.addEventListener('click', onDocClickCloseMenu, true);
+    document.addEventListener('keydown', onDocKeyCloseMenu, true);
+    window.addEventListener('resize', closeContextMenu);
+    window.addEventListener('scroll', closeContextMenu, true);
+  }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Selection (admin only)
+// ---------------------------------------------------------------------------
+
+function ensureCheckbox(card) {
+  const id = Number(card.dataset.id);
+  const existing = card.querySelector('.card-checkbox');
+  if (!isAuthenticated()) {
+    existing?.remove();
+    card.classList.remove('selected');
+    return;
+  }
+  if (existing) {
+    syncCardSelection(card);
+    return;
+  }
+  const box = document.createElement('button');
+  box.type = 'button';
+  box.className = 'card-checkbox';
+  box.setAttribute('aria-label', 'Select');
+  box.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.shiftKey) selectRangeTo(id);
+    else toggleSelection(id);
+  });
+  const thumbWrap = card.querySelector('.card-thumb-wrap');
+  thumbWrap?.appendChild(box);
+  syncCardSelection(card);
+}
+
+function syncCardSelection(card) {
+  const id = Number(card.dataset.id);
+  const selected = selection.has(id);
+  card.classList.toggle('selected', selected);
+  card.setAttribute('aria-selected', selected ? 'true' : 'false');
+}
+
+function toggleSelection(id) {
+  if (selection.has(id)) selection.delete(id);
+  else selection.add(id);
+  lastClickedId = id;
+  const card = grid?.querySelector(`.comic-card[data-id="${id}"]`);
+  if (card) syncCardSelection(card);
+  updateSelectionBar();
+}
+
+function selectRangeTo(id) {
+  if (lastClickedId == null) {
+    toggleSelection(id);
+    return;
+  }
+  const from = orderedIds.indexOf(lastClickedId);
+  const to = orderedIds.indexOf(id);
+  if (from < 0 || to < 0) {
+    toggleSelection(id);
+    return;
+  }
+  const [lo, hi] = from <= to ? [from, to] : [to, from];
+  for (let i = lo; i <= hi; i++) selection.add(orderedIds[i]);
+  grid?.querySelectorAll('.comic-card').forEach(syncCardSelection);
+  updateSelectionBar();
+}
+
+function clearSelection() {
+  selection.clear();
+  lastClickedId = null;
+  grid?.querySelectorAll('.comic-card.selected').forEach((card) => {
+    card.classList.remove('selected');
+    card.setAttribute('aria-selected', 'false');
+  });
+  updateSelectionBar();
+}
+
+function updateSelectionBar() {
+  if (selection.size === 0) {
+    selectionBar?.remove();
+    selectionBar = null;
+    return;
+  }
+  if (!selectionBar) {
+    selectionBar = document.createElement('div');
+    selectionBar.className = 'selection-bar';
+    selectionBar.innerHTML = `
+      <span class="selection-count"></span>
+      <div class="selection-actions">
+        <button type="button" class="selection-btn-secondary" data-action="clear">Cancel</button>
+        <button type="button" class="selection-btn-danger" data-action="delete">Delete</button>
+      </div>
+    `;
+    document.body.appendChild(selectionBar);
+    selectionBar.querySelector('[data-action="clear"]').addEventListener('click', clearSelection);
+    selectionBar.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+      const ids = Array.from(selection);
+      const { removed } = await bulkDeleteComics(ids);
+      for (const id of removed) {
+        selection.delete(id);
+        grid?.querySelector(`.comic-card[data-id="${id}"]`)?.remove();
+        const idx = orderedIds.indexOf(id);
+        if (idx >= 0) orderedIds.splice(idx, 1);
+      }
+      lastClickedId = null;
+      updateSelectionBar();
+    });
+  }
+  selectionBar.querySelector('.selection-count').textContent =
+    `${selection.size} selected`;
+}
+
+function renderEmpty(reason) {
   if (!grid) return;
   grid.innerHTML = '';
   const empty = document.createElement('div');
   empty.className = 'empty-state';
-  empty.innerHTML = `
-    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-    </svg>
-    <p>No items found</p>
-  `;
+  empty.innerHTML = emptyStateMarkup(reason);
   grid.appendChild(empty);
+}
+
+function emptyStateMarkup(reason) {
+  const svgAttrs = 'width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
+  switch (reason) {
+    case 'offline':
+      return `
+        <svg ${svgAttrs}>
+          <path d="M2 2l20 20"/>
+          <path d="M8.5 16.5A5 5 0 0 1 12 15a5 5 0 0 1 3.5 1.5"/>
+          <path d="M5 12.5A8 8 0 0 1 10 10"/>
+          <path d="M19 12a8 8 0 0 0-5.5-7.6"/>
+          <path d="M2 8.8A13 13 0 0 1 7 6"/>
+        </svg>
+        <p>Cannot reach the server. Check your connection.</p>
+      `;
+    case 'no-results':
+      return `
+        <svg ${svgAttrs}>
+          <circle cx="11" cy="11" r="7"/>
+          <path d="m20 20-3.5-3.5"/>
+        </svg>
+        <p>No items match your search or filters.</p>
+      `;
+    case 'no-recent':
+      return `
+        <svg ${svgAttrs}>
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 7v5l3 2"/>
+        </svg>
+        <p>Nothing read yet. Open a book or comic to get started.</p>
+      `;
+    case 'empty':
+    default:
+      return `
+        <svg ${svgAttrs}>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+        </svg>
+        <p>No items found.</p>
+      `;
+  }
 }
 
 // ---------------------------------------------------------------------------

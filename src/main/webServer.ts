@@ -14,9 +14,15 @@ import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as url from 'node:url';
+import * as crypto from 'node:crypto';
+import { app, dialog, BrowserWindow } from 'electron';
 import { LibraryDatabase } from './libraryDatabase';
 import * as ArchiveLoader from './archiveLoader';
 import type { ArchiveHandle } from './archiveLoader';
+import { FileScannerImpl } from './fileScanner';
+import { extractEpubCover } from './epubCoverExtractor';
+import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
+import { generateThumbnail } from './thumbnailGenerator';
 import type { QueryOptions } from '../shared/types';
 
 // ---------------------------------------------------------------------------
@@ -102,6 +108,191 @@ export async function closeAllHandles(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Admin auth (session cookie)
+// ---------------------------------------------------------------------------
+
+/** Hardcoded admin password, stored as base64("gentrification"). */
+const ADMIN_PASSWORD_B64 = 'Z2VudHJpZmljYXRpb24=';
+const SESSION_COOKIE = 'cb8_admin';
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+const sessions = new Map<string, { expiresAt: number }>();
+
+/**
+ * "Superadmin" = authenticated admin whose connection originates from the
+ * host machine itself (loopback). Host-path features require this because
+ * paths only make sense for someone sitting at the server.
+ */
+function isHostConnection(req: http.IncomingMessage): boolean {
+  const addr = req.socket.remoteAddress ?? '';
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const pair of header.split(';')) {
+    const eq = pair.indexOf('=');
+    if (eq < 0) continue;
+    const k = pair.slice(0, eq).trim();
+    const v = pair.slice(eq + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  }
+  return out;
+}
+
+function isAuthenticated(req: http.IncomingMessage): boolean {
+  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+  if (!token) return false;
+  const session = sessions.get(token);
+  if (!session) return false;
+  if (session.expiresAt < Date.now()) {
+    sessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function isSuperadmin(req: http.IncomingMessage): boolean {
+  return isAuthenticated(req) && isHostConnection(req);
+}
+
+function setSessionCookie(res: http.ServerResponse, token: string): void {
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
+}
+
+function clearSessionCookie(res: http.ServerResponse): void {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+}
+
+function checkPassword(submitted: string): boolean {
+  const encoded = Buffer.from(submitted, 'utf8').toString('base64');
+  const a = Buffer.from(encoded);
+  const b = Buffer.from(ADMIN_PASSWORD_B64);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+// ---------------------------------------------------------------------------
+// Admin helpers: ingest a file or directory in-place
+// ---------------------------------------------------------------------------
+
+const COMIC_EXTS = new Set(['.cbz', '.cbr']);
+const BOOK_EXTS = new Set(['.pdf', '.epub', '.mobi']);
+const COVER_EXTRACTION_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+async function addSingleFile(db: LibraryDatabase, filePath: string): Promise<{ added: boolean; error?: string }> {
+  const ext = path.extname(filePath).toLowerCase();
+  if (!COMIC_EXTS.has(ext) && !BOOK_EXTS.has(ext)) {
+    return { added: false, error: 'Unsupported file type' };
+  }
+  if (db.comicExistsByPath(filePath)) return { added: false };
+  try {
+    const stats = fs.statSync(filePath);
+    const title = path.basename(filePath, ext);
+
+    if (BOOK_EXTS.has(ext)) {
+      let pageCount = 0;
+      if (ext === '.pdf') {
+        try { pageCount = await withTimeout(getPdfPageCount(filePath), COVER_EXTRACTION_TIMEOUT_MS); } catch { /* ignore */ }
+      }
+      const record = db.addComic({
+        filePath, title, pageCount, fileSize: stats.size,
+        coverThumbnail: null, tags: [], mediaType: 'book',
+        lastPage: null, lastLocation: null, lastRead: null,
+      });
+      if (ext === '.epub' || ext === '.pdf') {
+        try {
+          const coverThumbnail = ext === '.epub'
+            ? generateThumbnail(await withTimeout(extractEpubCover(filePath), COVER_EXTRACTION_TIMEOUT_MS))
+            : await withTimeout(renderPdfFirstPageCover(filePath), COVER_EXTRACTION_TIMEOUT_MS);
+          if (coverThumbnail) db.updateCoverThumbnailByPath(record.filePath, coverThumbnail);
+        } catch { /* placeholder thumbnail */ }
+      }
+      return { added: true };
+    }
+
+    const handle = await ArchiveLoader.open(filePath);
+    try {
+      let coverImage: Buffer | null = null;
+      try { coverImage = await ArchiveLoader.getCoverImage(handle); } catch { /* placeholder */ }
+      const coverThumbnail = generateThumbnail(coverImage);
+      db.addComic({
+        filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
+        coverThumbnail, tags: [], mediaType: 'comic',
+        lastPage: null, lastLocation: null, lastRead: null,
+      });
+    } finally {
+      await ArchiveLoader.close(handle);
+    }
+    return { added: true };
+  } catch (err) {
+    return { added: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+type IngestEvent =
+  | { type: 'progress'; phase: 'comics' | 'books' | 'file'; discovered: number; processed: number; currentFile: string }
+  | { type: 'error'; message: string }
+  | { type: 'done'; added: number };
+
+async function ingestPathStreaming(
+  db: LibraryDatabase,
+  targetPath: string,
+  emit: (event: IngestEvent) => void,
+): Promise<void> {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(targetPath);
+  } catch (err) {
+    emit({ type: 'error', message: `Cannot access path: ${err instanceof Error ? err.message : String(err)}` });
+    emit({ type: 'done', added: 0 });
+    return;
+  }
+
+  if (stat.isDirectory()) {
+    const scanner = new FileScannerImpl(db);
+    let added = 0;
+    try {
+      added += await scanner.scan(targetPath, (p) => {
+        emit({ type: 'progress', phase: 'comics', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
+      });
+    } catch (err) {
+      emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+    try {
+      added += await scanner.scanBooks(targetPath, (p) => {
+        emit({ type: 'progress', phase: 'books', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
+      });
+    } catch (err) {
+      emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+    emit({ type: 'done', added });
+    return;
+  }
+
+  if (stat.isFile()) {
+    emit({ type: 'progress', phase: 'file', discovered: 1, processed: 0, currentFile: path.basename(targetPath) });
+    const result = await addSingleFile(db, targetPath);
+    emit({ type: 'progress', phase: 'file', discovered: 1, processed: 1, currentFile: path.basename(targetPath) });
+    if (result.error) emit({ type: 'error', message: `${targetPath}: ${result.error}` });
+    emit({ type: 'done', added: result.added ? 1 : 0 });
+    return;
+  }
+
+  emit({ type: 'error', message: 'Path is not a regular file or directory' });
+  emit({ type: 'done', added: 0 });
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -128,6 +319,7 @@ function parseQueryOptions(query: Record<string, string>): QueryOptions {
   if (query.limit) options.limit = Math.min(parseInt(query.limit, 10), 200);
   if (query.mediaType) options.mediaType = query.mediaType as 'comic' | 'book';
   if (query.excludeFoldered) options.excludeFoldered = query.excludeFoldered === 'true';
+  if (query.fileExt) options.fileExt = String(query.fileExt).toLowerCase().replace(/^\./, '');
   return options;
 }
 
@@ -217,7 +409,7 @@ async function handleRequest(
 
   // CORS preflight
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (method === 'OPTIONS') {
     res.writeHead(204);
@@ -230,6 +422,249 @@ async function handleRequest(
   // -------------------------------------------------------------------------
 
   if (pathname.startsWith('/api/')) {
+    // --- Admin: session status --------------------------------------------
+    if (method === 'GET' && pathname === '/api/admin/session') {
+      return sendJson(res, 200, {
+        authenticated: isAuthenticated(req),
+        host: isHostConnection(req),
+      });
+    }
+
+    // --- Admin: login ------------------------------------------------------
+    if (method === 'POST' && pathname === '/api/admin/login') {
+      const body = await readBody(req);
+      let parsed: { password?: string };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.password !== 'string' || !checkPassword(parsed.password)) {
+        return sendError(res, 401, 'Invalid password');
+      }
+      const token = crypto.randomBytes(32).toString('hex');
+      sessions.set(token, { expiresAt: Date.now() + SESSION_TTL_MS });
+      setSessionCookie(res, token);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- Admin: logout -----------------------------------------------------
+    if (method === 'POST' && pathname === '/api/admin/logout') {
+      const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+      if (token) sessions.delete(token);
+      clearSessionCookie(res);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- Admin: native file / folder picker --------------------------------
+    // Pops the OS dialog on the Electron host. Only useful when the admin is
+    // sitting at the machine running the app.
+    if (method === 'POST' && pathname === '/api/admin/pick-path') {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const body = await readBody(req);
+      let parsed: { kind?: 'file' | 'directory' };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      const kind = parsed.kind === 'directory' ? 'directory' : 'file';
+
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+      const properties: ('openFile' | 'openDirectory')[] = kind === 'directory' ? ['openDirectory'] : ['openFile'];
+      const filters = kind === 'file'
+        ? [{ name: 'Comics & Books', extensions: ['cbz', 'cbr', 'epub', 'pdf', 'mobi'] }]
+        : undefined;
+
+      try {
+        const result = win
+          ? await dialog.showOpenDialog(win, { properties, filters })
+          : await dialog.showOpenDialog({ properties, filters });
+        if (result.canceled || result.filePaths.length === 0) {
+          return sendJson(res, 200, { path: null });
+        }
+        return sendJson(res, 200, { path: result.filePaths[0] });
+      } catch (err) {
+        return sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // --- Admin: upload a single file (streaming raw body) ------------------
+    // Client sends one POST per file with `X-CB8-Filename` (required) and
+    // `X-CB8-Relpath` (optional, for folder-drops — forward slashes only).
+    // Both headers are percent-encoded to carry non-ASCII names safely.
+    if (method === 'POST' && pathname === '/api/admin/upload') {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+
+      const rawName = req.headers['x-cb8-filename'];
+      const rawRel = req.headers['x-cb8-relpath'];
+      if (typeof rawName !== 'string' || !rawName) {
+        return sendError(res, 400, 'Missing X-CB8-Filename header');
+      }
+
+      let filename: string;
+      let relPath: string;
+      try {
+        filename = decodeURIComponent(rawName);
+        relPath = typeof rawRel === 'string' && rawRel ? decodeURIComponent(rawRel) : filename;
+      } catch {
+        return sendError(res, 400, 'Headers are not valid percent-encoded UTF-8');
+      }
+
+      // Reject null bytes, absolute paths, and any traversal component.
+      const isBad = (s: string): boolean =>
+        s.includes('\0') || s.startsWith('/') || s.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(s);
+      if (isBad(filename) || isBad(relPath) || path.basename(filename) !== filename) {
+        return sendError(res, 400, 'Invalid filename');
+      }
+      const relParts = relPath.replace(/\\/g, '/').split('/').filter(Boolean);
+      if (relParts.length === 0 || relParts.some((p) => p === '..' || p === '.')) {
+        return sendError(res, 400, 'Invalid relative path');
+      }
+
+      const ext = path.extname(filename).toLowerCase();
+      if (!COMIC_EXTS.has(ext) && !BOOK_EXTS.has(ext)) {
+        return sendError(res, 415, 'Unsupported file type');
+      }
+
+      const baseDir = path.join(app.getPath('userData'), 'web-uploads');
+      const destPath = path.resolve(baseDir, ...relParts);
+      if (!destPath.startsWith(path.resolve(baseDir) + path.sep)) {
+        return sendError(res, 400, 'Resolved path escapes upload directory');
+      }
+
+      try {
+        await fsp.mkdir(path.dirname(destPath), { recursive: true });
+      } catch (err) {
+        return sendError(res, 500, err instanceof Error ? err.message : String(err));
+      }
+
+      // If the file already exists in the library, skip the write entirely.
+      if (db.comicExistsByPath(destPath)) {
+        // Drain the request body so the client can finish its upload cleanly.
+        req.resume();
+        await new Promise<void>((resolve) => req.on('end', () => resolve()).on('error', () => resolve()));
+        return sendJson(res, 200, { added: false, skipped: true, reason: 'Already in library', filePath: destPath });
+      }
+
+      const writeStream = fs.createWriteStream(destPath);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          req.on('error', reject);
+          writeStream.on('error', reject);
+          writeStream.on('finish', () => resolve());
+          req.pipe(writeStream);
+        });
+      } catch (err) {
+        writeStream.destroy();
+        await fsp.unlink(destPath).catch(() => {});
+        return sendError(res, 500, `Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      const result = await addSingleFile(db, destPath);
+      if (!result.added && result.error) {
+        await fsp.unlink(destPath).catch(() => {});
+        return sendError(res, 500, result.error);
+      }
+      return sendJson(res, 200, { added: result.added, filePath: destPath });
+    }
+
+    // --- Admin: list directory (path autocomplete) -------------------------
+    // Returns entries for the given partial path. If the path ends with `/`
+    // (or is a directory), list its children; otherwise list the parent's
+    // children filtered by basename prefix.
+    if (method === 'GET' && pathname === '/api/admin/list-dir') {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const raw = typeof query.path === 'string' ? query.path : '';
+      if (!raw) return sendJson(res, 200, { dir: '', entries: [] });
+
+      let dir: string;
+      let prefix = '';
+      try {
+        const stat = fs.statSync(raw);
+        if (stat.isDirectory()) {
+          dir = raw;
+        } else {
+          dir = path.dirname(raw);
+          prefix = path.basename(raw);
+        }
+      } catch {
+        dir = path.dirname(raw);
+        prefix = path.basename(raw);
+      }
+
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const lowerPrefix = prefix.toLowerCase();
+        const matches = entries
+          .filter((e) => !e.name.startsWith('.') && e.name.toLowerCase().startsWith(lowerPrefix))
+          .map((e) => {
+            const isDir = e.isDirectory();
+            const full = path.join(dir, e.name);
+            return { name: e.name, path: isDir ? full + path.sep : full, isDir };
+          })
+          .filter((e) => {
+            if (e.isDir) return true;
+            const ext = path.extname(e.name).toLowerCase();
+            return COMIC_EXTS.has(ext) || BOOK_EXTS.has(ext);
+          })
+          .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
+          .slice(0, 50);
+        return sendJson(res, 200, { dir, entries: matches });
+      } catch (err) {
+        return sendError(res, 400, err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // --- Admin: add path (scan) — streaming NDJSON -------------------------
+    if (method === 'POST' && pathname === '/api/admin/add-path') {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const body = await readBody(req);
+      let parsed: { path?: string };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.path !== 'string' || !parsed.path.trim()) {
+        return sendError(res, 400, 'Provide "path" (string)');
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+      });
+
+      // Throttle progress emissions so 10k-file scans don't flood the socket.
+      let lastEmit = 0;
+      let lastProcessed = -1;
+      const emit = (event: IngestEvent): void => {
+        if (event.type === 'progress') {
+          const now = Date.now();
+          const isFirst = event.processed === 0;
+          const isLast = event.processed === event.discovered && event.discovered > 0;
+          if (!isFirst && !isLast && now - lastEmit < 100 && event.processed === lastProcessed) return;
+          lastEmit = now;
+          lastProcessed = event.processed;
+        }
+        res.write(JSON.stringify(event) + '\n');
+      };
+
+      try {
+        await ingestPathStreaming(db, parsed.path.trim(), emit);
+      } catch (err) {
+        emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+        emit({ type: 'done', added: 0 });
+      }
+      res.end();
+      return;
+    }
+
+    // --- DELETE /api/comics/:id (admin-only) -------------------------------
+    const deleteMatch = pathname.match(/^\/api\/comics\/(\d+)$/);
+    if (method === 'DELETE' && deleteMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(deleteMatch[1], 10);
+      if (!db.getComic(id)) return sendError(res, 404, 'Comic not found');
+      // Evict from archive handle cache before removing the DB row
+      const entry = handleCache.get(id);
+      if (entry) {
+        await ArchiveLoader.close(entry.handle).catch(() => {});
+        handleCache.delete(id);
+      }
+      db.removeComics([id]);
+      return sendJson(res, 200, { ok: true });
+    }
+
     // --- GET /api/comics ----------------------------------------------------
     if (method === 'GET' && pathname === '/api/comics') {
       const opts = parseQueryOptions(query);

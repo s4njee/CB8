@@ -92,3 +92,136 @@ export async function updateLocation(id, location) {
     body: JSON.stringify({ location }),
   });
 }
+
+// --- Admin ---
+
+export async function adminSession() {
+  const res = await fetch(`${API}/api/admin/session`);
+  if (!res.ok) return { authenticated: false };
+  return res.json();
+}
+
+export async function adminLogin(password) {
+  const res = await fetch(`${API}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  return res.ok;
+}
+
+export async function adminLogout() {
+  await fetch(`${API}/api/admin/logout`, { method: 'POST' });
+}
+
+/**
+ * Pop the Electron native picker on the server host.
+ * Returns { path: string | null } (null when cancelled).
+ */
+export async function adminPickPath(kind) {
+  const res = await fetch(`${API}/api/admin/pick-path`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Start a server-side scan. `onProgress` is called with each
+ * {type:'progress', phase, discovered, processed, currentFile} event.
+ * Resolves with { added, errors } after the 'done' event.
+ */
+export async function adminAddPath(targetPath, onProgress) {
+  const res = await fetch(`${API}/api/admin/add-path`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: targetPath }),
+  });
+  if (!res.ok || !res.body) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let added = 0;
+  const errors = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let msg;
+      try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.type === 'progress') onProgress?.(msg);
+      else if (msg.type === 'error') errors.push(msg.message);
+      else if (msg.type === 'done') added = msg.added ?? 0;
+    }
+  }
+  return { added, errors };
+}
+
+/**
+ * List directory entries for path autocomplete. Filters to directories and
+ * supported file types. Returns up to 50 matches.
+ */
+export async function adminListDir(partialPath) {
+  const res = await fetch(`${API}/api/admin/list-dir?path=${encodeURIComponent(partialPath)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Upload a single file using a raw-body POST. Uses XHR because `fetch` has no
+ * upload-progress events in browsers.
+ *
+ * `relPath` may include forward-slash-separated subdirs (for folder drops).
+ * Returns { added, skipped?, reason?, filePath } on success.
+ */
+export function adminUploadFile(file, relPath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API}/api/admin/upload`);
+    xhr.responseType = 'json';
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-CB8-Filename', encodeURIComponent(file.name));
+    xhr.setRequestHeader('X-CB8-Relpath', encodeURIComponent(relPath || file.name));
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.response || {});
+      } else {
+        const msg = xhr.response?.error || `HTTP ${xhr.status}`;
+        reject(new Error(msg));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.onabort = () => reject(new Error('Upload aborted'));
+    xhr.send(file);
+  });
+}
+
+export async function deleteComic(id) {
+  const res = await fetch(`${API}/api/comics/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
