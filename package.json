@@ -28,6 +28,7 @@
     "@electron/notarize": "^3.1.1",
     "@electron/osx-sign": "^2.4.0",
     "@electron/rebuild": "^3.7.0",
+    "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -46,7 +47,8 @@
       "electron-winstaller",
       "esbuild",
       "fs-xattr",
-      "macos-alias"
+      "macos-alias",
+      "sharp"
     ]
   },
   "dependencies": {
@@ -54,6 +56,7 @@
     "@napi-rs/canvas": "^0.1.99",
     "@tanstack/react-virtual": "^3.11.2",
     "@tanstack/virtual-core": "^3.14.0",
+    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.7.0",
     "epubjs": "^0.3.93",
     "node-unrar-js": "^2.0.0",
@@ -61,6 +64,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "scheduler": "^0.27.0",
+    "sharp": "^0.34.5",
     "yauzl": "^3.2.0"
   }
 }

@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as url from 'node:url';
 import * as crypto from 'node:crypto';
+import * as bcrypt from 'bcryptjs';
 import { app, dialog, BrowserWindow } from 'electron';
 import { LibraryDatabase } from './libraryDatabase';
 import * as ArchiveLoader from './archiveLoader';
@@ -23,6 +24,9 @@ import { FileScannerImpl } from './fileScanner';
 import { extractEpubCover } from './epubCoverExtractor';
 import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
 import { generateThumbnail } from './thumbnailGenerator';
+import { parseSeriesFromFilename } from './seriesParser';
+import { getCachedOrResize, invalidateCacheForComic } from './imageResizer';
+import { searchMetadata } from './metadataScraper';
 import type { QueryOptions } from '../shared/types';
 
 // ---------------------------------------------------------------------------
@@ -108,15 +112,21 @@ export async function closeAllHandles(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Admin auth (session cookie)
+// Auth (session cookie, multi-user)
 // ---------------------------------------------------------------------------
 
-/** Hardcoded admin password, stored as base64("gentrification"). */
-const ADMIN_PASSWORD_B64 = 'Z2VudHJpZmljYXRpb24=';
+/** Legacy hardcoded admin password, migrated to the first users row on startup. */
+const LEGACY_ADMIN_PASSWORD = 'gentrification';
 const SESSION_COOKIE = 'cb8_admin';
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const GUEST_ACCESS_KEY = 'guest_access';
 
-const sessions = new Map<string, { expiresAt: number }>();
+interface SessionData {
+  userId: number;
+  expiresAt: number;
+}
+
+const sessions = new Map<string, SessionData>();
 
 // Path is set once the Electron app is ready (userData is available).
 let sessionsFilePath = '';
@@ -125,10 +135,12 @@ function loadSessions(): void {
   if (!sessionsFilePath) return;
   try {
     const raw = fs.readFileSync(sessionsFilePath, 'utf8');
-    const parsed: Record<string, { expiresAt: number }> = JSON.parse(raw);
+    const parsed: Record<string, SessionData> = JSON.parse(raw);
     const now = Date.now();
     for (const [token, data] of Object.entries(parsed)) {
-      if (data.expiresAt > now) sessions.set(token, data);
+      if (data.expiresAt > now && typeof data.userId === 'number') {
+        sessions.set(token, data);
+      }
     }
   } catch {
     // File doesn't exist yet or is corrupt — start fresh.
@@ -138,7 +150,7 @@ function loadSessions(): void {
 function persistSessions(): void {
   if (!sessionsFilePath) return;
   const now = Date.now();
-  const out: Record<string, { expiresAt: number }> = {};
+  const out: Record<string, SessionData> = {};
   for (const [token, data] of sessions) {
     if (data.expiresAt > now) out[token] = data;
   }
@@ -172,20 +184,39 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return out;
 }
 
-function isAuthenticated(req: http.IncomingMessage): boolean {
-  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-  if (!token) return false;
-  const session = sessions.get(token);
-  if (!session) return false;
-  if (session.expiresAt < Date.now()) {
-    sessions.delete(token);
-    return false;
-  }
-  return true;
+interface ResolvedUser {
+  id: number;
+  username: string;
+  isAdmin: boolean;
 }
 
-function isSuperadmin(req: http.IncomingMessage): boolean {
-  return isAuthenticated(req) && isHostConnection(req);
+function resolveUser(req: http.IncomingMessage, db: LibraryDatabase): ResolvedUser | null {
+  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt < Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  const user = db.getUserById(session.userId);
+  if (!user) {
+    sessions.delete(token);
+    return null;
+  }
+  return { id: user.id, username: user.username, isAdmin: user.isAdmin };
+}
+
+function isAuthenticated(req: http.IncomingMessage, db: LibraryDatabase): boolean {
+  return resolveUser(req, db) !== null;
+}
+
+function isAdmin(req: http.IncomingMessage, db: LibraryDatabase): boolean {
+  return resolveUser(req, db)?.isAdmin === true;
+}
+
+function isGuestAccessEnabled(db: LibraryDatabase): boolean {
+  return db.getAppMeta(GUEST_ACCESS_KEY) === 'true';
 }
 
 function setSessionCookie(res: http.ServerResponse, token: string): void {
@@ -197,12 +228,18 @@ function clearSessionCookie(res: http.ServerResponse): void {
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
 }
 
-function checkPassword(submitted: string): boolean {
-  const encoded = Buffer.from(submitted, 'utf8').toString('base64');
-  const a = Buffer.from(encoded);
-  const b = Buffer.from(ADMIN_PASSWORD_B64);
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
+function createSession(userId: number): string {
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, { userId, expiresAt: Date.now() + SESSION_TTL_MS });
+  persistSessions();
+  return token;
+}
+
+async function ensureInitialAdmin(db: LibraryDatabase): Promise<void> {
+  if (db.countUsers() > 0) return;
+  const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
+  db.createUser('admin', hash, true);
+  console.log('[CB8] Created initial admin user (username=admin, default password).');
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +266,7 @@ async function addSingleFile(db: LibraryDatabase, filePath: string): Promise<{ a
   try {
     const stats = fs.statSync(filePath);
     const title = path.basename(filePath, ext);
+    const seriesInfo = parseSeriesFromFilename(path.basename(filePath));
 
     if (BOOK_EXTS.has(ext)) {
       let pageCount = 0;
@@ -240,6 +278,9 @@ async function addSingleFile(db: LibraryDatabase, filePath: string): Promise<{ a
         coverThumbnail: null, tags: [], mediaType: 'book',
         lastPage: null, lastLocation: null, lastRead: null,
       });
+      if (seriesInfo.seriesName) {
+        db.setComicSeries(record.id, seriesInfo.seriesName, seriesInfo.volumeNumber, seriesInfo.chapterNumber);
+      }
       if (ext === '.epub' || ext === '.pdf') {
         try {
           const coverThumbnail = ext === '.epub'
@@ -256,11 +297,14 @@ async function addSingleFile(db: LibraryDatabase, filePath: string): Promise<{ a
       let coverImage: Buffer | null = null;
       try { coverImage = await ArchiveLoader.getCoverImage(handle); } catch { /* placeholder */ }
       const coverThumbnail = generateThumbnail(coverImage);
-      db.addComic({
+      const record = db.addComic({
         filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
         coverThumbnail, tags: [], mediaType: 'comic',
         lastPage: null, lastLocation: null, lastRead: null,
       });
+      if (seriesInfo.seriesName) {
+        db.setComicSeries(record.id, seriesInfo.seriesName, seriesInfo.volumeNumber, seriesInfo.chapterNumber);
+      }
     } finally {
       await ArchiveLoader.close(handle);
     }
@@ -453,40 +497,155 @@ async function handleRequest(
   // -------------------------------------------------------------------------
 
   if (pathname.startsWith('/api/')) {
-    // --- Admin: session status --------------------------------------------
-    if (method === 'GET' && pathname === '/api/admin/session') {
+    const currentUser = resolveUser(req, db);
+    const guestEnabled = isGuestAccessEnabled(db);
+
+    // --- Guest access middleware ------------------------------------------
+    // Endpoints accessible without auth at all (login, session lookup)
+    const publicEndpoints = new Set([
+      '/api/auth/session', '/api/auth/login', '/api/admin/session', '/api/admin/login',
+    ]);
+    const isPublic = publicEndpoints.has(pathname);
+    // GET is "read-only"; mutations require auth even when guest is enabled
+    const isReadOnly = method === 'GET';
+    if (!currentUser && !isPublic) {
+      if (!guestEnabled) return sendError(res, 401, 'Unauthorized');
+      if (!isReadOnly) return sendError(res, 401, 'Unauthorized');
+    }
+
+    // --- Auth: session status ---------------------------------------------
+    if (method === 'GET' && (pathname === '/api/auth/session' || pathname === '/api/admin/session')) {
       return sendJson(res, 200, {
-        authenticated: isAuthenticated(req),
+        authenticated: currentUser !== null,
+        user: currentUser,
         host: isHostConnection(req),
+        guestAccess: guestEnabled,
       });
     }
 
     // --- Admin: host info (home dir for path pre-fill) --------------------
     if (method === 'GET' && pathname === '/api/admin/host-info') {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       return sendJson(res, 200, { homePath: os.homedir() });
     }
 
-    // --- Admin: login ------------------------------------------------------
-    if (method === 'POST' && pathname === '/api/admin/login') {
+    // --- Auth: login ------------------------------------------------------
+    if (method === 'POST' && (pathname === '/api/auth/login' || pathname === '/api/admin/login')) {
       const body = await readBody(req);
-      let parsed: { password?: string };
+      let parsed: { username?: string; password?: string };
       try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
-      if (typeof parsed.password !== 'string' || !checkPassword(parsed.password)) {
-        return sendError(res, 401, 'Invalid password');
+      if (typeof parsed.password !== 'string') {
+        return sendError(res, 400, 'Provide "password"');
       }
-      const token = crypto.randomBytes(32).toString('hex');
-      sessions.set(token, { expiresAt: Date.now() + SESSION_TTL_MS });
-      persistSessions();
+      // Legacy admin endpoint has no username field; default to 'admin'
+      const username = typeof parsed.username === 'string' && parsed.username ? parsed.username : 'admin';
+      const user = db.getUserByUsername(username);
+      if (!user) return sendError(res, 401, 'Invalid credentials');
+      const ok = await bcrypt.compare(parsed.password, user.passwordHash);
+      if (!ok) return sendError(res, 401, 'Invalid credentials');
+      const token = createSession(user.id);
       setSessionCookie(res, token);
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, {
+        ok: true,
+        user: { id: user.id, username: user.username, isAdmin: user.isAdmin },
+      });
     }
 
-    // --- Admin: logout -----------------------------------------------------
-    if (method === 'POST' && pathname === '/api/admin/logout') {
+    // --- Auth: register (admin only) --------------------------------------
+    if (method === 'POST' && pathname === '/api/auth/register') {
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      const body = await readBody(req);
+      let parsed: { username?: string; password?: string; isAdmin?: boolean };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.username !== 'string' || !parsed.username.trim()) {
+        return sendError(res, 400, 'Provide "username" (string)');
+      }
+      if (typeof parsed.password !== 'string' || parsed.password.length < 1) {
+        return sendError(res, 400, 'Provide "password" (string)');
+      }
+      if (db.getUserByUsername(parsed.username.trim())) {
+        return sendError(res, 409, 'Username already exists');
+      }
+      const hash = await bcrypt.hash(parsed.password, 10);
+      const user = db.createUser(parsed.username.trim(), hash, parsed.isAdmin === true);
+      return sendJson(res, 201, user);
+    }
+
+    // --- Auth / Admin: logout ---------------------------------------------
+    if (method === 'POST' && (pathname === '/api/auth/logout' || pathname === '/api/admin/logout')) {
       const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
       if (token) { sessions.delete(token); persistSessions(); }
       clearSessionCookie(res);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- Settings: guest access toggle (admin only) -----------------------
+    if (method === 'PUT' && pathname === '/api/settings/guest-access') {
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      const body = await readBody(req);
+      let parsed: { enabled?: boolean };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      db.setAppMeta(GUEST_ACCESS_KEY, parsed.enabled === true ? 'true' : 'false');
+      return sendJson(res, 200, { ok: true, enabled: parsed.enabled === true });
+    }
+
+    // --- Users: list (admin only) -----------------------------------------
+    if (method === 'GET' && pathname === '/api/users') {
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      return sendJson(res, 200, db.listUsers());
+    }
+
+    // --- Users: create (admin only) ---------------------------------------
+    if (method === 'POST' && pathname === '/api/users') {
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      const body = await readBody(req);
+      let parsed: { username?: string; password?: string; isAdmin?: boolean };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.username !== 'string' || !parsed.username.trim()) {
+        return sendError(res, 400, 'Provide "username" (string)');
+      }
+      if (typeof parsed.password !== 'string' || parsed.password.length < 1) {
+        return sendError(res, 400, 'Provide "password" (string)');
+      }
+      if (db.getUserByUsername(parsed.username.trim())) {
+        return sendError(res, 409, 'Username already exists');
+      }
+      const hash = await bcrypt.hash(parsed.password, 10);
+      const user = db.createUser(parsed.username.trim(), hash, parsed.isAdmin === true);
+      return sendJson(res, 201, user);
+    }
+
+    // --- Users: delete (admin only, cannot delete self) -------------------
+    const userIdMatch = pathname.match(/^\/api\/users\/(\d+)$/);
+    if (method === 'DELETE' && userIdMatch) {
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      const id = parseInt(userIdMatch[1], 10);
+      if (currentUser && id === currentUser.id) {
+        return sendError(res, 400, 'Cannot delete yourself');
+      }
+      const target = db.getUserById(id);
+      if (!target) return sendError(res, 404, 'User not found');
+      if (target.isAdmin && db.countAdmins() <= 1) {
+        return sendError(res, 400, 'Cannot delete last admin');
+      }
+      db.deleteUser(id);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- Users: set role (admin only, cannot demote last admin) -----------
+    const userRoleMatch = pathname.match(/^\/api\/users\/(\d+)\/role$/);
+    if (method === 'PUT' && userRoleMatch) {
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      const id = parseInt(userRoleMatch[1], 10);
+      const body = await readBody(req);
+      let parsed: { isAdmin?: boolean };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      const target = db.getUserById(id);
+      if (!target) return sendError(res, 404, 'User not found');
+      if (target.isAdmin && parsed.isAdmin === false && db.countAdmins() <= 1) {
+        return sendError(res, 400, 'Cannot demote last admin');
+      }
+      db.setUserAdmin(id, parsed.isAdmin === true);
       return sendJson(res, 200, { ok: true });
     }
 
@@ -494,7 +653,7 @@ async function handleRequest(
     // Pops the OS dialog on the Electron host. Only useful when the admin is
     // sitting at the machine running the app.
     if (method === 'POST' && pathname === '/api/admin/pick-path') {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const body = await readBody(req);
       let parsed: { kind?: 'file' | 'directory' };
       try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
@@ -524,7 +683,7 @@ async function handleRequest(
     // `X-CB8-Relpath` (optional, for folder-drops — forward slashes only).
     // Both headers are percent-encoded to carry non-ASCII names safely.
     if (method === 'POST' && pathname === '/api/admin/upload') {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
 
       const rawName = req.headers['x-cb8-filename'];
       const rawRel = req.headers['x-cb8-relpath'];
@@ -604,7 +763,7 @@ async function handleRequest(
     // (or is a directory), list its children; otherwise list the parent's
     // children filtered by basename prefix.
     if (method === 'GET' && pathname === '/api/admin/list-dir') {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const raw = typeof query.path === 'string' ? query.path : '';
       if (!raw) return sendJson(res, 200, { dir: '', entries: [] });
 
@@ -648,7 +807,7 @@ async function handleRequest(
 
     // --- Admin: add path (scan) — streaming NDJSON -------------------------
     if (method === 'POST' && pathname === '/api/admin/add-path') {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const body = await readBody(req);
       let parsed: { path?: string };
       try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
@@ -692,7 +851,7 @@ async function handleRequest(
     // --- DELETE /api/comics/:id (admin-only) -------------------------------
     const deleteMatch = pathname.match(/^\/api\/comics\/(\d+)$/);
     if (method === 'DELETE' && deleteMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const id = parseInt(deleteMatch[1], 10);
       if (!db.getComic(id)) return sendError(res, 404, 'Comic not found');
       // Evict from archive handle cache before removing the DB row
@@ -707,11 +866,15 @@ async function handleRequest(
 
     // --- GET /api/comics ----------------------------------------------------
     if (method === 'GET' && pathname === '/api/comics') {
-      const opts = parseQueryOptions(query);
+      const opts = parseQueryOptions(query) as QueryOptions & { readStatus?: 'unread' | 'in-progress' | 'completed'; favorites?: boolean };
       if (!opts.limit) opts.limit = 50;
-      const result = db.queryComics(opts);
+      if (query.readStatus === 'unread' || query.readStatus === 'in-progress' || query.readStatus === 'completed') {
+        opts.readStatus = query.readStatus;
+      }
+      if (query.favorites === 'true') opts.favorites = true;
+      const result = db.queryComicsForUser(currentUser?.id ?? null, opts);
       return sendJson(res, 200, {
-        records: result.records.map(toWebRecord),
+        records: result.records.map((r) => ({ ...toWebRecord(r)!, favorited: r.favorited ?? false })),
         totalCount: result.totalCount,
       });
     }
@@ -742,6 +905,22 @@ async function handleRequest(
         res.end(placeholder);
         return;
       }
+      // Optional resize via ?width=NNN
+      const widthParam = query.width ? parseInt(query.width, 10) : NaN;
+      if (Number.isFinite(widthParam) && widthParam > 0) {
+        try {
+          const out = await getCachedOrResize(id, -1, widthParam, async () => ({ buffer: thumb, ext: 'jpg' }));
+          res.writeHead(200, {
+            'Content-Type': `image/${out.ext}`,
+            'Cache-Control': 'public, max-age=3600',
+            'Content-Length': String(out.buffer.length),
+          });
+          res.end(out.buffer);
+          return;
+        } catch (err) {
+          console.warn('[webServer] Thumbnail resize failed, falling back:', err);
+        }
+      }
       res.writeHead(200, {
         'Content-Type': 'image/jpeg',
         'Cache-Control': 'public, max-age=3600',
@@ -764,9 +943,30 @@ async function handleRequest(
         if (pageIndex < 0 || pageIndex >= handle.pageCount) {
           return sendError(res, 400, `Page ${pageIndex} out of range`);
         }
-        const buf = await ArchiveLoader.getPage(handle, pageIndex);
         const ext = handle.entries[pageIndex]?.filename.split('.').pop()?.toLowerCase() ?? '';
         const mime = PAGE_MIME[ext] ?? 'image/png';
+
+        // Optional resize via ?width=NNN
+        const widthParam = query.width ? parseInt(query.width, 10) : NaN;
+        if (Number.isFinite(widthParam) && widthParam > 0) {
+          try {
+            const out = await getCachedOrResize(comicId, pageIndex, widthParam, async () => {
+              const buf = await ArchiveLoader.getPage(handle, pageIndex);
+              return { buffer: buf, ext };
+            });
+            res.writeHead(200, {
+              'Content-Type': `image/${out.ext}`,
+              'Cache-Control': 'public, max-age=86400',
+              'Content-Length': String(out.buffer.length),
+            });
+            res.end(out.buffer);
+            return;
+          } catch (err) {
+            console.warn('[webServer] Page resize failed, falling back:', err);
+          }
+        }
+
+        const buf = await ArchiveLoader.getPage(handle, pageIndex);
         res.writeHead(200, {
           'Content-Type': mime,
           'Cache-Control': 'public, max-age=86400',
@@ -810,23 +1010,183 @@ async function handleRequest(
       return;
     }
 
-    // --- PUT /api/comics/:id/progress ---------------------------------------
+    // --- PUT /api/comics/:id/progress (per-user) ----------------------------
     const progressMatch = pathname.match(/^\/api\/comics\/(\d+)\/progress$/);
     if (method === 'PUT' && progressMatch) {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
       const id = parseInt(progressMatch[1], 10);
       const body = await readBody(req);
-      let parsed: { page?: number; location?: string };
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        return sendError(res, 400, 'Invalid JSON');
+      let parsed: { page?: number; location?: string; completed?: boolean };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      const opts: { page?: number | null; location?: string | null; completed?: boolean } = {};
+      if (typeof parsed.page === 'number') opts.page = parsed.page;
+      if (typeof parsed.location === 'string') opts.location = parsed.location;
+      if (typeof parsed.completed === 'boolean') opts.completed = parsed.completed;
+      if (opts.page === undefined && opts.location === undefined && opts.completed === undefined) {
+        return sendError(res, 400, 'Provide "page", "location", or "completed"');
       }
-      if (typeof parsed.location === 'string') {
-        db.updateReadingLocation(id, parsed.location);
-      } else if (typeof parsed.page === 'number') {
-        db.updateReadingProgress(id, parsed.page);
-      } else {
-        return sendError(res, 400, 'Provide "page" (number) or "location" (string)');
+      db.upsertUserProgress(currentUser.id, id, opts);
+      // Maintain the shared last_read on the comic for admin sorting/UI
+      if (typeof parsed.page === 'number') db.updateReadingProgress(id, parsed.page);
+      else if (typeof parsed.location === 'string') db.updateReadingLocation(id, parsed.location);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- DELETE /api/comics/:id/progress (mark as unread) -------------------
+    if (method === 'DELETE' && progressMatch) {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(progressMatch[1], 10);
+      db.clearUserProgress(currentUser.id, id);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- POST/DELETE /api/comics/:id/favorite -------------------------------
+    const favMatch = pathname.match(/^\/api\/comics\/(\d+)\/favorite$/);
+    if (favMatch && (method === 'POST' || method === 'DELETE')) {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(favMatch[1], 10);
+      if (method === 'POST') db.addFavorite(currentUser.id, id);
+      else db.removeFavorite(currentUser.id, id);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- Bookmarks ---------------------------------------------------------
+    const bookmarksMatch = pathname.match(/^\/api\/comics\/(\d+)\/bookmarks$/);
+    if (method === 'GET' && bookmarksMatch) {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(bookmarksMatch[1], 10);
+      return sendJson(res, 200, db.listBookmarks(currentUser.id, id));
+    }
+    if (method === 'POST' && bookmarksMatch) {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(bookmarksMatch[1], 10);
+      const body = await readBody(req);
+      let parsed: { page?: number; note?: string | null };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.page !== 'number') return sendError(res, 400, 'Provide "page" (number)');
+      const bm = db.createBookmark(currentUser.id, id, parsed.page, parsed.note ?? null);
+      return sendJson(res, 201, bm);
+    }
+    const bookmarkItemMatch = pathname.match(/^\/api\/comics\/(\d+)\/bookmarks\/(\d+)$/);
+    if (method === 'PUT' && bookmarkItemMatch) {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
+      const bookmarkId = parseInt(bookmarkItemMatch[2], 10);
+      const body = await readBody(req);
+      let parsed: { note?: string | null };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      db.updateBookmark(currentUser.id, bookmarkId, parsed.note ?? null);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (method === 'DELETE' && bookmarkItemMatch) {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
+      const bookmarkId = parseInt(bookmarkItemMatch[2], 10);
+      db.deleteBookmark(currentUser.id, bookmarkId);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- Reading history --------------------------------------------------
+    if (method === 'POST' && pathname === '/api/history') {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
+      const body = await readBody(req);
+      let parsed: { comicId?: number; action?: string; page?: number | null };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.comicId !== 'number' || typeof parsed.action !== 'string') {
+        return sendError(res, 400, 'Provide "comicId" and "action"');
+      }
+      db.logHistory(currentUser.id, parsed.comicId, parsed.action, parsed.page ?? null);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (method === 'GET' && pathname === '/api/history') {
+      if (!currentUser) return sendError(res, 401, 'Unauthorized');
+      const offset = query.offset ? parseInt(query.offset, 10) : 0;
+      const limit = query.limit ? Math.min(parseInt(query.limit, 10), 200) : 50;
+      return sendJson(res, 200, db.getHistory(currentUser.id, offset, limit));
+    }
+
+    // --- Series -----------------------------------------------------------
+    if (method === 'GET' && pathname === '/api/series') {
+      const series = db.getAllSeries().map((s) => ({
+        name: s.name,
+        count: s.count,
+        thumbnailUrl: s.coverComicId ? `/api/comics/${s.coverComicId}/thumbnail` : null,
+      }));
+      return sendJson(res, 200, series);
+    }
+    const seriesComicsMatch = pathname.match(/^\/api\/series\/([^/]+)\/comics$/);
+    if (method === 'GET' && seriesComicsMatch) {
+      const name = decodeURIComponent(seriesComicsMatch[1]);
+      const records = db.getSeriesComics(name);
+      return sendJson(res, 200, records.map(toWebRecord));
+    }
+
+    // --- Metadata search (admin only) -------------------------------------
+    const metadataSearchMatch = pathname.match(/^\/api\/comics\/(\d+)\/metadata-search$/);
+    if (method === 'GET' && metadataSearchMatch) {
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      const q = typeof query.q === 'string' ? query.q : '';
+      const srcsRaw = typeof query.sources === 'string' ? query.sources : '';
+      const allowed = new Set(['comicvine', 'anilist', 'mangadex']);
+      const srcs = srcsRaw
+        .split(',').map((s) => s.trim()).filter((s) => allowed.has(s)) as Array<'comicvine' | 'anilist' | 'mangadex'>;
+      const result = await searchMetadata(q, srcs.length ? srcs : undefined);
+      return sendJson(res, 200, result);
+    }
+
+    // --- Metadata apply (admin only) --------------------------------------
+    const metadataPutMatch = pathname.match(/^\/api\/comics\/(\d+)\/metadata$/);
+    if (method === 'PUT' && metadataPutMatch) {
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      const id = parseInt(metadataPutMatch[1], 10);
+      if (!db.getComic(id)) return sendError(res, 404, 'Comic not found');
+      const body = await readBody(req);
+      let parsed: {
+        title?: string; author?: string | null; artist?: string | null;
+        genre?: string | string[] | null; year?: number | null; summary?: string | null;
+        externalId?: string | null; externalSource?: string | null;
+        seriesName?: string | null; volumeNumber?: number | null; chapterNumber?: number | null;
+        coverUrl?: string | null;
+      };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      // Validate genre as JSON array of strings if provided as array
+      let genreStr: string | null | undefined;
+      if (parsed.genre !== undefined) {
+        if (parsed.genre === null) genreStr = null;
+        else if (Array.isArray(parsed.genre)) {
+          if (!parsed.genre.every((g) => typeof g === 'string')) {
+            return sendError(res, 400, '"genre" array must contain strings only');
+          }
+          genreStr = JSON.stringify(parsed.genre);
+        } else if (typeof parsed.genre === 'string') {
+          genreStr = parsed.genre;
+        } else {
+          return sendError(res, 400, '"genre" must be string, array, or null');
+        }
+      }
+      db.updateComicMetadata(id, {
+        title: parsed.title,
+        author: parsed.author,
+        artist: parsed.artist,
+        genre: genreStr,
+        year: parsed.year,
+        summary: parsed.summary,
+        externalId: parsed.externalId,
+        externalSource: parsed.externalSource,
+        seriesName: parsed.seriesName,
+        volumeNumber: parsed.volumeNumber,
+        chapterNumber: parsed.chapterNumber,
+      });
+      // Optionally fetch cover thumbnail from URL
+      if (typeof parsed.coverUrl === 'string' && parsed.coverUrl) {
+        try {
+          const resp = await fetch(parsed.coverUrl);
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const thumb = generateThumbnail(buf);
+            const record = db.getComic(id);
+            if (record && thumb) db.updateCoverThumbnailByPath(record.filePath, thumb);
+            invalidateCacheForComic(id);
+          }
+        } catch { /* ignore cover fetch failure */ }
       }
       return sendJson(res, 200, { ok: true });
     }
@@ -840,7 +1200,7 @@ async function handleRequest(
 
     // --- POST /api/libraries ------------------------------------------------
     if (method === 'POST' && pathname === '/api/libraries') {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const body = await readBody(req);
       let parsed: { name?: string; mediaType?: string };
       try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
@@ -859,7 +1219,7 @@ async function handleRequest(
     // --- PUT /api/libraries/:id (rename) ------------------------------------
     const libRenameMatch = pathname.match(/^\/api\/libraries\/(\d+)$/);
     if (method === 'PUT' && libRenameMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const id = parseInt(libRenameMatch[1], 10);
       const body = await readBody(req);
       let parsed: { name?: string };
@@ -877,7 +1237,7 @@ async function handleRequest(
 
     // --- DELETE /api/libraries/:id ------------------------------------------
     if (method === 'DELETE' && libRenameMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const id = parseInt(libRenameMatch[1], 10);
       db.deleteLibrary(id);
       return sendJson(res, 200, { ok: true });
@@ -886,7 +1246,7 @@ async function handleRequest(
     // --- DELETE /api/libraries/:id/comics (remove comics from library) ------
     const libRemoveComicsMatch = pathname.match(/^\/api\/libraries\/(\d+)\/comics$/);
     if (method === 'DELETE' && libRemoveComicsMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const libId = parseInt(libRemoveComicsMatch[1], 10);
       const body = await readBody(req);
       let parsed: { comicIds?: number[] };
@@ -901,7 +1261,7 @@ async function handleRequest(
     // --- POST /api/libraries/:id/comics -------------------------------------
     const libAddComicsMatch = pathname.match(/^\/api\/libraries\/(\d+)\/comics$/);
     if (method === 'POST' && libAddComicsMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const libId = parseInt(libAddComicsMatch[1], 10);
       const body = await readBody(req);
       let parsed: { comicIds?: number[] };
@@ -941,7 +1301,7 @@ async function handleRequest(
 
     // --- POST /api/folders (create) -----------------------------------------
     if (method === 'POST' && pathname === '/api/folders') {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const body = await readBody(req);
       let parsed: { name?: string; comicIds?: number[] };
       try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
@@ -956,7 +1316,7 @@ async function handleRequest(
     // --- PUT /api/folders/:id (rename) --------------------------------------
     const folderIdMatch = pathname.match(/^\/api\/folders\/(\d+)$/);
     if (method === 'PUT' && folderIdMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const id = parseInt(folderIdMatch[1], 10);
       const body = await readBody(req);
       let parsed: { name?: string };
@@ -970,7 +1330,7 @@ async function handleRequest(
 
     // --- DELETE /api/folders/:id --------------------------------------------
     if (method === 'DELETE' && folderIdMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const id = parseInt(folderIdMatch[1], 10);
       db.deleteFolder(id);
       return sendJson(res, 200, { ok: true });
@@ -979,7 +1339,7 @@ async function handleRequest(
     // --- POST/DELETE /api/folders/:id/comics --------------------------------
     const folderComicsMutMatch = pathname.match(/^\/api\/folders\/(\d+)\/comics$/);
     if ((method === 'POST' || method === 'DELETE') && folderComicsMutMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const folderId = parseInt(folderComicsMutMatch[1], 10);
       const body = await readBody(req);
       let parsed: { comicIds?: number[] };
@@ -1035,7 +1395,7 @@ async function handleRequest(
     // --- PUT /api/comics/:id/tags (set tags) --------------------------------
     const comicTagsMatch = pathname.match(/^\/api\/comics\/(\d+)\/tags$/);
     if (method === 'PUT' && comicTagsMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const id = parseInt(comicTagsMatch[1], 10);
       const record = db.getComic(id);
       if (!record) return sendError(res, 404, 'Comic not found');
@@ -1056,7 +1416,7 @@ async function handleRequest(
     // --- PUT /api/tags/:name (rename) ---------------------------------------
     const tagNameMatch = pathname.match(/^\/api\/tags\/(.+)$/);
     if (method === 'PUT' && tagNameMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const oldName = decodeURIComponent(tagNameMatch[1]);
       const body = await readBody(req);
       let parsed: { newName?: string };
@@ -1070,7 +1430,7 @@ async function handleRequest(
 
     // --- DELETE /api/tags/:name ---------------------------------------------
     if (method === 'DELETE' && tagNameMatch) {
-      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
       const name = decodeURIComponent(tagNameMatch[1]);
       db.deleteTag(name);
       return sendJson(res, 200, { ok: true });
@@ -1080,7 +1440,9 @@ async function handleRequest(
     if (method === 'GET' && pathname === '/api/recently-read') {
       const limit = query.limit ? parseInt(query.limit, 10) : 20;
       const mediaType = query.mediaType as 'comic' | 'book' | undefined;
-      const records = db.getRecentlyRead(limit, mediaType);
+      const records = currentUser
+        ? db.getRecentlyReadByUser(currentUser.id, limit, mediaType)
+        : db.getRecentlyRead(limit, mediaType);
       return sendJson(res, 200, records.map(toWebRecord));
     }
 
@@ -1160,6 +1522,11 @@ export interface WebServerHandle {
 export function startWebServer(db: LibraryDatabase, port = 8008): WebServerHandle {
   sessionsFilePath = path.join(app.getPath('userData'), 'cb8-sessions.json');
   loadSessions();
+
+  // Create initial admin user on first startup (uses legacy password).
+  ensureInitialAdmin(db).catch((err) => {
+    console.error('[CB8] Failed to create initial admin user:', err);
+  });
 
   const staticRoot = resolveStaticRoot();
 

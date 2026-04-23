@@ -15,7 +15,61 @@ CREATE TABLE IF NOT EXISTS comics (
   last_page INTEGER,
   last_location TEXT,
   last_read TEXT,
-  media_type TEXT NOT NULL DEFAULT 'comic'
+  media_type TEXT NOT NULL DEFAULT 'comic',
+  series_name TEXT,
+  volume_number REAL,
+  chapter_number REAL,
+  completed INTEGER NOT NULL DEFAULT 0,
+  author TEXT,
+  artist TEXT,
+  genre TEXT,
+  year INTEGER,
+  summary TEXT,
+  external_id TEXT,
+  external_source TEXT
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash TEXT NOT NULL,
+  is_admin INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS user_progress (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  comic_id INTEGER NOT NULL REFERENCES comics(id) ON DELETE CASCADE,
+  last_page INTEGER,
+  last_location TEXT,
+  last_read TEXT,
+  completed INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, comic_id)
+);
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  comic_id INTEGER NOT NULL REFERENCES comics(id) ON DELETE CASCADE,
+  page INTEGER NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS reading_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  comic_id INTEGER NOT NULL REFERENCES comics(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  page INTEGER,
+  timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS user_favorites (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  comic_id INTEGER NOT NULL REFERENCES comics(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, comic_id)
 );
 
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -39,7 +93,12 @@ CREATE INDEX IF NOT EXISTS idx_comics_title ON comics(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_comics_date_added ON comics(date_added);
 CREATE INDEX IF NOT EXISTS idx_comics_file_size ON comics(file_size);
 CREATE INDEX IF NOT EXISTS idx_comics_page_count ON comics(page_count);
+CREATE INDEX IF NOT EXISTS idx_comics_series ON comics(series_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_comics_last_read ON comics(last_read);
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user_comic ON bookmarks(user_id, comic_id);
+CREATE INDEX IF NOT EXISTS idx_history_user ON reading_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_history_timestamp ON reading_history(timestamp);
 
 CREATE TABLE IF NOT EXISTS libraries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,6 +239,24 @@ export class LibraryDatabase {
     if (!libColumns.some((c) => c.name === 'media_type')) {
       db.prepare("ALTER TABLE libraries ADD COLUMN media_type TEXT NOT NULL DEFAULT 'comic'").run();
     }
+
+    // Series / metadata columns
+    const addCol = (col: string, ddl: string) => {
+      if (!comicColumns.some((c) => c.name === col)) {
+        db.prepare(`ALTER TABLE comics ADD COLUMN ${ddl}`).run();
+      }
+    };
+    addCol('series_name', 'series_name TEXT');
+    addCol('volume_number', 'volume_number REAL');
+    addCol('chapter_number', 'chapter_number REAL');
+    addCol('completed', 'completed INTEGER NOT NULL DEFAULT 0');
+    addCol('author', 'author TEXT');
+    addCol('artist', 'artist TEXT');
+    addCol('genre', 'genre TEXT');
+    addCol('year', 'year INTEGER');
+    addCol('summary', 'summary TEXT');
+    addCol('external_id', 'external_id TEXT');
+    addCol('external_source', 'external_source TEXT');
   }
 
   private repairExistingThumbnails(db: Database.Database): void {
@@ -645,5 +722,318 @@ export class LibraryDatabase {
   getComicFolderIds(comicId: number): number[] {
     const rows = this.db.prepare('SELECT folder_id FROM folder_comics WHERE comic_id = ?').all(comicId) as { folder_id: number }[];
     return rows.map((r) => r.folder_id);
+  }
+
+  // --- User management ---
+
+  createUser(username: string, passwordHash: string, isAdmin: boolean): { id: number; username: string; isAdmin: boolean } {
+    const info = this.db.prepare('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)').run(username, passwordHash, isAdmin ? 1 : 0);
+    return { id: info.lastInsertRowid as number, username, isAdmin };
+  }
+
+  getUserByUsername(username: string): { id: number; username: string; passwordHash: string; isAdmin: boolean; createdAt: string } | null {
+    const row = this.db.prepare('SELECT id, username, password_hash, is_admin, created_at FROM users WHERE username = ? COLLATE NOCASE').get(username) as { id: number; username: string; password_hash: string; is_admin: number; created_at: string } | undefined;
+    if (!row) return null;
+    return { id: row.id, username: row.username, passwordHash: row.password_hash, isAdmin: !!row.is_admin, createdAt: row.created_at };
+  }
+
+  getUserById(id: number): { id: number; username: string; isAdmin: boolean; createdAt: string } | null {
+    const row = this.db.prepare('SELECT id, username, is_admin, created_at FROM users WHERE id = ?').get(id) as { id: number; username: string; is_admin: number; created_at: string } | undefined;
+    if (!row) return null;
+    return { id: row.id, username: row.username, isAdmin: !!row.is_admin, createdAt: row.created_at };
+  }
+
+  listUsers(): { id: number; username: string; isAdmin: boolean; createdAt: string }[] {
+    const rows = this.db.prepare('SELECT id, username, is_admin, created_at FROM users ORDER BY username COLLATE NOCASE').all() as { id: number; username: string; is_admin: number; created_at: string }[];
+    return rows.map((r) => ({ id: r.id, username: r.username, isAdmin: !!r.is_admin, createdAt: r.created_at }));
+  }
+
+  countAdmins(): number {
+    return (this.db.prepare('SELECT COUNT(*) as cnt FROM users WHERE is_admin = 1').get() as CountRow).cnt;
+  }
+
+  countUsers(): number {
+    return (this.db.prepare('SELECT COUNT(*) as cnt FROM users').get() as CountRow).cnt;
+  }
+
+  deleteUser(id: number): void {
+    this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  }
+
+  setUserAdmin(id: number, isAdmin: boolean): void {
+    this.db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, id);
+  }
+
+  // --- Per-user progress ---
+
+  upsertUserProgress(userId: number, comicId: number, opts: { page?: number | null; location?: string | null; completed?: boolean }): void {
+    const existing = this.db.prepare('SELECT user_id FROM user_progress WHERE user_id = ? AND comic_id = ?').get(userId, comicId);
+    if (existing) {
+      const parts: string[] = [];
+      const vals: SqlParam[] = [];
+      if (opts.page !== undefined) { parts.push('last_page = ?'); vals.push(opts.page); }
+      if (opts.location !== undefined) { parts.push('last_location = ?'); vals.push(opts.location); }
+      if (opts.completed !== undefined) { parts.push('completed = ?'); vals.push(opts.completed ? 1 : 0); }
+      parts.push("last_read = datetime('now')");
+      vals.push(userId, comicId);
+      this.db.prepare(`UPDATE user_progress SET ${parts.join(', ')} WHERE user_id = ? AND comic_id = ?`).run(...vals);
+    } else {
+      this.db.prepare(
+        `INSERT INTO user_progress (user_id, comic_id, last_page, last_location, last_read, completed)
+         VALUES (?, ?, ?, ?, datetime('now'), ?)`
+      ).run(userId, comicId, opts.page ?? null, opts.location ?? null, opts.completed ? 1 : 0);
+    }
+  }
+
+  clearUserProgress(userId: number, comicId: number): void {
+    this.db.prepare('DELETE FROM user_progress WHERE user_id = ? AND comic_id = ?').run(userId, comicId);
+  }
+
+  getUserProgress(userId: number, comicId: number): { lastPage: number | null; lastLocation: string | null; lastRead: string | null; completed: boolean } | null {
+    const row = this.db.prepare('SELECT last_page, last_location, last_read, completed FROM user_progress WHERE user_id = ? AND comic_id = ?').get(userId, comicId) as { last_page: number | null; last_location: string | null; last_read: string | null; completed: number } | undefined;
+    if (!row) return null;
+    return { lastPage: row.last_page, lastLocation: row.last_location, lastRead: row.last_read, completed: !!row.completed };
+  }
+
+  getRecentlyReadByUser(userId: number, limit: number, mediaType?: 'comic' | 'book'): ComicRecord[] {
+    const where = mediaType ? 'AND c.media_type = ?' : '';
+    const params: SqlParam[] = [userId];
+    if (mediaType) params.push(mediaType);
+    params.push(limit);
+    const rows = this.db.prepare(
+      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added,
+              up.last_page, up.last_location, up.last_read, c.media_type
+       FROM user_progress up
+       JOIN comics c ON up.comic_id = c.id
+       WHERE up.user_id = ? ${where}
+       ORDER BY up.last_read DESC
+       LIMIT ?`
+    ).all(...params) as ComicRow[];
+    return rows.map((r) => this.rowToRecord(r));
+  }
+
+  // --- Bookmarks ---
+
+  createBookmark(userId: number, comicId: number, page: number, note: string | null = null): { id: number; userId: number; comicId: number; page: number; note: string | null; createdAt: string } {
+    const info = this.db.prepare('INSERT INTO bookmarks (user_id, comic_id, page, note) VALUES (?, ?, ?, ?)').run(userId, comicId, page, note);
+    const id = info.lastInsertRowid as number;
+    const row = this.db.prepare('SELECT id, user_id, comic_id, page, note, created_at FROM bookmarks WHERE id = ?').get(id) as { id: number; user_id: number; comic_id: number; page: number; note: string | null; created_at: string };
+    return { id: row.id, userId: row.user_id, comicId: row.comic_id, page: row.page, note: row.note, createdAt: row.created_at };
+  }
+
+  listBookmarks(userId: number, comicId: number): { id: number; page: number; note: string | null; createdAt: string }[] {
+    const rows = this.db.prepare('SELECT id, page, note, created_at FROM bookmarks WHERE user_id = ? AND comic_id = ? ORDER BY page, id').all(userId, comicId) as { id: number; page: number; note: string | null; created_at: string }[];
+    return rows.map((r) => ({ id: r.id, page: r.page, note: r.note, createdAt: r.created_at }));
+  }
+
+  updateBookmark(userId: number, bookmarkId: number, note: string | null): void {
+    this.db.prepare('UPDATE bookmarks SET note = ? WHERE id = ? AND user_id = ?').run(note, bookmarkId, userId);
+  }
+
+  deleteBookmark(userId: number, bookmarkId: number): void {
+    this.db.prepare('DELETE FROM bookmarks WHERE id = ? AND user_id = ?').run(bookmarkId, userId);
+  }
+
+  // --- Reading history ---
+
+  logHistory(userId: number, comicId: number, action: string, page: number | null): void {
+    this.db.prepare('INSERT INTO reading_history (user_id, comic_id, action, page) VALUES (?, ?, ?, ?)').run(userId, comicId, action, page);
+  }
+
+  getHistory(userId: number, offset: number, limit: number): { entries: { id: number; comicId: number; comicTitle: string; action: string; page: number | null; timestamp: string }[]; totalCount: number } {
+    const totalCount = (this.db.prepare('SELECT COUNT(*) as cnt FROM reading_history WHERE user_id = ?').get(userId) as CountRow).cnt;
+    const rows = this.db.prepare(
+      `SELECT h.id, h.comic_id, c.title as comic_title, h.action, h.page, h.timestamp
+       FROM reading_history h
+       LEFT JOIN comics c ON h.comic_id = c.id
+       WHERE h.user_id = ?
+       ORDER BY h.timestamp DESC
+       LIMIT ? OFFSET ?`
+    ).all(userId, limit, offset) as { id: number; comic_id: number; comic_title: string | null; action: string; page: number | null; timestamp: string }[];
+    return {
+      entries: rows.map((r) => ({
+        id: r.id, comicId: r.comic_id, comicTitle: r.comic_title ?? '(deleted)',
+        action: r.action, page: r.page, timestamp: r.timestamp,
+      })),
+      totalCount,
+    };
+  }
+
+  // --- Favorites ---
+
+  addFavorite(userId: number, comicId: number): void {
+    this.db.prepare('INSERT OR IGNORE INTO user_favorites (user_id, comic_id) VALUES (?, ?)').run(userId, comicId);
+  }
+
+  removeFavorite(userId: number, comicId: number): void {
+    this.db.prepare('DELETE FROM user_favorites WHERE user_id = ? AND comic_id = ?').run(userId, comicId);
+  }
+
+  isFavorite(userId: number, comicId: number): boolean {
+    return this.db.prepare('SELECT 1 FROM user_favorites WHERE user_id = ? AND comic_id = ?').get(userId, comicId) !== undefined;
+  }
+
+  // --- Series ---
+
+  setComicSeries(comicId: number, seriesName: string | null, volumeNumber: number | null, chapterNumber: number | null): void {
+    this.db.prepare('UPDATE comics SET series_name = ?, volume_number = ?, chapter_number = ? WHERE id = ?').run(seriesName, volumeNumber, chapterNumber, comicId);
+  }
+
+  getAllSeries(): { name: string; count: number; coverComicId: number | null }[] {
+    const rows = this.db.prepare(
+      `SELECT series_name as name, COUNT(*) as count,
+        (SELECT id FROM comics WHERE series_name = c.series_name ORDER BY COALESCE(volume_number, 999999), COALESCE(chapter_number, 999999), id LIMIT 1) as cover_id
+       FROM comics c
+       WHERE series_name IS NOT NULL AND series_name != ''
+       GROUP BY series_name COLLATE NOCASE
+       ORDER BY series_name COLLATE NOCASE`
+    ).all() as { name: string; count: number; cover_id: number | null }[];
+    return rows.map((r) => ({ name: r.name, count: r.count, coverComicId: r.cover_id }));
+  }
+
+  getSeriesComics(name: string): ComicRecord[] {
+    const rows = this.db.prepare(
+      `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
+       FROM comics c
+       WHERE c.series_name = ? COLLATE NOCASE
+       ORDER BY COALESCE(c.volume_number, 999999), COALESCE(c.chapter_number, 999999), c.title COLLATE NOCASE`
+    ).all(name) as ComicRow[];
+    return rows.map((r) => this.rowToRecord(r));
+  }
+
+  // --- Metadata ---
+
+  updateComicMetadata(comicId: number, fields: { title?: string; author?: string | null; artist?: string | null; genre?: string | null; year?: number | null; summary?: string | null; externalId?: string | null; externalSource?: string | null; seriesName?: string | null; volumeNumber?: number | null; chapterNumber?: number | null }): void {
+    const parts: string[] = [];
+    const vals: SqlParam[] = [];
+    if (fields.title !== undefined) { parts.push('title = ?'); vals.push(fields.title); }
+    if (fields.author !== undefined) { parts.push('author = ?'); vals.push(fields.author); }
+    if (fields.artist !== undefined) { parts.push('artist = ?'); vals.push(fields.artist); }
+    if (fields.genre !== undefined) { parts.push('genre = ?'); vals.push(fields.genre); }
+    if (fields.year !== undefined) { parts.push('year = ?'); vals.push(fields.year); }
+    if (fields.summary !== undefined) { parts.push('summary = ?'); vals.push(fields.summary); }
+    if (fields.externalId !== undefined) { parts.push('external_id = ?'); vals.push(fields.externalId); }
+    if (fields.externalSource !== undefined) { parts.push('external_source = ?'); vals.push(fields.externalSource); }
+    if (fields.seriesName !== undefined) { parts.push('series_name = ?'); vals.push(fields.seriesName); }
+    if (fields.volumeNumber !== undefined) { parts.push('volume_number = ?'); vals.push(fields.volumeNumber); }
+    if (fields.chapterNumber !== undefined) { parts.push('chapter_number = ?'); vals.push(fields.chapterNumber); }
+    if (parts.length === 0) return;
+    vals.push(comicId);
+    this.db.prepare(`UPDATE comics SET ${parts.join(', ')} WHERE id = ?`).run(...vals);
+  }
+
+  getComicMetadata(id: number): { author: string | null; artist: string | null; genre: string | null; year: number | null; summary: string | null; externalId: string | null; externalSource: string | null; seriesName: string | null; volumeNumber: number | null; chapterNumber: number | null } | null {
+    const row = this.db.prepare('SELECT author, artist, genre, year, summary, external_id, external_source, series_name, volume_number, chapter_number FROM comics WHERE id = ?').get(id) as { author: string | null; artist: string | null; genre: string | null; year: number | null; summary: string | null; external_id: string | null; external_source: string | null; series_name: string | null; volume_number: number | null; chapter_number: number | null } | undefined;
+    if (!row) return null;
+    return { author: row.author, artist: row.artist, genre: row.genre, year: row.year, summary: row.summary, externalId: row.external_id, externalSource: row.external_source, seriesName: row.series_name, volumeNumber: row.volume_number, chapterNumber: row.chapter_number };
+  }
+
+  // --- Query with user scope (progress + favorites + filters) ---
+
+  queryComicsForUser(
+    userId: number | null,
+    options: QueryOptions & { readStatus?: 'unread' | 'in-progress' | 'completed'; favorites?: boolean; libraryId?: number; folderId?: number },
+  ): { records: (ComicRecord & { favorited?: boolean })[]; totalCount: number } {
+    const conditions: string[] = [];
+    const params: SqlParam[] = [];
+
+    if (options.libraryId != null) {
+      conditions.push('c.id IN (SELECT comic_id FROM library_comics WHERE library_id = ?)');
+      params.push(options.libraryId);
+    }
+    if (options.folderId != null) {
+      conditions.push('c.id IN (SELECT comic_id FROM folder_comics WHERE folder_id = ?)');
+      params.push(options.folderId);
+    }
+    if (options.mediaType) {
+      conditions.push('c.media_type = ?');
+      params.push(options.mediaType);
+    }
+    if (options.search) {
+      conditions.push('(c.title LIKE ? COLLATE NOCASE OR c.file_path LIKE ? COLLATE NOCASE)');
+      const t = `%${options.search}%`;
+      params.push(t, t);
+    }
+    if (options.tag) {
+      conditions.push('c.id IN (SELECT ct.comic_id FROM comic_tags ct JOIN tags t ON ct.tag_id = t.id WHERE t.name = ?)');
+      params.push(options.tag);
+    }
+    if (options.excludeFoldered) {
+      conditions.push('c.id NOT IN (SELECT comic_id FROM folder_comics)');
+    }
+    if (options.fileExt) {
+      conditions.push('LOWER(c.file_path) LIKE ?');
+      params.push('%.' + options.fileExt.toLowerCase());
+    }
+
+    // Progress JOIN (user-scoped if present; null for guests)
+    let progressJoin = '';
+    const progressSelect = userId != null
+      ? 'up.last_page as up_last_page, up.last_location as up_last_location, up.last_read as up_last_read, up.completed as up_completed'
+      : 'NULL as up_last_page, NULL as up_last_location, NULL as up_last_read, 0 as up_completed';
+    if (userId != null) {
+      progressJoin = 'LEFT JOIN user_progress up ON up.comic_id = c.id AND up.user_id = ?';
+    }
+
+    // Favorites
+    let favSelect = '0 as is_fav';
+    let favJoin = '';
+    if (userId != null) {
+      favSelect = 'CASE WHEN uf.comic_id IS NULL THEN 0 ELSE 1 END as is_fav';
+      favJoin = 'LEFT JOIN user_favorites uf ON uf.comic_id = c.id AND uf.user_id = ?';
+    }
+
+    // Read status filter (requires progress)
+    if (options.readStatus && userId != null) {
+      if (options.readStatus === 'unread') {
+        conditions.push('(up.comic_id IS NULL OR (COALESCE(up.last_page, 0) = 0 AND up.completed = 0))');
+      } else if (options.readStatus === 'in-progress') {
+        conditions.push('up.comic_id IS NOT NULL AND up.last_page IS NOT NULL AND up.last_page > 0 AND up.completed = 0');
+      } else if (options.readStatus === 'completed') {
+        conditions.push('up.completed = 1');
+      }
+    }
+
+    if (options.favorites && userId != null) {
+      conditions.push('uf.comic_id IS NOT NULL');
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const sortCol = options.sortBy === 'lastRead' && userId != null
+      ? "COALESCE(up.last_read, '')"
+      : (SORT_COLUMN_MAP[options.sortBy ?? 'title'] ?? SORT_COLUMN_MAP.title);
+    const sortDir = options.sortOrder === 'desc' ? 'DESC' : 'ASC';
+    const limit = options.limit ?? 50;
+    const offset = options.offset ?? 0;
+
+    // Prepend user params for joins
+    const joinParams: SqlParam[] = [];
+    if (userId != null) joinParams.push(userId); // progress join
+    if (userId != null) joinParams.push(userId); // fav join
+    const allParams = [...joinParams, ...params];
+
+    const countSql = `SELECT COUNT(*) as cnt FROM comics c ${progressJoin} ${favJoin} ${where}`;
+    const totalCount = (this.db.prepare(countSql).get(...allParams) as CountRow).cnt;
+
+    const rowsSql = `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added,
+                            c.last_page, c.last_location, c.last_read, c.media_type,
+                            ${progressSelect}, ${favSelect}
+                     FROM comics c ${progressJoin} ${favJoin}
+                     ${where}
+                     ORDER BY ${sortCol} ${sortDir}
+                     LIMIT ? OFFSET ?`;
+    const rows = this.db.prepare(rowsSql).all(...allParams, limit, offset) as (ComicRow & { up_last_page: number | null; up_last_location: string | null; up_last_read: string | null; up_completed: number; is_fav: number })[];
+
+    const records = rows.map((r) => {
+      const base = this.rowToRecord(r);
+      if (userId != null) {
+        base.lastPage = r.up_last_page;
+        base.lastLocation = r.up_last_location;
+        base.lastRead = r.up_last_read;
+      }
+      return { ...base, favorited: !!r.is_fav };
+    });
+
+    return { records, totalCount };
   }
 }
