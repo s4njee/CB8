@@ -51,6 +51,10 @@ export async function scanBooksDirectory(directoryPath: string): Promise<number>
   return api.invoke('library:scan-books', directoryPath);
 }
 
+export async function classifyPaths(paths: string[]): Promise<{ files: string[]; directories: string[] }> {
+  return api.invoke('library:classify-paths', paths);
+}
+
 export function onScanProgress(callback: (progress: ScanProgress) => void): () => void {
   return api.on('library:scan-progress', callback);
 }
@@ -182,6 +186,16 @@ export async function updateReadingLocation(comicId: number, location: string): 
 }
 
 // --- Web server settings ---
+
+// --- App meta ---
+
+export async function getAppMeta(key: string): Promise<string | null> {
+  return api.invoke('app-meta:get', key);
+}
+
+export async function setAppMeta(key: string, value: string): Promise<void> {
+  await api.invoke('app-meta:set', key, value);
+}
 
 export interface WebServerSettings {
   enabled: boolean;

@@ -233,8 +233,38 @@ async function populateSidebar() {
       const a = document.createElement('a');
       a.href = `#/library/${lib.id}`;
       a.className = 'sidebar-link';
-      a.textContent = lib.name;
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'sidebar-link-name';
+      nameSpan.textContent = lib.name;
+      a.appendChild(nameSpan);
       a.dataset.count = lib.comicCount;
+      if (isAuthenticated()) {
+        const item = {
+          onRename: async (next) => {
+            await api.renameLibrary(lib.id, next);
+            window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+          },
+          onDelete: async () => {
+            if (!window.confirm(`Delete collection "${lib.name}"? Comics and files are not removed.`)) return;
+            try {
+              await api.deleteLibrary(lib.id);
+              showToast(`Deleted "${lib.name}"`);
+              if (state.route?.type === 'library' && state.route.id === lib.id) {
+                window.location.hash = '#/';
+              }
+              window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+            } catch (err) { showToast(err.message); }
+          },
+        };
+        const openCtx = (x, y) => {
+          openSideContextMenu(x, y, [
+            { label: 'Rename', onClick: () => startInlineRename(a, nameSpan, item) },
+            { label: 'Delete', danger: true, onClick: item.onDelete },
+          ]);
+        };
+        a.addEventListener('contextmenu', (e) => { e.preventDefault(); openCtx(e.clientX, e.clientY); });
+        attachLongPress(a, (x, y) => openCtx(x, y));
+      }
       li.appendChild(a);
       libList.appendChild(li);
     };

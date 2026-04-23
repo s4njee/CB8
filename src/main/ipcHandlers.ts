@@ -123,6 +123,21 @@ export function registerIpcHandlers(
     });
   });
 
+  ipcMain.handle('library:classify-paths', async (_e, paths: string[]) => {
+    const files: string[] = [];
+    const directories: string[] = [];
+    for (const p of paths) {
+      try {
+        const stats = await fsp.stat(p);
+        if (stats.isDirectory()) directories.push(p);
+        else if (stats.isFile()) files.push(p);
+      } catch (err) {
+        console.warn(`Failed to stat dropped path ${p}:`, err);
+      }
+    }
+    return { files, directories };
+  });
+
   ipcMain.handle('library:add-files', async (_e, filePaths: string[]) => {
     if (!db) return { added: 0, errors: [] };
     let added = 0;
@@ -354,6 +369,16 @@ export function registerIpcHandlers(
     } else {
       win.setFullScreen(false);
     }
+  });
+
+  // --- App meta channels ---
+
+  ipcMain.handle('app-meta:get', (_e, key: string) => {
+    return db?.getAppMeta(key) ?? null;
+  });
+
+  ipcMain.handle('app-meta:set', (_e, key: string, value: string) => {
+    db?.setAppMeta(key, value);
   });
 
   // --- Web server settings channels ---

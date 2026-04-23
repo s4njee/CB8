@@ -86,6 +86,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({ filePath, pageCount }) =
             const img = e.currentTarget;
             setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
           }}
+          onDoubleClick={() => toggleFullscreen()}
           alt=""
         />
       )}

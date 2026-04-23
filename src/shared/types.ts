@@ -40,6 +40,15 @@ export interface QueryOptions {
   excludeFoldered?: boolean;
   mediaType?: 'comic' | 'book';
   fileExt?: string;
+  readStatus?: 'unread' | 'in-progress' | 'completed';
+}
+
+export interface FilterPreset {
+  sortBy: QueryOptions['sortBy'];
+  sortOrder: QueryOptions['sortOrder'];
+  readStatus?: QueryOptions['readStatus'];
+  fileExt?: string;
+  tag?: string;
 }
 
 export interface QueryResult {

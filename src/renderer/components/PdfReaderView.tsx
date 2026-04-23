@@ -3,7 +3,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { scaleToFit } from '../../shared/scaleFit';
 import { generateWindowTitle } from '../../shared/windowTitle';
-import { readBookFile, updateReadingProgress } from '../ipcClient';
+import { readBookFile, updateReadingProgress, toggleFullscreen } from '../ipcClient';
 
 const DEFAULT_TITLE = 'CB8';
 
@@ -193,7 +193,7 @@ export const PdfReaderView: React.FC<Props> = ({ filePath, comicId, initialPage 
   return (
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#000', position: 'relative', overflow: 'hidden' }}>
       <div ref={containerRef} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={handleClick}>
-        <canvas ref={canvasRef} style={{ display: loading ? 'none' : 'block', maxWidth: '100%', maxHeight: '100%' }} />
+        <canvas ref={canvasRef} onDoubleClick={() => toggleFullscreen()} style={{ display: loading ? 'none' : 'block', maxWidth: '100%', maxHeight: '100%' }} />
       </div>
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'flex' }}>
         <div style={{ width: '33.333%', pointerEvents: 'auto', cursor: 'pointer' }} onClick={() => navigate('prev')} />

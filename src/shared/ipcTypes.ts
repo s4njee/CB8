@@ -37,6 +37,7 @@ export interface IpcInvokeMap {
   'library:query': { args: [options: QueryOptions]; result: QueryResult };
   'library:scan': { args: [directoryPath: string]; result: number };
   'library:scan-books': { args: [directoryPath: string]; result: number };
+  'library:classify-paths': { args: [paths: string[]]; result: { files: string[]; directories: string[] } };
   'library:add-files': { args: [filePaths: string[]]; result: AddFilesResponse };
   'library:refresh-book-metadata': { args: [comicId: number]; result: import('./types').ComicRecord | null };
   'library:add-tag': { args: [comicId: number, tag: string]; result: void };
@@ -72,6 +73,8 @@ export interface IpcInvokeMap {
   'window:exit-fullscreen': { args: []; result: void };
   'webserver:get-settings': { args: []; result: { enabled: boolean; port: number; url: string | null; lanUrl: string | null } };
   'webserver:set-settings': { args: [enabled: boolean, port: number]; result: { enabled: boolean; port: number; url: string | null; lanUrl: string | null } };
+  'app-meta:get': { args: [key: string]; result: string | null };
+  'app-meta:set': { args: [key: string, value: string]; result: void };
 }
 
 export interface IpcEventMap {
@@ -97,6 +100,7 @@ export const IPC_INVOKE_CHANNELS = [
   'library:query',
   'library:scan',
   'library:scan-books',
+  'library:classify-paths',
   'library:add-files',
   'library:refresh-book-metadata',
   'library:add-tag',
@@ -132,6 +136,8 @@ export const IPC_INVOKE_CHANNELS = [
   'window:exit-fullscreen',
   'webserver:get-settings',
   'webserver:set-settings',
+  'app-meta:get',
+  'app-meta:set',
 ] as const satisfies readonly IpcInvokeChannel[];
 
 export const IPC_EVENT_CHANNELS = [

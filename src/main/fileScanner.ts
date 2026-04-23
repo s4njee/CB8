@@ -79,7 +79,9 @@ export class FileScannerImpl implements FileScanner {
       onProgress({ ...progress });
 
       try {
-        if (this.db.comicExistsByPath(filePath)) {
+        if (this.db.isDismissed(filePath)) {
+          // Skip: user previously removed this path from the library.
+        } else if (this.db.comicExistsByPath(filePath)) {
           if (mediaType === 'book') {
             await this.refreshBookMetadata(filePath);
           }

@@ -1,8 +1,11 @@
 import React, { memo, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { isComicArchive, isSupportedFile } from '../../shared/dropValidator';
-import type { QueryOptions } from '../../shared/types';
+import type { QueryOptions, FilterPreset } from '../../shared/types';
+import { parseFilterPreset, getDefaultSortOrder, toggleSortOrder } from '../../shared/filterLogic';
 import { ContinueReadingShelf } from './ContinueReadingShelf';
+import { SortControl } from './SortControl';
+import { FilterBar } from './FilterBar';
 import {
   addComicFiles,
   addComicsToFolder,
@@ -27,6 +30,10 @@ import {
   refreshBookMetadata,
   scanDirectory,
   scanBooksDirectory,
+  classifyPaths,
+  getAllTags,
+  getAppMeta,
+  setAppMeta,
 } from '../ipcClient';
 import type { LibrarySummary } from '../../shared/ipcTypes';
 
@@ -264,6 +271,12 @@ export const LibraryView: React.FC<Props> = ({
   const [activeFolder, setActiveFolder] = useState<{ id: number; name: string } | null>(null);
   const [totalCount, setTotalCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<QueryOptions['sortBy']>('title');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [readStatus, setReadStatus] = useState<QueryOptions['readStatus'] | undefined>(undefined);
+  const [fileExt, setFileExt] = useState<string | undefined>(undefined);
+  const [filterTag, setFilterTag] = useState<string | undefined>(undefined);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<{ discovered: number; processed: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -338,8 +351,11 @@ export const LibraryView: React.FC<Props> = ({
       search: trimmedSearch || undefined,
       limit: PAGE_SIZE,
       offset,
-      sortBy: 'title',
-      sortOrder: 'asc',
+      sortBy,
+      sortOrder,
+      readStatus,
+      fileExt,
+      tag: filterTag,
       excludeFoldered: activeFolder == null && activeLibraryId == null && !trimmedSearch,
       mediaType: activeView === 'books' ? 'book' : 'comic',
     };
@@ -356,7 +372,7 @@ export const LibraryView: React.FC<Props> = ({
       mediaType: rec.mediaType,
     }));
     return { entries, total: result.totalCount };
-  }, [activeFolder, activeLibraryId, activeView]);
+  }, [activeFolder, activeLibraryId, activeView, sortBy, sortOrder, readStatus, fileExt, filterTag]);
 
   const loadFolders = useCallback(async (search?: string) => {
     if (activeFolder || activeLibraryId != null) {
@@ -391,6 +407,30 @@ export const LibraryView: React.FC<Props> = ({
     setComics(entries);
     setTotalCount(total);
   }, [fetchPage, loadFolders]);
+
+  // Load persisted filter preferences and available tags on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [presetJson, tags] = await Promise.all([
+          getAppMeta('filterPreset'),
+          getAllTags(),
+        ]);
+        if (cancelled) return;
+        const preset = parseFilterPreset(presetJson);
+        setSortBy(preset.sortBy);
+        setSortOrder(preset.sortOrder ?? 'asc');
+        setReadStatus(preset.readStatus);
+        setFileExt(preset.fileExt);
+        setFilterTag(preset.tag);
+        setAvailableTags(tags);
+      } catch (err) {
+        console.warn('Failed to load filter preferences:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -513,6 +553,47 @@ export const LibraryView: React.FC<Props> = ({
     loadInitial('');
   };
 
+  const persistAndReset = useCallback((preset: FilterPreset) => {
+    setAppMeta('filterPreset', JSON.stringify(preset)).catch((err) =>
+      console.warn('Failed to persist filter preset:', err)
+    );
+    setComics([]);
+    setTotalCount(0);
+  }, []);
+
+  const handleSortByChange = useCallback((field: QueryOptions['sortBy']) => {
+    const newOrder = getDefaultSortOrder(field);
+    setSortBy(field);
+    setSortOrder(newOrder);
+    const preset: FilterPreset = { sortBy: field, sortOrder: newOrder, readStatus, fileExt, tag: filterTag };
+    persistAndReset(preset);
+  }, [readStatus, fileExt, filterTag, persistAndReset]);
+
+  const handleSortOrderToggle = useCallback(() => {
+    const newOrder = toggleSortOrder(sortOrder);
+    setSortOrder(newOrder);
+    const preset: FilterPreset = { sortBy, sortOrder: newOrder, readStatus, fileExt, tag: filterTag };
+    persistAndReset(preset);
+  }, [sortBy, sortOrder, readStatus, fileExt, filterTag, persistAndReset]);
+
+  const handleReadStatusChange = useCallback((status: QueryOptions['readStatus'] | undefined) => {
+    setReadStatus(status);
+    const preset: FilterPreset = { sortBy, sortOrder, readStatus: status, fileExt, tag: filterTag };
+    persistAndReset(preset);
+  }, [sortBy, sortOrder, fileExt, filterTag, persistAndReset]);
+
+  const handleFileExtChange = useCallback((ext: string | undefined) => {
+    setFileExt(ext);
+    const preset: FilterPreset = { sortBy, sortOrder, readStatus, fileExt: ext, tag: filterTag };
+    persistAndReset(preset);
+  }, [sortBy, sortOrder, readStatus, filterTag, persistAndReset]);
+
+  const handleTagChange = useCallback((tag: string | undefined) => {
+    setFilterTag(tag);
+    const preset: FilterPreset = { sortBy, sortOrder, readStatus, fileExt, tag };
+    persistAndReset(preset);
+  }, [sortBy, sortOrder, readStatus, fileExt, persistAndReset]);
+
   const handleOpenFolder = (folder: FolderEntry) => {
     setContextMenu(null);
     setFolderContextMenu(null);
@@ -552,16 +633,28 @@ export const LibraryView: React.FC<Props> = ({
   const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); };
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation(); setDragOver(false);
-    const comicPaths = Array.from(e.dataTransfer.files)
-      .filter((file) => isSupportedFile(file.name))
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    const droppedPaths = droppedFiles
       .map((file) => getPathForFile(file))
-      .filter((filePath) => filePath.length > 0);
-    if (!comicPaths.length) return;
+      .filter((p) => p.length > 0);
+    if (!droppedPaths.length) return;
     setAdding(true);
     try {
-      const result = await addComicFiles(comicPaths);
-      if (activeLibraryId != null) {
-        const records = await Promise.all(comicPaths.map((filePath) => getComicByPath(filePath)));
+      const { files, directories } = await classifyPaths(droppedPaths);
+      for (const dir of directories) {
+        try { await scanDirectory(dir); }
+        catch (err) { console.error('Failed to scan dropped folder (comics):', dir, err); }
+        try { await scanBooksDirectory(dir); }
+        catch (err) { console.error('Failed to scan dropped folder (books):', dir, err); }
+      }
+      const supportedFiles = files.filter((p) => isSupportedFile(p.split(/[\\/]/).pop() ?? ''));
+      let result: Awaited<ReturnType<typeof addComicFiles>> | undefined;
+      if (supportedFiles.length) {
+        result = await addComicFiles(supportedFiles);
+        if (result?.errors.length) console.error('Failed to add some comics:', result.errors);
+      }
+      if (activeLibraryId != null && supportedFiles.length) {
+        const records = await Promise.all(supportedFiles.map((filePath) => getComicByPath(filePath)));
         const matchingIds = records.flatMap((record) => {
           if (!record) return [];
           const expectedMediaType = activeView === 'books' ? 'book' : 'comic';
@@ -572,8 +665,7 @@ export const LibraryView: React.FC<Props> = ({
         }
       }
       await loadInitial(searchQuery);
-      if (result?.added > 0) onComicsChanged();
-      if (result?.errors.length) console.error('Failed to add some comics:', result.errors);
+      if (directories.length || (result?.added ?? 0) > 0) onComicsChanged();
     } catch (err) { console.error('Failed to add dropped files:', err); }
     finally { setAdding(false); }
   };
@@ -809,7 +901,7 @@ export const LibraryView: React.FC<Props> = ({
       return;
     }
 
-    const confirmed = window.confirm(`Delete ${count} comic${count !== 1 ? 's' : ''} from the database?\n\nThis will not delete files from disk.`);
+    const confirmed = window.confirm(`Delete ${count} comic${count !== 1 ? 's' : ''} from the database?\n\nFiles stay on disk, but future scans will skip these paths.`);
     if (!confirmed) return;
     await removeComics(contextMenu.comicIds);
     closeContextMenu();
@@ -927,6 +1019,7 @@ export const LibraryView: React.FC<Props> = ({
             border: '1px solid #444', borderRadius: 4, cursor: searchQuery ? 'pointer' : 'default', fontSize: 13,
           }}>Clear</button>
         </form>
+        <SortControl sortBy={sortBy} sortOrder={sortOrder} onSortByChange={handleSortByChange} onSortOrderToggle={handleSortOrderToggle} />
         <button onClick={handleScan} disabled={scanning} style={{
           padding: '5px 12px', backgroundColor: scanning ? '#333' : '#2563eb', color: '#fff',
           border: 'none', borderRadius: 4, cursor: scanning ? 'default' : 'pointer', fontSize: 13, whiteSpace: 'nowrap',
@@ -935,6 +1028,16 @@ export const LibraryView: React.FC<Props> = ({
           {displayedCount} item{displayedCount !== 1 ? 's' : ''}
         </span>
       </div>
+
+      <FilterBar
+        readStatus={readStatus}
+        fileExt={fileExt}
+        tag={filterTag}
+        availableTags={availableTags}
+        onReadStatusChange={handleReadStatusChange}
+        onFileExtChange={handleFileExtChange}
+        onTagChange={handleTagChange}
+      />
 
       {activeFolder && (
         <div style={{ padding: '6px 12px', backgroundColor: '#202838', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, borderBottom: '1px solid #334' }}>
