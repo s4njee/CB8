@@ -450,14 +450,77 @@ function startInlineRename(anchor, nameEl, item) {
 }
 
 async function promptNewCollection() {
-  const name = window.prompt('New collection name:');
-  if (!name?.trim()) return;
-  const mediaType = window.confirm('Books collection? (Cancel = Comics)') ? 'book' : 'comic';
+  const result = await openCollectionModal();
+  if (!result) return;
   try {
-    await api.createLibrary(name.trim(), mediaType);
-    showToast(`Created "${name.trim()}"`);
+    await api.createLibrary(result.name, result.mediaType);
+    showToast(`Created "${result.name}"`);
     window.dispatchEvent(new CustomEvent('cb8:library-changed'));
   } catch (err) { showToast(err.message); }
+}
+
+function openCollectionModal() {
+  return new Promise((resolve) => {
+    const modal = document.createElement('div');
+    modal.id = 'collection-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.innerHTML = `
+      <div class="admin-modal-backdrop"></div>
+      <div class="admin-modal-panel" role="document">
+        <h2 class="admin-modal-title">New collection</h2>
+        <form class="admin-form" autocomplete="off">
+          <label class="admin-label" for="collection-name">Name</label>
+          <input id="collection-name" type="text" class="admin-input" required />
+          <span class="admin-label">Type</span>
+          <div class="radio-row" role="radiogroup" aria-label="Collection type">
+            <label class="radio-pill">
+              <input type="radio" name="media-type" value="comic" checked />
+              <span>Comics</span>
+            </label>
+            <label class="radio-pill">
+              <input type="radio" name="media-type" value="book" />
+              <span>Books</span>
+            </label>
+          </div>
+          <div class="admin-actions">
+            <button type="button" class="admin-btn-secondary" data-action="cancel">Cancel</button>
+            <button type="submit" class="admin-btn-primary">Create</button>
+          </div>
+        </form>
+      </div>
+    `;
+    // Match the positioning of #admin-modal
+    Object.assign(modal.style, {
+      position: 'fixed', inset: '0', zIndex: '240',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    });
+    document.body.appendChild(modal);
+
+    const nameInput = modal.querySelector('#collection-name');
+    const form = modal.querySelector('form');
+
+    const close = (value) => {
+      document.removeEventListener('keydown', onKey);
+      modal.remove();
+      resolve(value);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(null); } };
+    document.addEventListener('keydown', onKey);
+
+    modal.querySelector('.admin-modal-backdrop').addEventListener('click', () => close(null));
+    modal.querySelector('[data-action="cancel"]').addEventListener('click', () => close(null));
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = nameInput.value.trim();
+      if (!name) { nameInput.focus(); return; }
+      const mediaType = modal.querySelector('input[name="media-type"]:checked').value;
+      close({ name, mediaType });
+    });
+
+    setTimeout(() => nameInput.focus(), 0);
+  });
 }
 
 async function promptNewFolder() {

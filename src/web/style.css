@@ -1138,6 +1138,30 @@ body:not(.admin-authenticated) .admin-add-button { display: none; }
 }
 .admin-btn-secondary:hover { color: var(--text); border-color: var(--border2); }
 
+/* Radio pill group (used in collection-type picker etc.) */
+.radio-row { display: flex; gap: 8px; }
+.radio-pill {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: color var(--trans), background var(--trans), border-color var(--trans);
+}
+.radio-pill input[type="radio"] { accent-color: var(--accent); }
+.radio-pill:has(input:checked) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .admin-picker-row {
   display: flex;
   gap: 8px;
