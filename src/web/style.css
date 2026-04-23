@@ -6,6 +6,9 @@
 /* --- Reset & base -------------------------------------------------------- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The HTML `hidden` attribute must always win over class display rules. */
+[hidden] { display: none !important; }
+
 :root {
   --bg:        #0a0a0a;
   --surface:   #141414;
