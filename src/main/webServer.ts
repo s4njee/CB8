@@ -216,7 +216,9 @@ function isAdmin(req: http.IncomingMessage, db: LibraryDatabase): boolean {
 }
 
 function isGuestAccessEnabled(db: LibraryDatabase): boolean {
-  return db.getAppMeta(GUEST_ACCESS_KEY) === 'true';
+  // Default: guests can read. Only disabled if an admin explicitly sets 'false'.
+  const v = db.getAppMeta(GUEST_ACCESS_KEY);
+  return v !== 'false';
 }
 
 function setSessionCookie(res: http.ServerResponse, token: string): void {
