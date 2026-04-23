@@ -122,7 +122,6 @@ export async function renderLibrary(el, route, options) {
   el.appendChild(buildFileTypeStrip());
   if (isAuthenticated()) {
     el.appendChild(buildReadStatusStrip());
-    el.appendChild(buildFavoritesToggle());
   }
 
   grid = document.createElement('div');
@@ -261,7 +260,7 @@ function buildReadStatusStrip() {
   const strip = document.createElement('div');
   strip.className = 'read-status-strip';
   strip.setAttribute('role', 'group');
-  strip.setAttribute('aria-label', 'Read status');
+  strip.setAttribute('aria-label', 'Read status and favorites');
   const current = getState().readStatus || '';
   for (const { status, label } of READ_STATUS_PILLS) {
     const btn = document.createElement('button');
@@ -272,21 +271,18 @@ function buildReadStatusStrip() {
     btn.addEventListener('click', () => setReadStatus(status));
     strip.appendChild(btn);
   }
-  return strip;
-}
 
-function buildFavoritesToggle() {
-  const wrap = document.createElement('div');
-  wrap.className = 'favorites-toggle';
-  const btn = document.createElement('button');
-  btn.type = 'button';
+  // Favorites toggle lives in the same row as the read-status pills.
   const on = Boolean(getState().favoritesOnly);
-  btn.className = 'strip-pill favorites-pill' + (on ? ' active' : '');
-  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  btn.innerHTML = `<span class="heart">${on ? '♥' : '♡'}</span> Favorites`;
-  btn.addEventListener('click', () => setFavoritesOnly(!on));
-  wrap.appendChild(btn);
-  return wrap;
+  const favBtn = document.createElement('button');
+  favBtn.type = 'button';
+  favBtn.className = 'strip-pill favorites-pill' + (on ? ' active' : '');
+  favBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  favBtn.innerHTML = `<span class="heart">${on ? '♥' : '♡'}</span> Favorites`;
+  favBtn.addEventListener('click', () => setFavoritesOnly(!on));
+  strip.appendChild(favBtn);
+
+  return strip;
 }
 
 // ---------------------------------------------------------------------------

@@ -439,17 +439,17 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
 .filetype-strip::-webkit-scrollbar { display: none; }
 
 /* Read-status + favorites filters — always visible when authenticated */
-.read-status-strip,
-.favorites-toggle {
+.read-status-strip {
   display: flex;
+  flex-wrap: nowrap;
   gap: 6px;
   padding: 6px 12px;
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
-.read-status-strip::-webkit-scrollbar,
-.favorites-toggle::-webkit-scrollbar { display: none; }
+.read-status-strip::-webkit-scrollbar { display: none; }
+.read-status-strip .favorites-pill { margin-left: auto; }
 
 .favorites-pill .heart { color: #ff6b81; margin-right: 4px; }
 .favorites-pill.active { background: color-mix(in srgb, #ff6b81 18%, transparent); border-color: #ff6b81; color: #ff6b81; }
