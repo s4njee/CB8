@@ -1,11 +1,23 @@
-import React, { memo, useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { isComicArchive, isSupportedFile } from '../../shared/dropValidator';
+import { isSupportedFile } from '../../shared/dropValidator';
 import type { QueryOptions, FilterPreset } from '../../shared/types';
 import { parseFilterPreset, getDefaultSortOrder, toggleSortOrder } from '../../shared/filterLogic';
 import { ContinueReadingShelf } from './ContinueReadingShelf';
 import { SortControl } from './SortControl';
 import { FilterBar } from './FilterBar';
+import { ComicCard } from './library/ComicCard';
+import { FolderCard } from './library/FolderCard';
+import { ComicContextMenu } from './library/ComicContextMenu';
+import { FolderContextMenu } from './library/FolderContextMenu';
+import { DetailsModal } from './library/DetailsModal';
+import { parseThumb, getFileExtension } from './library/utils';
+import { useScanProgress } from './library/hooks/useScanProgress';
+import {
+  CELL_WIDTH, GAP, PAGE_SIZE, ROW_HEIGHT,
+  type ComicEntry, type FolderEntry,
+  type ComicContextMenuState, type FolderContextMenuState,
+} from './library/types';
 import {
   addComicFiles,
   addComicsToFolder,
@@ -18,7 +30,6 @@ import {
   getPathForFile,
   getFolders,
   getLibraries,
-  onScanProgress,
   openDirectoryDialog,
   queryComics,
   queryFolderComics,
@@ -35,40 +46,6 @@ import {
   getAppMeta,
   setAppMeta,
 } from '../ipcClient';
-import type { LibrarySummary } from '../../shared/ipcTypes';
-
-interface ComicEntry {
-  id: number;
-  title: string;
-  pageCount: number;
-  fileSize: number;
-  filePath: string;
-  thumbnailUrl: string | null;
-  mediaType: 'comic' | 'book';
-}
-
-interface FolderEntry {
-  id: number;
-  name: string;
-  comicCount: number;
-  thumbnailUrl: string | null;
-}
-
-interface ComicContextMenu {
-  x: number;
-  y: number;
-  comic: ComicEntry;
-  comicIds: number[];
-  libraries: LibrarySummary[];
-  folders: FolderEntry[];
-  loading: boolean;
-}
-
-interface FolderContextMenu {
-  x: number;
-  y: number;
-  folder: FolderEntry;
-}
 
 interface Props {
   activeLibraryId: number | null;
@@ -79,189 +56,6 @@ interface Props {
   onSelectionChange: (ids: Set<number>) => void;
   refreshKey?: number;
 }
-
-const CELL_WIDTH = 180;
-const GAP = 12;
-const PAGE_SIZE = 50;
-const CELL_HEIGHT = Math.round(CELL_WIDTH * 1.4) + 30; // image area + title area
-const ROW_HEIGHT = CELL_HEIGHT + GAP;
-const FOLDER_ICON_URL = new URL('../../../folder.png', import.meta.url).href;
-
-function parseThumb(data: unknown): string | null {
-  if (!data) return null;
-  try {
-    let bytes: Uint8Array;
-    if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
-    else if (isSerializedBuffer(data)) bytes = new Uint8Array(data.data);
-    else if (data instanceof Uint8Array) bytes = data;
-    else if (typeof data === 'object') bytes = new Uint8Array(Object.values(data) as number[]);
-    else return null;
-    const copy = new Uint8Array(bytes.byteLength);
-    copy.set(bytes);
-    return URL.createObjectURL(new Blob([copy.buffer]));
-  } catch { return null; }
-}
-
-function isSerializedBuffer(data: unknown): data is { type: 'Buffer'; data: number[] } {
-  return (
-    typeof data === 'object' &&
-    data !== null &&
-    'type' in data &&
-    'data' in data &&
-    data.type === 'Buffer' &&
-    Array.isArray(data.data)
-  );
-}
-
-function getFileExtension(filePath: string): string {
-  const filename = filePath.split(/[\\/]/).pop() ?? filePath;
-  const dotIndex = filename.lastIndexOf('.');
-  return dotIndex >= 0 ? filename.slice(dotIndex + 1).toLowerCase() : '';
-}
-
-function formatPageDetails(comic: ComicEntry): string {
-  if (comic.pageCount > 0) {
-    return `${comic.pageCount} page${comic.pageCount === 1 ? '' : 's'}`;
-  }
-
-  const ext = getFileExtension(comic.filePath);
-  if (comic.mediaType === 'book' && ext === 'epub') return 'Reflowable EPUB';
-  return 'Unknown';
-}
-
-interface FolderCardProps {
-  folder: FolderEntry;
-  isDropTarget: boolean;
-  onDragStart: (e: React.DragEvent, folderId: number) => void;
-  onClick: (e: React.MouseEvent, folder: FolderEntry) => void;
-  onContextMenu: (e: React.MouseEvent, folder: FolderEntry) => void;
-  onDragOver: (e: React.DragEvent, folderId: number) => void;
-  onDragLeave: (e: React.DragEvent) => void;
-  onDrop: (e: React.DragEvent, folder: FolderEntry) => void;
-}
-
-const FolderCard = memo(function FolderCard({
-  folder,
-  isDropTarget,
-  onDragStart,
-  onClick,
-  onContextMenu,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-}: FolderCardProps) {
-  return (
-    <div draggable
-      onDragStart={(e) => onDragStart(e, folder.id)}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick(e, folder);
-      }}
-      onContextMenu={(e) => onContextMenu(e, folder)}
-      onDragOver={(e) => onDragOver(e, folder.id)}
-      onDragLeave={onDragLeave}
-      onDrop={(e) => onDrop(e, folder)}
-      style={{
-        width: CELL_WIDTH, cursor: 'pointer', textAlign: 'center',
-        borderRadius: 6, overflow: 'hidden',
-        backgroundColor: isDropTarget ? '#1d3b2a' : '#242b36',
-        transition: 'transform 0.1s, background-color 0.1s',
-        outline: isDropTarget ? '2px solid #4ade80' : '1px solid #334155',
-        outlineOffset: isDropTarget ? -2 : 0,
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.03)')}
-      onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-    >
-      <div style={{ width: CELL_WIDTH, height: CELL_WIDTH * 1.4, backgroundColor: '#2f3a4a', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-        {folder.thumbnailUrl ? (
-          <img src={folder.thumbnailUrl} alt={folder.name} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.58 }} loading="lazy" decoding="async" />
-        ) : (
-          <span style={{ color: '#789', fontSize: 48 }}>📁</span>
-        )}
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(15,23,42,0.05), rgba(15,23,42,0.72))' }} />
-        <div style={{
-          position: 'absolute', top: 8, left: 8, width: 34, height: 28, borderRadius: 5,
-          backgroundColor: 'transparent', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', padding: 0,
-        }}>
-          <img src={FOLDER_ICON_URL} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} decoding="async" />
-        </div>
-        <div style={{
-          position: 'absolute', right: 8, bottom: 8, padding: '3px 8px', borderRadius: 999,
-          backgroundColor: 'rgba(0,0,0,0.72)', color: '#fff', fontSize: 12,
-        }}>{folder.comicCount} item{folder.comicCount !== 1 ? 's' : ''}</div>
-      </div>
-      <div style={{ padding: '6px 8px', fontSize: 12, color: '#d8e3ff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {folder.name}
-      </div>
-    </div>
-  );
-});
-
-interface ComicCardProps {
-  comic: ComicEntry;
-  index: number;
-  isSelected: boolean;
-  onDragStart: (e: React.DragEvent, comicId: number) => void;
-  onClick: (e: React.MouseEvent, index: number) => void;
-  onContextMenu: (e: React.MouseEvent, comic: ComicEntry) => void;
-  onDoubleClick: (filePath: string) => void;
-  onCheckboxClick: (e: React.MouseEvent, comicId: number) => void;
-}
-
-const ComicCard = memo(function ComicCard({
-  comic,
-  index,
-  isSelected,
-  onDragStart,
-  onClick,
-  onContextMenu,
-  onDoubleClick,
-  onCheckboxClick,
-}: ComicCardProps) {
-  return (
-    <div draggable
-      onDragStart={(e) => onDragStart(e, comic.id)}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick(e, index);
-      }}
-      onContextMenu={(e) => onContextMenu(e, comic)}
-      onDoubleClick={() => onDoubleClick(comic.filePath)}
-      style={{
-        width: CELL_WIDTH, cursor: 'pointer', textAlign: 'center',
-        borderRadius: 6, overflow: 'hidden', backgroundColor: isSelected ? '#2a2a3a' : '#252525',
-        border: isSelected ? '2px solid #5b9aff' : '2px solid transparent',
-        boxShadow: isSelected ? '0 0 0 1px rgba(91,154,255,0.45) inset' : 'none',
-        transition: 'transform 0.1s',
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.03)')}
-      onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-    >
-      <div style={{ width: CELL_WIDTH, height: CELL_WIDTH * 1.4, backgroundColor: '#333', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-        <div onClick={(e) => onCheckboxClick(e, comic.id)} style={{
-          position: 'absolute', top: 6, right: 6, width: 20, height: 20,
-          borderRadius: 3, border: '2px solid rgba(255,255,255,0.5)',
-          backgroundColor: isSelected ? '#5b9aff' : 'rgba(0,0,0,0.4)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 13, color: '#fff', zIndex: 2, cursor: 'pointer',
-          opacity: isSelected ? 1 : 0, transition: 'opacity 0.15s',
-        }}
-          onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
-          onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.opacity = '0'; }}
-        >{isSelected ? '✓' : ''}</div>
-        {comic.thumbnailUrl ? (
-          <img src={comic.thumbnailUrl} alt={comic.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" decoding="async" />
-        ) : (
-          <span style={{ color: '#555', fontSize: 40 }}>📖</span>
-        )}
-      </div>
-      <div style={{ padding: '6px 8px', fontSize: 12, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {comic.title}
-      </div>
-    </div>
-  );
-});
 
 export const LibraryView: React.FC<Props> = ({
   activeLibraryId, activeView, onOpenFile, onComicsChanged, selectedIds, onSelectionChange, refreshKey,
@@ -278,14 +72,13 @@ export const LibraryView: React.FC<Props> = ({
   const [filterTag, setFilterTag] = useState<string | undefined>(undefined);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState<{ discovered: number; processed: number } | null>(null);
+  const { scanProgress, setScanProgress } = useScanProgress();
   const [dragOver, setDragOver] = useState(false);
   const [adding, setAdding] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [shelfRefreshKey, setShelfRefreshKey] = useState(0);
   const [folderDropTargetId, setFolderDropTargetId] = useState<number | null>(null);
-  const [contextMenu, setContextMenu] = useState<ComicContextMenu | null>(null);
-  const [folderContextMenu, setFolderContextMenu] = useState<FolderContextMenu | null>(null);
+  const [contextMenu, setContextMenu] = useState<ComicContextMenuState | null>(null);
+  const [folderContextMenu, setFolderContextMenu] = useState<FolderContextMenuState | null>(null);
   const [contextCreateMode, setContextCreateMode] = useState<'library' | 'folder' | null>(null);
   const [contextCreateName, setContextCreateName] = useState('');
   const [contextCreateError, setContextCreateError] = useState<string | null>(null);
@@ -309,12 +102,11 @@ export const LibraryView: React.FC<Props> = ({
   selectedIdsRef.current = selectedIds;
   activeFolderRef.current = activeFolder;
 
-  // Track container width to compute column count
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const computeColumns = () => {
-      const width = el.clientWidth - GAP; // subtract padding
+      const width = el.clientWidth - GAP;
       const cols = Math.max(1, Math.floor((width + GAP) / (CELL_WIDTH + GAP)));
       setColumnCount(cols);
     };
@@ -324,7 +116,6 @@ export const LibraryView: React.FC<Props> = ({
     return () => ro.disconnect();
   }, []);
 
-  // Unified items list: folders first, then comics
   type GridItem =
     | { kind: 'folder'; folder: FolderEntry }
     | { kind: 'comic'; comic: ComicEntry; comicIndex: number };
@@ -408,7 +199,6 @@ export const LibraryView: React.FC<Props> = ({
     setTotalCount(total);
   }, [fetchPage, loadFolders]);
 
-  // Load persisted filter preferences and available tags on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -455,7 +245,6 @@ export const LibraryView: React.FC<Props> = ({
     for (const url of thumbnailUrls.current) URL.revokeObjectURL(url);
   }, []);
 
-  // Reset on library change
   useEffect(() => {
     onSelectionChange(new Set());
     lastClickedIndex.current = null;
@@ -466,24 +255,15 @@ export const LibraryView: React.FC<Props> = ({
     setActiveFolder(null);
   }, [activeLibraryId, activeView]);
 
-  // Trigger loadMore when virtual rows near the end become visible
   const virtualRows = rowVirtualizer.getVirtualItems();
   const lastVirtualRow = virtualRows[virtualRows.length - 1];
   useEffect(() => {
     if (!hasMore || loadingMore) return;
     if (!lastVirtualRow) return;
-    // If the last visible virtual row is within 2 rows of the end, load more
     if (lastVirtualRow.index >= rowCount - 3) {
       loadMore();
     }
   }, [lastVirtualRow?.index, rowCount, hasMore, loadingMore, loadMore]);
-
-  useEffect(() => {
-    const unsub = onScanProgress((progress) => {
-      setScanProgress({ discovered: progress.discovered, processed: progress.processed });
-    });
-    return unsub;
-  }, []);
 
   useEffect(() => {
     if (!contextMenu && !folderContextMenu) return;
@@ -760,7 +540,7 @@ export const LibraryView: React.FC<Props> = ({
       console.error('Failed to load context menu data:', err);
       setContextMenu((current) => current ? { ...current, loading: false } : current);
     }
-  }, [onSelectionChange]);
+  }, [activeView, onSelectionChange]);
 
   const closeContextMenu = () => {
     setContextMenu(null);
@@ -992,7 +772,6 @@ export const LibraryView: React.FC<Props> = ({
   const visibleItemCount = folders.length + comics.length;
   const displayedCount = activeFolder ? totalCount : totalCount + folders.length;
 
-  // Compute grid width for centering: columns * cell + (columns-1) * gap
   const gridWidth = columnCount * CELL_WIDTH + (columnCount - 1) * GAP;
 
   return (
@@ -1148,323 +927,51 @@ export const LibraryView: React.FC<Props> = ({
         )}
       </div>
       {contextMenu && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          style={{
-            position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 1000,
-            minWidth: 220, maxWidth: 300, backgroundColor: '#202020', color: '#ddd',
-            border: '1px solid #444', borderRadius: 6, boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
-            padding: 6, fontSize: 13,
+        <ComicContextMenu
+          state={contextMenu}
+          activeLibraryId={activeLibraryId}
+          createMode={contextCreateMode}
+          createName={contextCreateName}
+          createError={contextCreateError}
+          creating={contextCreating}
+          onCreateModeChange={(mode) => {
+            setContextCreateMode(mode);
+            setContextCreateError(null);
           }}
-        >
-          <div style={{ padding: '6px 8px', color: '#9ca3af', borderBottom: '1px solid #333', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {contextMenu.comicIds.length > 1 ? `${contextMenu.comicIds.length} comics selected` : contextMenu.comic.title}
-          </div>
-
-          <ContextMenuGroup title="Add to library">
-            {contextMenu.loading ? (
-              <ContextMenuItem label="Loading..." disabled />
-            ) : (
-              <>
-                {contextMenu.libraries.length ? (
-                  contextMenu.libraries.map((library) => (
-                    <ContextMenuItem key={library.id} label={library.name} onClick={() => handleContextAddToLibrary(library.id)} />
-                  ))
-                ) : (
-                  <ContextMenuItem label="No libraries" disabled />
-                )}
-                <ContextMenuItem
-                  label="Add to new library..."
-                  onClick={() => {
-                    setContextCreateMode('library');
-                    setContextCreateName('');
-                    setContextCreateError(null);
-                  }}
-                />
-                {contextCreateMode === 'library' && (
-                  <ContextCreateForm
-                    placeholder="Library name"
-                    value={contextCreateName}
-                    error={contextCreateError}
-                    creating={contextCreating}
-                    onChange={setContextCreateName}
-                    onSubmit={handleContextCreateLibrary}
-                    onCancel={() => {
-                      setContextCreateMode(null);
-                      setContextCreateName('');
-                      setContextCreateError(null);
-                    }}
-                  />
-                )}
-              </>
-            )}
-          </ContextMenuGroup>
-
-          <ContextMenuGroup title="Add to virtual folder">
-            {contextMenu.loading ? (
-              <ContextMenuItem label="Loading..." disabled />
-            ) : (
-              <>
-                {contextMenu.folders.length ? (
-                  contextMenu.folders.map((folder) => (
-                    <ContextMenuItem key={folder.id} label={folder.name} onClick={() => handleContextAddToFolder(folder.id)} />
-                  ))
-                ) : (
-                  <ContextMenuItem label="No folders" disabled />
-                )}
-                <ContextMenuItem
-                  label="Add to new folder..."
-                  onClick={() => {
-                    setContextCreateMode('folder');
-                    setContextCreateName('');
-                    setContextCreateError(null);
-                  }}
-                />
-                {contextCreateMode === 'folder' && (
-                  <ContextCreateForm
-                    placeholder="Folder name"
-                    value={contextCreateName}
-                    error={contextCreateError}
-                    creating={contextCreating}
-                    onChange={setContextCreateName}
-                    onSubmit={handleContextCreateFolder}
-                    onCancel={() => {
-                      setContextCreateMode(null);
-                      setContextCreateName('');
-                      setContextCreateError(null);
-                    }}
-                  />
-                )}
-              </>
-            )}
-          </ContextMenuGroup>
-
-          <div style={{ height: 1, backgroundColor: '#333', margin: '4px 0' }} />
-          <ContextMenuItem label="View details" onClick={handleContextDetails} />
-          <ContextMenuItem label={activeLibraryId != null ? 'Remove from this library' : 'Delete from database'} danger onClick={handleContextDelete} />
-        </div>
+          onCreateNameChange={setContextCreateName}
+          onCreateCancel={() => {
+            setContextCreateMode(null);
+            setContextCreateName('');
+            setContextCreateError(null);
+          }}
+          onAddToLibrary={handleContextAddToLibrary}
+          onCreateLibrary={handleContextCreateLibrary}
+          onAddToFolder={handleContextAddToFolder}
+          onCreateFolder={handleContextCreateFolder}
+          onViewDetails={handleContextDetails}
+          onDelete={handleContextDelete}
+        />
       )}
       {folderContextMenu && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          style={{
-            position: 'fixed', left: folderContextMenu.x, top: folderContextMenu.y, zIndex: 1000,
-            minWidth: 200, backgroundColor: '#202020', color: '#ddd',
-            border: '1px solid #444', borderRadius: 6, boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
-            padding: 6, fontSize: 13,
-          }}
-        >
-          <div style={{ padding: '6px 8px', color: '#9ca3af', borderBottom: '1px solid #333', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {folderContextMenu.folder.name}
-          </div>
-          {renamingFolder ? (
-            <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <input
-                autoFocus
-                value={folderRenameName}
-                onChange={(e) => setFolderRenameName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSubmitRenameFolder();
-                  if (e.key === 'Escape') closeFolderContextMenu();
-                }}
-                style={{
-                  width: '100%', boxSizing: 'border-box', padding: '5px 7px',
-                  backgroundColor: '#111827', color: '#eee', border: '1px solid #4b5563',
-                  borderRadius: 4, outline: 'none', fontSize: 13,
-                }}
-              />
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  type="button"
-                  onClick={handleSubmitRenameFolder}
-                  disabled={!folderRenameName.trim()}
-                  style={{
-                    flex: 1, padding: '5px 8px', backgroundColor: folderRenameName.trim() ? '#2563eb' : '#333',
-                    color: '#fff', border: 'none', borderRadius: 4,
-                    cursor: folderRenameName.trim() ? 'pointer' : 'default', fontSize: 12,
-                  }}
-                >Save</button>
-                <button
-                  type="button"
-                  onClick={closeFolderContextMenu}
-                  style={{
-                    flex: 1, padding: '5px 8px', backgroundColor: '#333', color: '#ccc',
-                    border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12,
-                  }}
-                >Cancel</button>
-              </div>
-              {folderRenameError && <div style={{ color: '#fca5a5', fontSize: 12 }}>{folderRenameError}</div>}
-            </div>
-          ) : (
-            <>
-              <ContextMenuItem label="Rename folder" onClick={() => setRenamingFolder(true)} />
-              <ContextMenuItem label="Delete folder" danger onClick={handleDeleteFolder} />
-              {folderRenameError && <div style={{ color: '#fca5a5', fontSize: 12, padding: '4px 8px' }}>{folderRenameError}</div>}
-            </>
-          )}
-        </div>
+        <FolderContextMenu
+          state={folderContextMenu}
+          renaming={renamingFolder}
+          renameName={folderRenameName}
+          renameError={folderRenameError}
+          onRenameNameChange={setFolderRenameName}
+          onStartRename={() => setRenamingFolder(true)}
+          onSubmitRename={handleSubmitRenameFolder}
+          onDelete={handleDeleteFolder}
+          onCancel={closeFolderContextMenu}
+        />
       )}
       {detailsComic && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setDetailsComic(null)}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 1100,
-            backgroundColor: 'rgba(0,0,0,0.58)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: 24,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 'min(560px, 100%)',
-              backgroundColor: '#202020',
-              color: '#e5e7eb',
-              border: '1px solid #3f3f46',
-              borderRadius: 8,
-              boxShadow: '0 18px 48px rgba(0,0,0,0.5)',
-              overflow: 'hidden',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', borderBottom: '1px solid #333' }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detailsComic.title}</div>
-                <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 2, textTransform: 'uppercase' }}>{getFileExtension(detailsComic.filePath) || detailsComic.mediaType}</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDetailsComic(null)}
-                style={{ width: 28, height: 28, borderRadius: 4, border: '1px solid #444', backgroundColor: '#2a2a2a', color: '#ddd', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
-                aria-label="Close details"
-              >x</button>
-            </div>
-            <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '92px minmax(0, 1fr)', gap: '10px 14px', fontSize: 13 }}>
-              <DetailLabel>Path</DetailLabel>
-              <div style={{ overflowWrap: 'anywhere', color: '#d1d5db' }}>{detailsComic.filePath}</div>
-              <DetailLabel>Pages</DetailLabel>
-              <div>{detailsLoading ? 'Reading metadata...' : formatPageDetails(detailsComic)}</div>
-              <DetailLabel>Size</DetailLabel>
-              <div>{formatBytes(detailsComic.fileSize)}</div>
-            </div>
-          </div>
-        </div>
+        <DetailsModal
+          comic={detailsComic}
+          loading={detailsLoading}
+          onClose={() => setDetailsComic(null)}
+        />
       )}
     </div>
   );
 };
-
-function DetailLabel({ children }: { children: React.ReactNode }) {
-  return <div style={{ color: '#9ca3af' }}>{children}</div>;
-}
-
-function ContextMenuGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ padding: '2px 0' }}>
-      <div style={{ padding: '5px 8px 2px', color: '#7f8a9a', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function ContextMenuItem({
-  label,
-  onClick,
-  disabled,
-  danger,
-}: {
-  label: string;
-  onClick?: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        display: 'block', width: '100%', padding: '6px 8px', textAlign: 'left',
-        backgroundColor: 'transparent', color: disabled ? '#666' : danger ? '#fca5a5' : '#ddd',
-        border: 'none', borderRadius: 4, cursor: disabled ? 'default' : 'pointer', fontSize: 13,
-      }}
-      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.backgroundColor = danger ? '#3a2222' : '#303030'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-    >
-      {label}
-    </button>
-  );
-}
-
-function ContextCreateForm({
-  placeholder,
-  value,
-  error,
-  creating,
-  onChange,
-  onSubmit,
-  onCancel,
-}: {
-  placeholder: string;
-  value: string;
-  error: string | null;
-  creating: boolean;
-  onChange: (value: string) => void;
-  onSubmit: () => void;
-  onCancel: () => void;
-}) {
-  const trimmed = value.trim();
-
-  return (
-    <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <input
-        autoFocus
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && trimmed && !creating) onSubmit();
-          if (e.key === 'Escape') onCancel();
-        }}
-        style={{
-          width: '100%', boxSizing: 'border-box', padding: '5px 7px',
-          backgroundColor: '#111827', color: '#eee', border: '1px solid #4b5563',
-          borderRadius: 4, outline: 'none', fontSize: 13,
-        }}
-      />
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button
-          type="button"
-          onClick={onSubmit}
-          disabled={!trimmed || creating}
-          style={{
-            flex: 1, padding: '5px 8px', backgroundColor: trimmed && !creating ? '#2563eb' : '#333',
-            color: '#fff', border: 'none', borderRadius: 4,
-            cursor: trimmed && !creating ? 'pointer' : 'default', fontSize: 12,
-          }}
-        >{creating ? 'Creating...' : 'Create'}</button>
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={creating}
-          style={{
-            flex: 1, padding: '5px 8px', backgroundColor: '#333', color: '#ccc',
-            border: 'none', borderRadius: 4, cursor: creating ? 'default' : 'pointer', fontSize: 12,
-          }}
-        >Cancel</button>
-      </div>
-      {error && <div style={{ color: '#fca5a5', fontSize: 12 }}>{error}</div>}
-    </div>
-  );
-}
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / 1024 ** index;
-  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
-}
