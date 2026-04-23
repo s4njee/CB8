@@ -66,12 +66,18 @@ export async function renderComicReader(el, record, initialPage, onBack) {
   img.alt = 'Comic page';
   img.id = 'comic-page-img';
   img.dataset.zoom = prefs.zoomMode;
+  img.draggable = false;
+  img.addEventListener('dragstart', (e) => e.preventDefault());
+  img.addEventListener('mousedown', (e) => e.preventDefault());
   stage.appendChild(img);
 
   const img2 = document.createElement('img');
   img2.className = 'comic-page-img comic-page-img-secondary';
   img2.alt = 'Comic page';
   img2.dataset.zoom = prefs.zoomMode;
+  img2.draggable = false;
+  img2.addEventListener('dragstart', (e) => e.preventDefault());
+  img2.addEventListener('mousedown', (e) => e.preventDefault());
   stage.appendChild(img2);
 
   readerBody.appendChild(stage);

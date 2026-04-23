@@ -652,6 +652,9 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   min-height: 0;
   overflow: hidden;
 }
+.comic-reader, .comic-reader * { user-select: none; -webkit-user-select: none; }
+.comic-reader ::selection { background: transparent; }
+.comic-reader img { -webkit-user-drag: none; pointer-events: auto; }
 
 /* Reader toolbar ---------------------------------------------------------- */
 .reader-toolbar {
@@ -718,6 +721,9 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   background: #000;
   cursor: pointer;
   touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 .comic-reader.is-zoomed { touch-action: none; overflow: hidden; }
 
@@ -740,7 +746,10 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   max-height: 100vh;
   object-fit: contain;
   user-select: none;
+  -webkit-user-select: none;
   -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   transition: opacity 0.15s;
 }
 .comic-page-img.loading { opacity: 0.2; }
