@@ -176,7 +176,10 @@ function installPullToRefresh() {
   indicator.style.transform = 'translateY(-60px)';
   scrollEl.prepend(indicator);
 
+  const isReaderOpen = () => document.body.classList.contains('reader-open');
+
   scrollEl.addEventListener('touchstart', (e) => {
+    if (isReaderOpen()) { pulling = false; return; }
     if (scrollEl.scrollTop === 0 && e.touches.length === 1) {
       ptrStartY = e.touches[0].clientY;
       pulling = true;

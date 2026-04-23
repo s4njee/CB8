@@ -58,20 +58,26 @@ const CACHE_CAPACITY = 5;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface CacheEntry {
-  handle: ArchiveHandle;
+  handle: Promise<ArchiveHandle>;
   filePath: string;
   lastUsed: number;
 }
 
 const handleCache = new Map<number, CacheEntry>();
 
+/**
+ * The cache stores the open *promise* (not the resolved handle) so that two
+ * concurrent requests for the same uncached comic share a single open() call.
+ * Storing the resolved handle would let both callers invoke ArchiveLoader.open
+ * in parallel; one handle would end up in the map, the other would leak.
+ */
 async function getArchiveHandle(comicId: number, filePath: string): Promise<ArchiveHandle> {
   const now = Date.now();
 
   // Evict expired entries
   for (const [id, entry] of handleCache) {
     if (now - entry.lastUsed > CACHE_TTL_MS) {
-      await ArchiveLoader.close(entry.handle).catch(() => {});
+      entry.handle.then((h) => ArchiveLoader.close(h)).catch(() => {});
       handleCache.delete(id);
     }
   }
@@ -88,27 +94,33 @@ async function getArchiveHandle(comicId: number, filePath: string): Promise<Arch
     }
     if (oldestId !== -1) {
       const evicted = handleCache.get(oldestId)!;
-      await ArchiveLoader.close(evicted.handle).catch(() => {});
+      evicted.handle.then((h) => ArchiveLoader.close(h)).catch(() => {});
       handleCache.delete(oldestId);
     }
   }
 
-  if (handleCache.has(comicId)) {
-    const entry = handleCache.get(comicId)!;
-    entry.lastUsed = now;
-    return entry.handle;
+  const existing = handleCache.get(comicId);
+  if (existing) {
+    existing.lastUsed = now;
+    return existing.handle;
   }
 
-  const handle = await ArchiveLoader.open(filePath);
-  handleCache.set(comicId, { handle, filePath, lastUsed: now });
-  return handle;
+  const handlePromise = ArchiveLoader.open(filePath);
+  handleCache.set(comicId, { handle: handlePromise, filePath, lastUsed: now });
+  // If the open fails, drop the cache entry so the next call retries.
+  handlePromise.catch(() => {
+    const entry = handleCache.get(comicId);
+    if (entry && entry.handle === handlePromise) handleCache.delete(comicId);
+  });
+  return handlePromise;
 }
 
 export async function closeAllHandles(): Promise<void> {
-  for (const entry of handleCache.values()) {
-    await ArchiveLoader.close(entry.handle).catch(() => {});
-  }
+  const entries = Array.from(handleCache.values());
   handleCache.clear();
+  for (const entry of entries) {
+    await entry.handle.then((h) => ArchiveLoader.close(h)).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +430,29 @@ function toWebRecord(record: ReturnType<LibraryDatabase['getComic']>): WebComicR
   };
 }
 
+/**
+ * Overlay per-user progress and favorited onto a base web record. For guests
+ * (userId == null), blank out progress fields — the shared row's values
+ * reflect the admin's reading and leak their position across users.
+ */
+function overlayUserState(
+  base: WebComicRecord,
+  db: LibraryDatabase,
+  userId: number | null,
+): WebComicRecord & { favorited: boolean } {
+  if (userId == null) {
+    return { ...base, lastPage: null, lastLocation: null, lastRead: null, favorited: false };
+  }
+  const up = db.getUserProgress(userId, base.id);
+  return {
+    ...base,
+    lastPage: up?.lastPage ?? null,
+    lastLocation: up?.lastLocation ?? null,
+    lastRead: up?.lastRead ?? null,
+    favorited: db.isFavorite(userId, base.id),
+  };
+}
+
 async function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -656,6 +691,8 @@ async function handleRequest(
     // sitting at the machine running the app.
     if (method === 'POST' && pathname === '/api/admin/pick-path') {
       if (!isAdmin(req, db)) return sendError(res, isAuthenticated(req, db) ? 403 : 401, isAuthenticated(req, db) ? 'Admin required' : 'Unauthorized');
+      // Pops a native dialog on the host; only meaningful from the host itself.
+      if (!isHostConnection(req)) return sendError(res, 403, 'Host-only operation');
       const body = await readBody(req);
       let parsed: { kind?: 'file' | 'directory' };
       try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
@@ -859,8 +896,8 @@ async function handleRequest(
       // Evict from archive handle cache before removing the DB row
       const entry = handleCache.get(id);
       if (entry) {
-        await ArchiveLoader.close(entry.handle).catch(() => {});
         handleCache.delete(id);
+        await entry.handle.then((h) => ArchiveLoader.close(h)).catch(() => {});
       }
       db.removeComics([id]);
       return sendJson(res, 200, { ok: true });
@@ -887,7 +924,7 @@ async function handleRequest(
       const id = parseInt(comicMatch[1], 10);
       const record = db.getComic(id);
       if (!record) return sendError(res, 404, 'Comic not found');
-      return sendJson(res, 200, toWebRecord(record));
+      return sendJson(res, 200, overlayUserState(toWebRecord(record)!, db, currentUser?.id ?? null));
     }
 
     // --- GET /api/comics/:id/thumbnail --------------------------------------
@@ -999,6 +1036,12 @@ async function handleRequest(
       try {
         const stat = fs.statSync(record.filePath);
         const stream = fs.createReadStream(record.filePath);
+        stream.on('error', (streamErr) => {
+          console.error(`[webServer] File stream error id=${id}:`, streamErr);
+          // Headers may already be sent — just tear down.
+          stream.destroy();
+          res.destroy();
+        });
         res.writeHead(200, {
           'Content-Type': mime,
           'Content-Length': String(stat.size),
@@ -1118,7 +1161,8 @@ async function handleRequest(
     if (method === 'GET' && seriesComicsMatch) {
       const name = decodeURIComponent(seriesComicsMatch[1]);
       const records = db.getSeriesComics(name);
-      return sendJson(res, 200, records.map(toWebRecord));
+      const uid = currentUser?.id ?? null;
+      return sendJson(res, 200, records.map((r) => overlayUserState(toWebRecord(r)!, db, uid)));
     }
 
     // --- Metadata search (admin only) -------------------------------------
@@ -1279,11 +1323,16 @@ async function handleRequest(
     const libComicsMatch = pathname.match(/^\/api\/libraries\/(\d+)\/comics$/);
     if (method === 'GET' && libComicsMatch) {
       const libId = parseInt(libComicsMatch[1], 10);
-      const opts = parseQueryOptions(query);
+      const opts = parseQueryOptions(query) as QueryOptions & { readStatus?: 'unread' | 'in-progress' | 'completed'; favorites?: boolean; libraryId?: number };
+      opts.libraryId = libId;
       if (!opts.limit) opts.limit = 50;
-      const result = db.queryComicsByLibrary(libId, opts);
+      if (query.readStatus === 'unread' || query.readStatus === 'in-progress' || query.readStatus === 'completed') {
+        opts.readStatus = query.readStatus;
+      }
+      if (query.favorites === 'true') opts.favorites = true;
+      const result = db.queryComicsForUser(currentUser?.id ?? null, opts);
       return sendJson(res, 200, {
-        records: result.records.map(toWebRecord),
+        records: result.records.map((r) => ({ ...toWebRecord(r)!, favorited: r.favorited ?? false })),
         totalCount: result.totalCount,
       });
     }
@@ -1380,11 +1429,16 @@ async function handleRequest(
     const folderComicsMatch = pathname.match(/^\/api\/folders\/(\d+)\/comics$/);
     if (method === 'GET' && folderComicsMatch) {
       const folderId = parseInt(folderComicsMatch[1], 10);
-      const opts = parseQueryOptions(query);
+      const opts = parseQueryOptions(query) as QueryOptions & { readStatus?: 'unread' | 'in-progress' | 'completed'; favorites?: boolean; folderId?: number };
+      opts.folderId = folderId;
       if (!opts.limit) opts.limit = 50;
-      const result = db.getFolderComics(folderId, opts);
+      if (query.readStatus === 'unread' || query.readStatus === 'in-progress' || query.readStatus === 'completed') {
+        opts.readStatus = query.readStatus;
+      }
+      if (query.favorites === 'true') opts.favorites = true;
+      const result = db.queryComicsForUser(currentUser?.id ?? null, opts);
       return sendJson(res, 200, {
-        records: result.records.map(toWebRecord),
+        records: result.records.map((r) => ({ ...toWebRecord(r)!, favorited: r.favorited ?? false })),
         totalCount: result.totalCount,
       });
     }
@@ -1475,7 +1529,13 @@ async function handleRequest(
       'Content-Length': String(stat.size),
       'Cache-Control': 'no-cache',
     });
-    fs.createReadStream(absPath).pipe(res);
+    const staticStream = fs.createReadStream(absPath);
+    staticStream.on('error', (err) => {
+      console.error(`[webServer] Static stream error ${absPath}:`, err);
+      staticStream.destroy();
+      res.destroy();
+    });
+    staticStream.pipe(res);
   } catch {
     // Fall back to index.html for SPA deep links
     try {
@@ -1486,7 +1546,13 @@ async function handleRequest(
         'Content-Length': String(indexStat.size),
         'Cache-Control': 'no-cache',
       });
-      fs.createReadStream(indexPath).pipe(res);
+      const indexStream = fs.createReadStream(indexPath);
+      indexStream.on('error', (err) => {
+        console.error(`[webServer] Index stream error ${indexPath}:`, err);
+        indexStream.destroy();
+        res.destroy();
+      });
+      indexStream.pipe(res);
     } catch {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not found');

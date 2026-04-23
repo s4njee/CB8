@@ -1035,7 +1035,7 @@ export function openCardContextMenu(x, y, { targetId, targets, isSelected, grid,
   menu.querySelector('[data-action="mark-read"]').addEventListener('click', async () => {
     _closeContextMenu();
     try {
-      await Promise.all(targets.map((id) => api.setCompleted(id)));
+      await Promise.all(targets.map((id) => api.setCompleted(id, true)));
       showToast(`Marked ${targets.length} item${targets.length === 1 ? '' : 's'} as read`);
       window.dispatchEvent(new CustomEvent('cb8:progress-changed', { detail: { ids: targets } }));
     } catch (err) { showToast(err.message); }
