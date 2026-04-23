@@ -714,7 +714,23 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   overflow: hidden;
   background: #000;
   cursor: pointer;
+  touch-action: pan-y;
 }
+.comic-reader.is-zoomed { touch-action: none; overflow: hidden; }
+
+/* Stage wraps the page images and receives pinch-zoom transforms */
+.comic-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: center center;
+  transition: transform 0.18s ease;
+  will-change: transform;
+}
+.comic-reader.is-zoomed .comic-stage { transition: none; }
 
 .comic-page-img {
   max-width: 100%;
@@ -725,6 +741,24 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   transition: opacity 0.15s;
 }
 .comic-page-img.loading { opacity: 0.2; }
+.comic-page-img-secondary { display: none; }
+.comic-reader[data-spread="double"] .comic-page-img-secondary { display: block; }
+.comic-reader[data-spread="double"][data-direction="rtl"] .comic-stage { flex-direction: row-reverse; }
+.comic-reader[data-spread="double"] .comic-page-img {
+  max-width: 50%;
+}
+
+/* Slide transitions when navigating pages */
+.comic-stage.slide-from-right { animation: slideFromRight 0.22s ease; }
+.comic-stage.slide-from-left  { animation: slideFromLeft 0.22s ease; }
+@keyframes slideFromRight {
+  from { transform: translateX(8%); opacity: 0.4; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideFromLeft {
+  from { transform: translateX(-8%); opacity: 0.4; }
+  to   { transform: translateX(0); opacity: 1; }
+}
 
 /* Zoom modes ---------------------------------------------------- */
 .comic-reader[data-zoom="fit-width"] {
@@ -754,6 +788,30 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   width: auto;
   height: auto;
 }
+
+/* Pull-to-refresh --------------------------------------------------------- */
+.ptr-indicator {
+  position: sticky;
+  top: 0;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  z-index: 80;
+  pointer-events: none;
+  transition: transform 0.2s ease;
+}
+.ptr-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  margin-top: 12px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+.ptr-indicator.ready .ptr-spinner { border-top-color: #5b9aff; transform: rotate(180deg); transition: transform 0.2s; }
+.ptr-indicator.refreshing .ptr-spinner { animation: spin 0.7s linear infinite; }
 
 /* Extra reader toolbar controls --------------------------------- */
 .reader-extra-controls {

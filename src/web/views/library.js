@@ -151,7 +151,70 @@ export async function renderLibrary(el, route, options) {
   );
   observer.observe(sentinel);
 
+  installPullToRefresh();
+
   await loadNextPage();
+}
+
+// ---------------------------------------------------------------------------
+// Pull-to-refresh (mobile)
+// ---------------------------------------------------------------------------
+
+function installPullToRefresh() {
+  const scrollEl = document.getElementById('main-content');
+  if (!scrollEl || scrollEl._ptrInstalled) return;
+  scrollEl._ptrInstalled = true;
+
+  const PULL_THRESHOLD = 70;
+  const MAX_PULL = 120;
+  let ptrStartY = 0;
+  let ptrDelta = 0;
+  let pulling = false;
+
+  const indicator = document.createElement('div');
+  indicator.className = 'ptr-indicator';
+  indicator.innerHTML = '<div class="ptr-spinner"></div>';
+  indicator.style.transform = 'translateY(-60px)';
+  scrollEl.prepend(indicator);
+
+  scrollEl.addEventListener('touchstart', (e) => {
+    if (scrollEl.scrollTop === 0 && e.touches.length === 1) {
+      ptrStartY = e.touches[0].clientY;
+      pulling = true;
+      ptrDelta = 0;
+    } else {
+      pulling = false;
+    }
+  }, { passive: true });
+
+  scrollEl.addEventListener('touchmove', (e) => {
+    if (!pulling) return;
+    ptrDelta = Math.min(MAX_PULL, e.touches[0].clientY - ptrStartY);
+    if (ptrDelta > 0) {
+      indicator.style.transform = `translateY(${ptrDelta - 60}px)`;
+      indicator.classList.toggle('ready', ptrDelta >= PULL_THRESHOLD);
+    } else {
+      indicator.style.transform = 'translateY(-60px)';
+    }
+  }, { passive: true });
+
+  scrollEl.addEventListener('touchend', () => {
+    if (!pulling) return;
+    pulling = false;
+    if (ptrDelta >= PULL_THRESHOLD) {
+      indicator.classList.add('refreshing');
+      indicator.style.transform = 'translateY(10px)';
+      window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      setTimeout(() => {
+        indicator.classList.remove('refreshing', 'ready');
+        indicator.style.transform = 'translateY(-60px)';
+      }, 600);
+    } else {
+      indicator.style.transform = 'translateY(-60px)';
+      indicator.classList.remove('ready');
+    }
+    ptrDelta = 0;
+  }, { passive: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +340,13 @@ async function loadNextPage() {
     }
   } catch (err) {
     console.error('[CB8] Library load error:', err);
-    if (offset === 0) renderEmpty('offline');
+    if (offset === 0) {
+      const reason =
+        err?.status === 401 || err?.status === 403 ? 'signed-out'
+        : err?.status >= 400 && err?.status < 500 ? 'empty'
+        : 'offline';
+      renderEmpty(reason);
+    }
   } finally {
     loading = false;
     const spinner = document.getElementById('grid-spinner');
@@ -602,6 +671,14 @@ function emptyStateMarkup(reason) {
           <path d="M2 8.8A13 13 0 0 1 7 6"/>
         </svg>
         <p>Cannot reach the server. Check your connection.</p>
+      `;
+    case 'signed-out':
+      return `
+        <svg ${svgAttrs}>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+        </svg>
+        <p>No books in the library.</p>
       `;
     case 'no-results':
       return `

@@ -10,7 +10,11 @@ export async function fetchComics(options = {}) {
     Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== '' && v !== null))
   );
   const res = await fetch(`${API}/api/comics?${params}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`API error ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -66,7 +70,11 @@ export async function fetchLibraryComics(libraryId, options = {}) {
     Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== '' && v !== null))
   );
   const res = await fetch(`${API}/api/libraries/${libraryId}/comics?${params}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`API error ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -81,7 +89,11 @@ export async function fetchFolderComics(folderId, options = {}) {
     Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== '' && v !== null))
   );
   const res = await fetch(`${API}/api/folders/${folderId}/comics?${params}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`API error ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 

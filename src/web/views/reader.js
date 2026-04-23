@@ -32,7 +32,8 @@ const PREFS_KEY = 'cb8.reader.prefs.v1';
 const DEFAULT_PREFS = {
   zoomMode: 'fit-height',   // 'fit-width' | 'fit-height' | 'original'
   direction: 'ltr',         // 'ltr' | 'rtl'
-  transition: 'none',       // 'none' | 'slide' | 'fade'
+  transition: 'slide',      // 'none' | 'slide' | 'fade'
+  spread: 'single',         // 'single' | 'double'
 };
 function loadReaderPrefs() {
   try {
@@ -136,32 +137,23 @@ async function renderComicReader(el, record, initialPage, onBack) {
   const extraControls = document.createElement('div');
   extraControls.className = 'reader-extra-controls';
 
-  const zoomBtn = document.createElement('button');
-  zoomBtn.className = 'reader-tool-btn';
-  zoomBtn.type = 'button';
-  zoomBtn.title = 'Cycle zoom mode';
+  const mkBtn = (title) => {
+    const b = document.createElement('button');
+    b.className = 'reader-tool-btn';
+    b.type = 'button';
+    b.title = title;
+    return b;
+  };
 
-  const dirBtn = document.createElement('button');
-  dirBtn.className = 'reader-tool-btn';
-  dirBtn.type = 'button';
-  dirBtn.title = 'Toggle reading direction';
+  const zoomBtn = mkBtn('Cycle zoom mode');
+  const dirBtn = mkBtn('Toggle reading direction');
+  const spreadBtn = mkBtn('Toggle spread (two-page) mode');
+  const orientBtn = mkBtn('Lock to landscape');
+  const fsBtn = mkBtn('Fullscreen');
+  const bmBtn = mkBtn('Bookmark this page');
+  const favBtn = mkBtn('Favorite');
 
-  const fsBtn = document.createElement('button');
-  fsBtn.className = 'reader-tool-btn';
-  fsBtn.type = 'button';
-  fsBtn.title = 'Fullscreen';
-
-  const bmBtn = document.createElement('button');
-  bmBtn.className = 'reader-tool-btn';
-  bmBtn.type = 'button';
-  bmBtn.title = 'Bookmark this page';
-
-  const favBtn = document.createElement('button');
-  favBtn.className = 'reader-tool-btn';
-  favBtn.type = 'button';
-  favBtn.title = 'Favorite';
-
-  extraControls.append(zoomBtn, dirBtn, bmBtn, favBtn, fsBtn);
+  extraControls.append(zoomBtn, dirBtn, spreadBtn, orientBtn, bmBtn, favBtn, fsBtn);
   toolbar.appendChild(extraControls);
 
   const readerBody = document.createElement('div');
@@ -169,13 +161,28 @@ async function renderComicReader(el, record, initialPage, onBack) {
   readerBody.id = 'comic-reader';
   readerBody.dataset.zoom = prefs.zoomMode;
   readerBody.dataset.direction = prefs.direction;
+  readerBody.dataset.spread = prefs.spread;
+  readerBody.dataset.transition = prefs.transition;
+
+  // `stage` holds the page image(s) and receives the pinch-zoom transform.
+  const stage = document.createElement('div');
+  stage.className = 'comic-stage';
 
   const img = document.createElement('img');
   img.className = 'comic-page-img';
   img.alt = 'Comic page';
   img.id = 'comic-page-img';
   img.dataset.zoom = prefs.zoomMode;
-  readerBody.appendChild(img);
+  stage.appendChild(img);
+
+  // Secondary image for spread (two-page) mode. Hidden by CSS when single.
+  const img2 = document.createElement('img');
+  img2.className = 'comic-page-img comic-page-img-secondary';
+  img2.alt = 'Comic page';
+  img2.dataset.zoom = prefs.zoomMode;
+  stage.appendChild(img2);
+
+  readerBody.appendChild(stage);
 
   const hint = document.createElement('div');
   hint.className = 'page-hint';
@@ -190,8 +197,9 @@ async function renderComicReader(el, record, initialPage, onBack) {
 
   // direction-aware nav: in RTL, tap-prev goes forward, tap-next goes back
   const pageDelta = (dir) => prefs.direction === 'rtl' ? -dir : dir;
-  tapPrev.addEventListener('click', () => gotoPage(comicState.currentPage + pageDelta(-1)));
-  tapNext.addEventListener('click', () => gotoPage(comicState.currentPage + pageDelta(1)));
+  const pageStep = () => prefs.spread === 'double' ? 2 : 1;
+  tapPrev.addEventListener('click', () => gotoPage(comicState.currentPage + pageDelta(-1) * pageStep(), { animDir: -1 }));
+  tapNext.addEventListener('click', () => gotoPage(comicState.currentPage + pageDelta(1) * pageStep(), { animDir: 1 }));
 
   readerBody.appendChild(tapPrev);
   readerBody.appendChild(tapNext);
@@ -205,13 +213,28 @@ async function renderComicReader(el, record, initialPage, onBack) {
     slider.addEventListener('input', () => gotoPage(parseInt(slider.value, 10)));
   }
 
+  // --- Pinch-zoom / pan state (applied as CSS transform on stage) ----------
+  const pan = { scale: 1, tx: 0, ty: 0 };
+  const MAX_SCALE = 5;
+  function applyTransform() {
+    stage.style.transform = `translate(${pan.tx}px, ${pan.ty}px) scale(${pan.scale})`;
+    readerBody.classList.toggle('is-zoomed', pan.scale > 1.001);
+  }
+  function resetTransform() {
+    pan.scale = 1; pan.tx = 0; pan.ty = 0;
+    stage.style.transform = '';
+    readerBody.classList.remove('is-zoomed');
+  }
+
   // --- Zoom mode cycling ---
   const ZOOM_MODES = ['fit-height', 'fit-width', 'original'];
   const ZOOM_ICONS = { 'fit-height': '↕', 'fit-width': '↔', 'original': '1:1' };
   function applyZoom() {
     readerBody.dataset.zoom = prefs.zoomMode;
     img.dataset.zoom = prefs.zoomMode;
+    img2.dataset.zoom = prefs.zoomMode;
     zoomBtn.textContent = ZOOM_ICONS[prefs.zoomMode] || '↕';
+    resetTransform();
   }
   zoomBtn.addEventListener('click', () => {
     const i = ZOOM_MODES.indexOf(prefs.zoomMode);
@@ -232,6 +255,57 @@ async function renderComicReader(el, record, initialPage, onBack) {
     applyDirection();
   });
   applyDirection();
+
+  // --- Spread (two-page) toggle ---
+  function applySpread() {
+    readerBody.dataset.spread = prefs.spread;
+    spreadBtn.textContent = prefs.spread === 'double' ? '▥' : '▯';
+    spreadBtn.classList.toggle('active', prefs.spread === 'double');
+    // Spread works best with fit-height; nudge the mode if user picks spread.
+    if (prefs.spread === 'double' && prefs.zoomMode !== 'fit-height') {
+      prefs.zoomMode = 'fit-height';
+      applyZoom();
+    }
+  }
+  spreadBtn.addEventListener('click', () => {
+    prefs.spread = prefs.spread === 'double' ? 'single' : 'double';
+    saveReaderPrefs(prefs);
+    applySpread();
+    // Re-render current page to load/clear secondary image.
+    gotoPage(comicState.currentPage, { force: true });
+  });
+  applySpread();
+
+  // --- Orientation lock ---
+  let orientationLocked = false;
+  const orientSupported = !!(screen.orientation && typeof screen.orientation.lock === 'function');
+  if (!orientSupported) orientBtn.style.display = 'none';
+  function updateOrientIcon() {
+    orientBtn.textContent = orientationLocked ? '🔒' : '⟳';
+    orientBtn.classList.toggle('active', orientationLocked);
+    orientBtn.title = orientationLocked ? 'Unlock orientation' : 'Lock to landscape';
+  }
+  orientBtn.addEventListener('click', async () => {
+    if (!orientSupported) return;
+    try {
+      if (orientationLocked) {
+        screen.orientation.unlock();
+        orientationLocked = false;
+      } else {
+        // Must be in fullscreen on most browsers.
+        if (!document.fullscreenElement) {
+          const target = document.getElementById('reader-overlay') || el;
+          await target.requestFullscreen?.().catch(() => {});
+        }
+        await screen.orientation.lock('landscape');
+        orientationLocked = true;
+      }
+    } catch (err) {
+      showToast('Orientation lock not available');
+    }
+    updateOrientIcon();
+  });
+  updateOrientIcon();
 
   // --- Fullscreen ---
   const fsSupported = !!(el.requestFullscreen || document.documentElement.requestFullscreen);
@@ -306,10 +380,20 @@ async function renderComicReader(el, record, initialPage, onBack) {
     return p;
   }
 
-  async function gotoPage(page) {
+  async function gotoPage(page, { force = false, animDir = 0 } = {}) {
     page = Math.max(0, Math.min(record.pageCount - 1, page));
-    if (page === comicState.currentPage && img.src) return;
+    if (!force && page === comicState.currentPage && img.src) return;
+    const prevPage = comicState.currentPage;
     comicState.currentPage = page;
+    resetTransform();
+
+    // Slide transition
+    if (prefs.transition === 'slide' && animDir !== 0 && !force) {
+      stage.classList.remove('slide-from-left', 'slide-from-right');
+      // eslint-disable-next-line no-unused-expressions
+      void stage.offsetWidth; // force reflow
+      stage.classList.add(animDir > 0 ? 'slide-from-right' : 'slide-from-left');
+    }
 
     img.classList.add('loading');
     try {
@@ -320,10 +404,26 @@ async function renderComicReader(el, record, initialPage, onBack) {
       img.classList.remove('loading');
     }
 
-    if (pageLabel) pageLabel.textContent = `${page + 1} / ${record.pageCount}`;
+    // Spread mode: load page+1 into the secondary image slot if available
+    if (prefs.spread === 'double' && page + 1 < record.pageCount) {
+      img2.hidden = false;
+      img2.classList.add('loading');
+      loadPageImg(page + 1)
+        .then((src) => { img2.src = src; img2.classList.remove('loading'); })
+        .catch(() => { img2.classList.remove('loading'); });
+    } else {
+      img2.hidden = true;
+      img2.removeAttribute('src');
+    }
+
+    const pageDisplay = prefs.spread === 'double' && page + 1 < record.pageCount
+      ? `${page + 1}–${page + 2} / ${record.pageCount}`
+      : `${page + 1} / ${record.pageCount}`;
+
+    if (pageLabel) pageLabel.textContent = pageDisplay;
     if (slider) slider.value = page;
     if (hint) {
-      hint.textContent = `${page + 1} / ${record.pageCount}`;
+      hint.textContent = pageDisplay;
       hint.classList.remove('fade');
       clearTimeout(hint._timer);
       hint._timer = setTimeout(() => hint.classList.add('fade'), 1800);
@@ -332,33 +432,117 @@ async function renderComicReader(el, record, initialPage, onBack) {
     api.updateProgress(record.id, page).catch(() => {});
     updateBmIcon();
 
-    if (page + 1 < record.pageCount) loadPageImg(page + 1).catch(() => {});
-    if (page > 0) loadPageImg(page - 1).catch(() => {});
+    // Preload neighbours (2 ahead/back in spread mode)
+    const ahead = prefs.spread === 'double' ? 2 : 1;
+    for (let i = 1; i <= ahead; i++) {
+      if (page + i < record.pageCount) loadPageImg(page + i).catch(() => {});
+      if (page - i >= 0) loadPageImg(page - i).catch(() => {});
+    }
   }
 
+  // --- Pinch-to-zoom + pan on the stage -------------------------------------
+  // Single finger: swipe (when not zoomed) or pan (when zoomed).
+  // Two fingers: pinch zoom with midpoint tracking.
+  let gesture = null; // { kind: 'swipe' | 'pan' | 'pinch', ... }
+  let lastTap = { t: 0, x: 0, y: 0 };
+
+  const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const mid = (a, b) => ({
+    x: (a.clientX + b.clientX) / 2,
+    y: (a.clientY + b.clientY) / 2,
+  });
+
   readerBody.addEventListener('touchstart', (e) => {
-    touchStartX = e.touches[0].clientX;
-    touchStartY = e.touches[0].clientY;
-  }, { passive: true });
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      gesture = {
+        kind: 'pinch',
+        d0: dist(e.touches[0], e.touches[1]),
+        c0: mid(e.touches[0], e.touches[1]),
+        baseScale: pan.scale,
+        baseTx: pan.tx,
+        baseTy: pan.ty,
+      };
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      if (pan.scale > 1.001) {
+        gesture = { kind: 'pan', x: t.clientX, y: t.clientY, baseTx: pan.tx, baseTy: pan.ty };
+      } else {
+        gesture = { kind: 'swipe', x: t.clientX, y: t.clientY, t0: Date.now() };
+      }
+    }
+  }, { passive: false });
+
+  readerBody.addEventListener('touchmove', (e) => {
+    if (!gesture) return;
+    if (gesture.kind === 'pinch' && e.touches.length === 2) {
+      e.preventDefault();
+      const d = dist(e.touches[0], e.touches[1]);
+      const c = mid(e.touches[0], e.touches[1]);
+      const newScale = Math.max(1, Math.min(MAX_SCALE, gesture.baseScale * (d / gesture.d0)));
+      pan.scale = newScale;
+      pan.tx = gesture.baseTx + (c.x - gesture.c0.x);
+      pan.ty = gesture.baseTy + (c.y - gesture.c0.y);
+      if (newScale <= 1.001) { pan.tx = 0; pan.ty = 0; }
+      applyTransform();
+    } else if (gesture.kind === 'pan' && e.touches.length === 1) {
+      e.preventDefault();
+      const t = e.touches[0];
+      pan.tx = gesture.baseTx + (t.clientX - gesture.x);
+      pan.ty = gesture.baseTy + (t.clientY - gesture.y);
+      applyTransform();
+    }
+  }, { passive: false });
 
   readerBody.addEventListener('touchend', (e) => {
-    const dx = e.changedTouches[0].clientX - touchStartX;
-    const dy = e.changedTouches[0].clientY - touchStartY;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
-      const swipeDir = dx < 0 ? 1 : -1;
-      gotoPage(comicState.currentPage + pageDelta(swipeDir));
+    if (!gesture) return;
+    if (gesture.kind === 'swipe' && e.changedTouches.length) {
+      const tch = e.changedTouches[0];
+      const dx = tch.clientX - gesture.x;
+      const dy = tch.clientY - gesture.y;
+      const duration = Date.now() - gesture.t0;
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && duration < 300) {
+        // Tap — check for double-tap
+        const now = Date.now();
+        if (now - lastTap.t < 300 && Math.hypot(tch.clientX - lastTap.x, tch.clientY - lastTap.y) < 40) {
+          // Double-tap: toggle 1x <-> 2x centered on tap point
+          if (pan.scale > 1.001) {
+            resetTransform();
+          } else {
+            const rect = readerBody.getBoundingClientRect();
+            pan.scale = 2;
+            pan.tx = (rect.width / 2 - (tch.clientX - rect.left)) * 1;
+            pan.ty = (rect.height / 2 - (tch.clientY - rect.top)) * 1;
+            applyTransform();
+          }
+          lastTap = { t: 0, x: 0, y: 0 };
+        } else {
+          lastTap = { t: now, x: tch.clientX, y: tch.clientY };
+        }
+      } else if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) && pan.scale <= 1.001) {
+        const swipeDir = dx < 0 ? 1 : -1;
+        const pageStep = prefs.spread === 'double' ? 2 : 1;
+        gotoPage(comicState.currentPage + pageDelta(swipeDir) * pageStep, { animDir: swipeDir });
+      }
     }
+    // Clamp scale when lifting second finger
+    if (pan.scale < 1.001) resetTransform();
+    gesture = null;
   }, { passive: true });
 
   const onKey = (e) => {
     switch (e.key) {
-      case 'ArrowRight': case ' ':    e.preventDefault(); gotoPage(comicState.currentPage + 1); break;
-      case 'ArrowLeft':  case 'Backspace': e.preventDefault(); gotoPage(comicState.currentPage - 1); break;
+      case 'ArrowRight': case ' ':    e.preventDefault(); gotoPage(comicState.currentPage + pageStep(), { animDir: 1 }); break;
+      case 'ArrowLeft':  case 'Backspace': e.preventDefault(); gotoPage(comicState.currentPage - pageStep(), { animDir: -1 }); break;
       case 'Home': e.preventDefault(); gotoPage(0); break;
       case 'End':  e.preventDefault(); gotoPage(record.pageCount - 1); break;
       case 'f': case 'F': fsBtn.click(); break;
       case 'z': case 'Z': zoomBtn.click(); break;
       case 'b': case 'B': bmBtn.click(); break;
+      case 's': case 'S': spreadBtn.click(); break;
+      case '+': case '=': pan.scale = Math.min(MAX_SCALE, pan.scale + 0.25); applyTransform(); break;
+      case '-': case '_': pan.scale = Math.max(1, pan.scale - 0.25); if (pan.scale <= 1.001) resetTransform(); else applyTransform(); break;
+      case '0': resetTransform(); break;
     }
   };
   document.addEventListener('keydown', onKey);
@@ -366,6 +550,10 @@ async function renderComicReader(el, record, initialPage, onBack) {
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('fullscreenchange', updateFsIcon);
     releaseWakeLock();
+    if (orientSupported && orientationLocked) {
+      try { screen.orientation.unlock(); } catch { /* ignore */ }
+      orientationLocked = false;
+    }
     api.logHistory(record.id, 'closed', comicState?.currentPage ?? null).catch(() => {});
   };
 
