@@ -231,7 +231,7 @@ async function gatherFromDataTransferItem(item, pathPrefix, out) {
   }
 }
 
-async function gatherFromDrop(dt) {
+export async function gatherFromDrop(dt) {
   const out = [];
   if (dt.items && dt.items.length > 0 && typeof dt.items[0].webkitGetAsEntry === 'function') {
     const entries = [];
@@ -473,17 +473,13 @@ function renderUpload(body) {
 
 function renderAddPath(body) {
   body.innerHTML = `
-    <h2 class="admin-modal-title">Add to library</h2>
-    <p class="admin-hint">Enter a file or directory path on the server. Files are added in place.</p>
+    <h2 class="admin-modal-title">Add from server path</h2>
+    <p class="admin-hint">Enter a file or directory path on the server host. Files are indexed in place.</p>
     <form class="admin-form" autocomplete="off">
-      <label class="admin-label" for="admin-path">Path</label>
+      <label class="admin-label" for="admin-path">Server path</label>
       <div class="path-autocomplete">
-        <input id="admin-path" type="text" class="admin-input" placeholder="/home/user/Comics" autocomplete="off" spellcheck="false" autofocus />
+        <input id="admin-path" type="text" class="admin-input" placeholder="Loading host path…" autocomplete="off" spellcheck="false" />
         <ul class="path-suggestions" hidden></ul>
-      </div>
-      <div class="admin-picker-row">
-        <button type="button" class="admin-btn-secondary" data-action="pick-file">Choose file…</button>
-        <button type="button" class="admin-btn-secondary" data-action="pick-folder">Choose folder…</button>
       </div>
       <div class="admin-error" hidden></div>
       <div class="admin-progress" hidden>
@@ -510,6 +506,19 @@ function renderAddPath(body) {
   const progressFile = body.querySelector('.admin-progress-file');
 
   cancelBtn.addEventListener('click', () => openModal(renderMenu));
+
+  // Pre-fill with server home directory
+  api.adminHostInfo()
+    .then(({ homePath }) => {
+      if (!input.value) {
+        input.value = homePath;
+        input.placeholder = homePath;
+        fetchSuggestions();
+      }
+    })
+    .catch(() => {
+      input.placeholder = '/';
+    });
 
   // --- Path autocomplete --------------------------------------------------
   const suggestions = body.querySelector('.path-suggestions');
@@ -542,7 +551,6 @@ function renderAddPath(body) {
     if (i < 0 || i >= suggestionItems.length) return;
     input.value = suggestionItems[i].path;
     hideSuggestions();
-    // If the user picked a directory, fetch its children for further completion.
     if (suggestionItems[i].isDir) fetchSuggestions();
     input.focus();
   };
@@ -595,26 +603,13 @@ function renderAddPath(body) {
   suggestions.addEventListener('mousedown', (e) => {
     const li = e.target.closest('.path-suggestion');
     if (!li) return;
-    e.preventDefault(); // keep focus on input
+    e.preventDefault();
     applySuggestion(parseInt(li.dataset.index, 10));
   });
 
   input.addEventListener('blur', () => {
     setTimeout(hideSuggestions, 150);
   });
-
-  const pickAndFill = async (kind) => {
-    err.hidden = true;
-    try {
-      const { path: picked } = await api.adminPickPath(kind);
-      if (picked) input.value = picked;
-    } catch (e2) {
-      err.textContent = e2.message || 'Picker unavailable';
-      err.hidden = false;
-    }
-  };
-  body.querySelector('[data-action="pick-file"]').addEventListener('click', () => pickAndFill('file'));
-  body.querySelector('[data-action="pick-folder"]').addEventListener('click', () => pickAndFill('directory'));
 
   const phaseLabel = (phase) => {
     if (phase === 'books') return 'Scanning books…';
@@ -712,4 +707,319 @@ export async function bulkDeleteComics(ids) {
     showToast(`${failed.length} failed to delete`);
   }
   return { removed, failed };
+}
+
+// ---------------------------------------------------------------------------
+// Card right-click context menu
+// ---------------------------------------------------------------------------
+
+let _contextMenu = null;
+
+function _closeContextMenu() {
+  _contextMenu?.remove();
+  _contextMenu = null;
+  document.removeEventListener('click', _onDocClick, true);
+  document.removeEventListener('keydown', _onDocKey, true);
+  window.removeEventListener('resize', _closeContextMenu);
+  window.removeEventListener('scroll', _closeContextMenu, true);
+}
+
+function _onDocClick(e) {
+  if (_contextMenu && !_contextMenu.contains(e.target)) _closeContextMenu();
+}
+
+function _onDocKey(e) {
+  if (e.key === 'Escape') _closeContextMenu();
+}
+
+/**
+ * Open the card context menu.
+ * @param {number} x clientX
+ * @param {number} y clientY
+ * @param {{ targetId, targets, isSelected, grid, onToggleSelect, onDelete }} ctx
+ */
+async function openTagEditor(comicId) {
+  let comic;
+  try { comic = await api.fetchComic(comicId); }
+  catch (err) { showToast(err.message); return; }
+
+  let tags = Array.isArray(comic.tags) ? [...comic.tags] : [];
+
+  openModal((body) => {
+    body.innerHTML = `
+      <h2 class="admin-modal-title">Edit tags</h2>
+      <div class="admin-hint">${comic.title}</div>
+      <div class="tag-editor-chips"></div>
+      <form class="admin-form tag-editor-form" autocomplete="off">
+        <input type="text" class="admin-input tag-editor-input" placeholder="Add a tag…" />
+      </form>
+      <div class="admin-actions">
+        <button type="button" class="admin-btn-primary" data-action="close">Done</button>
+      </div>
+    `;
+    const chips = body.querySelector('.tag-editor-chips');
+    const form = body.querySelector('form');
+    const input = body.querySelector('.tag-editor-input');
+
+    const render = () => {
+      chips.innerHTML = '';
+      if (tags.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'tag-editor-empty';
+        empty.textContent = 'No tags';
+        chips.appendChild(empty);
+        return;
+      }
+      for (const t of tags) {
+        const chip = document.createElement('span');
+        chip.className = 'tag-editor-chip';
+        chip.innerHTML = `<span>${t}</span><button type="button" aria-label="Remove">×</button>`;
+        chip.querySelector('button').addEventListener('click', async () => {
+          const next = tags.filter((x) => x !== t);
+          try {
+            await api.setComicTags(comicId, next);
+            tags = next;
+            render();
+            window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+          } catch (err) { showToast(err.message); }
+        });
+        chips.appendChild(chip);
+      }
+    };
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const val = input.value.trim();
+      if (!val || tags.includes(val)) { input.value = ''; return; }
+      const next = [...tags, val];
+      try {
+        await api.setComicTags(comicId, next);
+        tags = next;
+        input.value = '';
+        render();
+        window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      } catch (err) { showToast(err.message); }
+    });
+
+    body.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+    render();
+    setTimeout(() => input.focus(), 0);
+  });
+}
+
+export function openCardContextMenu(x, y, { targetId, targets, isSelected, grid, route, onToggleSelect, onDelete, onRemoved }) {
+  _closeContextMenu();
+
+  const inLibrary = route?.type === 'library';
+  const inFolder = route?.type === 'folder';
+
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-action="open">Open</button>
+    <button type="button" role="menuitem" data-action="select">${isSelected ? 'Deselect' : 'Select'}</button>
+    <div class="context-menu-sep"></div>
+    <div class="context-menu-item context-menu-submenu" data-action="add-to-collection" role="menuitem" tabindex="0" aria-haspopup="true">
+      Add to collection ▸
+      <div class="context-submenu" hidden></div>
+    </div>
+    <div class="context-menu-item context-menu-submenu" data-action="add-to-folder" role="menuitem" tabindex="0" aria-haspopup="true">
+      Add to folder ▸
+      <div class="context-submenu" hidden></div>
+    </div>
+    ${targets.length === 1 ? '<button type="button" role="menuitem" data-action="tags">Tags…</button>' : ''}
+    ${inLibrary ? '<button type="button" role="menuitem" data-action="remove-from-library">Remove from collection</button>' : ''}
+    ${inFolder ? '<button type="button" role="menuitem" data-action="remove-from-folder">Remove from folder</button>' : ''}
+    <div class="context-menu-sep"></div>
+    <button type="button" role="menuitem" class="danger" data-action="delete">
+      Delete${targets.length > 1 ? ` ${targets.length} items` : ''}
+    </button>
+  `;
+
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - rect.width - 4))}px`;
+  menu.style.top  = `${Math.max(4, Math.min(y, window.innerHeight - rect.height - 4))}px`;
+  _contextMenu = menu;
+
+  menu.querySelector('[data-action="open"]').addEventListener('click', () => {
+    _closeContextMenu();
+    window.location.hash = `#/read/${targetId}`;
+  });
+
+  menu.querySelector('[data-action="select"]').addEventListener('click', () => {
+    _closeContextMenu();
+    onToggleSelect(targetId);
+  });
+
+  // ---- Add to collection submenu ----
+  const trigger = menu.querySelector('[data-action="add-to-collection"]');
+  const submenu = trigger.querySelector('.context-submenu');
+  let loaded = false;
+
+  const populateSubmenu = async () => {
+    if (loaded) { submenu.hidden = false; return; }
+    loaded = true;
+    submenu.innerHTML = '<div class="context-submenu-loading">Loading…</div>';
+    submenu.hidden = false;
+
+    try {
+      const libraries = await api.fetchLibraries();
+      submenu.innerHTML = '';
+
+      for (const lib of libraries) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'context-submenu-item';
+        btn.textContent = lib.name;
+        btn.addEventListener('click', async () => {
+          _closeContextMenu();
+          try {
+            await api.addComicsToLibrary(lib.id, targets);
+            const n = targets.length;
+            showToast(`Added ${n} item${n === 1 ? '' : 's'} to "${lib.name}"`);
+          } catch (err) {
+            showToast(err.message);
+          }
+        });
+        submenu.appendChild(btn);
+      }
+
+      if (libraries.length > 0) {
+        submenu.appendChild(Object.assign(document.createElement('div'), { className: 'context-submenu-sep' }));
+      }
+
+      const newBtn = document.createElement('button');
+      newBtn.type = 'button';
+      newBtn.className = 'context-submenu-item';
+      newBtn.textContent = '+ New collection…';
+      newBtn.addEventListener('click', () => {
+        _closeContextMenu();
+        const name = window.prompt('Collection name:');
+        if (!name?.trim()) return;
+        const firstCard = grid?.querySelector(`.comic-card[data-id="${targets[0]}"]`);
+        const mediaType = firstCard?.querySelector('.card-badge.book') ? 'book' : 'comic';
+        api.createLibrary(name.trim(), mediaType)
+          .then((lib) => api.addComicsToLibrary(lib.id, targets).then(() => lib))
+          .then((lib) => {
+            const n = targets.length;
+            showToast(`Created "${lib.name}" and added ${n} item${n === 1 ? '' : 's'}`);
+            window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+          })
+          .catch((err) => showToast(err.message));
+      });
+      submenu.appendChild(newBtn);
+    } catch {
+      submenu.innerHTML = '<div class="context-submenu-loading">Failed to load</div>';
+    }
+  };
+
+  trigger.addEventListener('mouseenter', populateSubmenu);
+  trigger.addEventListener('click', populateSubmenu);
+
+  // ---- Add to folder submenu ----
+  const folderTrigger = menu.querySelector('[data-action="add-to-folder"]');
+  const folderSubmenu = folderTrigger.querySelector('.context-submenu');
+  let foldersLoaded = false;
+
+  const populateFolderSubmenu = async () => {
+    if (foldersLoaded) { folderSubmenu.hidden = false; return; }
+    foldersLoaded = true;
+    folderSubmenu.innerHTML = '<div class="context-submenu-loading">Loading…</div>';
+    folderSubmenu.hidden = false;
+    try {
+      const folders = await api.fetchFolders();
+      folderSubmenu.innerHTML = '';
+      for (const folder of folders) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'context-submenu-item';
+        btn.textContent = folder.name;
+        btn.addEventListener('click', async () => {
+          _closeContextMenu();
+          try {
+            await api.addComicsToFolder(folder.id, targets);
+            showToast(`Added ${targets.length} item${targets.length === 1 ? '' : 's'} to "${folder.name}"`);
+            window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+          } catch (err) { showToast(err.message); }
+        });
+        folderSubmenu.appendChild(btn);
+      }
+      if (folders.length > 0) {
+        folderSubmenu.appendChild(Object.assign(document.createElement('div'), { className: 'context-submenu-sep' }));
+      }
+      const newBtn = document.createElement('button');
+      newBtn.type = 'button';
+      newBtn.className = 'context-submenu-item';
+      newBtn.textContent = '+ New folder…';
+      newBtn.addEventListener('click', () => {
+        _closeContextMenu();
+        const name = window.prompt('Folder name:');
+        if (!name?.trim()) return;
+        api.createFolder(name.trim(), targets)
+          .then((folder) => {
+            showToast(`Created "${folder.name}" with ${targets.length} item${targets.length === 1 ? '' : 's'}`);
+            window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+          })
+          .catch((err) => showToast(err.message));
+      });
+      folderSubmenu.appendChild(newBtn);
+    } catch {
+      folderSubmenu.innerHTML = '<div class="context-submenu-loading">Failed to load</div>';
+    }
+  };
+
+  folderTrigger.addEventListener('mouseenter', populateFolderSubmenu);
+  folderTrigger.addEventListener('click', populateFolderSubmenu);
+
+  // ---- Tags editor ----
+  const tagsBtn = menu.querySelector('[data-action="tags"]');
+  if (tagsBtn) {
+    tagsBtn.addEventListener('click', () => {
+      _closeContextMenu();
+      openTagEditor(targets[0]);
+    });
+  }
+
+  // ---- Remove from collection ----
+  const removeLibBtn = menu.querySelector('[data-action="remove-from-library"]');
+  if (removeLibBtn) {
+    removeLibBtn.addEventListener('click', async () => {
+      _closeContextMenu();
+      try {
+        await api.removeComicsFromLibrary(route.id, targets);
+        showToast(`Removed ${targets.length} item${targets.length === 1 ? '' : 's'} from collection`);
+        onRemoved?.(targets);
+        window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      } catch (err) { showToast(err.message); }
+    });
+  }
+
+  // ---- Remove from folder ----
+  const removeFolderBtn = menu.querySelector('[data-action="remove-from-folder"]');
+  if (removeFolderBtn) {
+    removeFolderBtn.addEventListener('click', async () => {
+      _closeContextMenu();
+      try {
+        await api.removeComicsFromFolder(route.id, targets);
+        showToast(`Removed ${targets.length} item${targets.length === 1 ? '' : 's'} from folder`);
+        onRemoved?.(targets);
+        window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      } catch (err) { showToast(err.message); }
+    });
+  }
+
+  // ---- Delete ----
+  menu.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+    _closeContextMenu();
+    await onDelete(targets);
+  });
+
+  setTimeout(() => {
+    document.addEventListener('click', _onDocClick, true);
+    document.addEventListener('keydown', _onDocKey, true);
+    window.addEventListener('resize', _closeContextMenu);
+    window.addEventListener('scroll', _closeContextMenu, true);
+  }, 0);
 }

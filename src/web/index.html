@@ -42,7 +42,7 @@
           <button class="media-btn" data-type="comic" id="btn-comics">Comics</button>
           <button class="media-btn" data-type="book" id="btn-books">Books</button>
         </div>
-        <button id="admin-add-button" type="button" class="admin-add-button" aria-label="Add comic or book" hidden>
+        <button id="admin-add-button" type="button" class="admin-add-button" aria-label="Add comic or book">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
@@ -67,11 +67,17 @@
           </ul>
         </section>
         <section class="sidebar-section" id="section-libraries">
-          <h2 class="sidebar-heading">Collections</h2>
+          <div class="sidebar-heading-row">
+            <h2 class="sidebar-heading">Collections</h2>
+            <button type="button" class="sidebar-add-btn" id="sidebar-add-library" aria-label="New collection" title="New collection">+</button>
+          </div>
           <ul class="sidebar-list" id="library-list"></ul>
         </section>
         <section class="sidebar-section" id="section-folders">
-          <h2 class="sidebar-heading">Folders</h2>
+          <div class="sidebar-heading-row">
+            <h2 class="sidebar-heading">Folders</h2>
+            <button type="button" class="sidebar-add-btn" id="sidebar-add-folder" aria-label="New folder" title="New folder">+</button>
+          </div>
           <ul class="sidebar-list" id="folder-list"></ul>
         </section>
         <section class="sidebar-section" id="section-tags">
@@ -88,6 +94,7 @@
     <div id="tab-panel" hidden role="dialog" aria-modal="false" aria-labelledby="tab-panel-title">
       <header class="tab-panel-header">
         <h2 id="tab-panel-title"></h2>
+        <button class="tab-panel-add" type="button" id="tab-panel-add" aria-label="Add" title="Add" hidden>+</button>
         <button class="tab-panel-close" type="button" aria-label="Close">✕</button>
       </header>
       <ul class="tab-panel-list"></ul>

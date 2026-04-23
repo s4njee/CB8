@@ -2,7 +2,7 @@
 
 ## Overview
 
-This design transforms the CB8 web library's mobile experience from a sidebar-driven model to a bottom tab-bar + filter-strip pattern, while enlarging cards, adding progress/format badges, improving empty states, adding a "Recently Read" sort, and introducing a headless server mode so CB8 can run on a NAS or server without the Electron GUI. All client changes fit within the existing vanilla JS/HTML/CSS stack in `src/web/`; server-side changes are localized to three files. Desktop layout (> 640px) is unchanged except for a single new sort option.
+This design transforms the CB8 web library's mobile experience from a sidebar-driven model to a bottom tab-bar + filter-strip pattern, while enlarging cards, adding progress/format badges, improving empty states, adding a "Recently Read" sort, introducing a headless server mode so CB8 can run on a NAS or server without the Electron GUI, and enabling drag-and-drop file upload for admin users. All client changes fit within the existing vanilla JS/HTML/CSS stack in `src/web/`; server-side changes are localized to three files. Desktop layout (> 640px) is unchanged except for a single new sort option.
 
 ### Key Design Decisions
 
@@ -14,9 +14,13 @@ This design transforms the CB8 web library's mobile experience from a sidebar-dr
 
 ### Scope Boundary
 
-- **Modified files:** `src/web/index.html`, `src/web/style.css`, `src/web/app.js`, `src/web/views/library.js`, `src/web/api.js`, `src/main/index.ts`, `src/main/webServer.ts`, `src/main/libraryDatabase.ts`, `src/shared/types.ts`.
+- **Modified files:** `src/web/index.html`, `src/web/style.css`, `src/web/app.js`, `src/web/views/library.js`, `src/web/api.js`, `src/web/admin.js`, `src/main/index.ts`, `src/main/webServer.ts`, `src/main/libraryDatabase.ts`, `src/shared/types.ts`.
 - **Unchanged:** `src/renderer/` (Electron renderer), `src/main/ipcHandlers.ts`, all other server modules.
 - **No new npm dependencies, no new build step, no new runtime files.**
+
+### Management Feature Parity Note
+
+Requirements 17–21 bring library, folder, and tag management to the web UI. The desktop Electron GUI already has full CRUD for these entities via IPC (`libraries:create`, `libraries:rename`, `libraries:delete`, `folders:create`, etc.) backed by `LibraryDatabase` methods (`createLibrary`, `renameLibrary`, `deleteLibrary`, `createFolder`, `renameFolder`, `deleteFolder`, `addTag`, `removeTag`, `renameTag`, `deleteTag`). The web server already exposes `POST /api/libraries` and `POST /api/libraries/:id/comics`. The new work adds the missing REST endpoints (`PUT`/`DELETE` for libraries, full CRUD for folders, tag management) and the corresponding web UI affordances (context menus, inline rename, confirmation dialogs).
 
 ### Incidental Fix
 
@@ -71,6 +75,7 @@ graph LR
     APP["app.js"]
     LIB["views/library.js"]
     API["api.js"]
+    ADMIN["admin.js"]
   end
   subgraph Server ["src/main/ + src/shared/"]
     INDEX["main/index.ts"]
@@ -81,11 +86,12 @@ graph LR
 
   HTML -- "add tab-bar, tab-panel, sort-sheet markup" --> HTML
   CSS -- "tab-bar/panel, media/filetype strips, badges, card sizing, sticky navbar" --> CSS
-  APP -- "tab-bar nav, tab-panel open/close, sort-sheet, new state fields" --> APP
-  LIB -- "render badges, filter chips, contextual empty states, fade-in thumbs" --> LIB
-  API -- "pass fileExt + sortBy=lastRead params" --> API
+  APP -- "tab-bar nav, tab-panel open/close, sort-sheet, new state fields, context menus for lib/folder/tag management" --> APP
+  LIB -- "render badges, filter chips, contextual empty states, fade-in thumbs, folder/collection context menu actions" --> LIB
+  API -- "pass fileExt + sortBy=lastRead params, library/folder/tag CRUD methods" --> API
+  ADMIN -- "card context menu: add-to-folder, remove-from-collection/folder, tags editor" --> ADMIN
   INDEX -- "headless mode: detect flag, skip window, force web server" --> INDEX
-  WS -- "parse fileExt query param" --> WS
+  WS -- "parse fileExt query param, library rename/delete, folder CRUD, tag management endpoints" --> WS
   DB -- "extend SORT_COLUMN_MAP (lastRead), WHERE clause for fileExt, fix SELECT list" --> DB
   TYPES -- "extend QueryOptions with fileExt and lastRead" --> TYPES
 ```
@@ -413,6 +419,108 @@ if (isHeadless) {
 3. **`process.exit(1)` on init failure** — there is no GUI to show an error dialog, so a non-zero exit code signals the process supervisor (systemd, Docker, etc.).
 4. **No new files** — all changes fit within `src/main/index.ts`.
 
+### 11. Drag-and-Drop File Upload (`app.js` + `admin.js` + `api.js` + `webServer.ts`)
+
+This component enables authenticated admin users to drag files (or folders containing files) onto the web UI to upload them to the server and add them to the library. It also covers the admin upload modal for non-drag-and-drop file selection.
+
+#### 11a. Client-Side: Drop Zone Overlay (`app.js`)
+
+A `<div id="drop-overlay">` element is lazily created and appended to `document.body`. It covers the full viewport with a translucent backdrop and the label "Drop to add to library".
+
+**Behaviour (wired in `app.js` `wireDrop()`):**
+
+- `document.addEventListener('dragenter', …)` — increments a `dragCounter` and shows the overlay. Only activates when `isAuthenticated()` returns `true`.
+- `document.addEventListener('dragleave', …)` — decrements `dragCounter`; hides the overlay when it reaches zero.
+- `document.addEventListener('dragover', …)` — calls `e.preventDefault()` and sets `e.dataTransfer.dropEffect = 'copy'`. This is critical: without `preventDefault()` on `dragover`, the browser's default behaviour (navigate to the file or show a save dialog) takes over.
+- `document.addEventListener('drop', …)` — calls `e.preventDefault()`, resets `dragCounter`, hides the overlay, then delegates to `gatherFromDrop(e.dataTransfer)` from `admin.js`.
+
+**Non-authenticated users:** When `isAuthenticated()` returns `false`, all four event handlers return early without calling `preventDefault()`, so the browser's default drag-and-drop behaviour is preserved.
+
+**File gathering (`admin.js` `gatherFromDrop()`):**
+
+Uses the `DataTransferItem.webkitGetAsEntry()` API (supported in all modern browsers) to recursively traverse dropped folders. Falls back to `DataTransfer.files` when the entry API is unavailable. Filters files by extension using the `ACCEPTED_EXTS` set (`['cbz', 'cbr', 'epub', 'pdf', 'mobi']`). Returns an array of `{ file: File, relPath: string }` objects where `relPath` preserves the folder structure for nested drops.
+
+**Upload flow:**
+
+After gathering, `wireDrop()` shows a toast ("Uploading N files…"), then uploads each file sequentially via `api.adminUploadFile(file, relPath)`. On completion, shows a summary toast ("Added N files" or "Added N, failed M") and dispatches `cb8:library-changed` to refresh the sidebar and grid.
+
+#### 11b. Client-Side: Admin Upload Modal (`admin.js`)
+
+The admin menu includes an "Upload comics" option that opens a modal with:
+
+- A drop zone (`<div class="upload-dropzone">`) that accepts drag-and-drop within the modal.
+- "Choose files…" and "Choose folder…" buttons backed by hidden `<input type="file">` elements (the folder input uses the `webkitdirectory` attribute).
+- A queue list showing each file's name, size, and upload status (pending → uploading with percentage → done/skipped/error).
+- An overall progress bar and phase label.
+- Per-file progress tracking via `XMLHttpRequest.upload.onprogress` (used instead of `fetch` because `fetch` does not expose upload progress events in browsers).
+
+**Upload API (`api.js` `adminUploadFile()`):**
+
+```js
+export function adminUploadFile(file, relPath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/admin/upload');
+    xhr.responseType = 'json';
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-CB8-Filename', encodeURIComponent(file.name));
+    xhr.setRequestHeader('X-CB8-Relpath', encodeURIComponent(relPath || file.name));
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => { /* resolve or reject based on status */ };
+    xhr.send(file);
+  });
+}
+```
+
+The raw body approach (sending the `File` object directly as the request body) avoids the overhead of `multipart/form-data` encoding for large files. The filename and relative path are transmitted via custom headers (`X-CB8-Filename`, `X-CB8-Relpath`), both percent-encoded to safely carry non-ASCII characters.
+
+#### 11c. Server-Side: Upload Endpoint (`webServer.ts`)
+
+**Route:** `POST /api/admin/upload`
+
+**Authentication:** Requires a valid admin session cookie (`isAuthenticated(req)`). Returns 401 if not authenticated.
+
+**Request format:**
+- Body: raw file bytes (streamed via `req.pipe(writeStream)`)
+- Headers:
+  - `X-CB8-Filename` (required): percent-encoded original filename
+  - `X-CB8-Relpath` (optional): percent-encoded relative path (for folder drops, e.g., `subfolder/book.epub`)
+
+**Validation:**
+1. `X-CB8-Filename` must be present and non-empty.
+2. Both headers must be valid percent-encoded UTF-8.
+3. Filename must not contain null bytes, must not be an absolute path, and `path.basename(filename)` must equal `filename` (no directory components).
+4. Relative path parts must not contain `..` or `.` components (path traversal prevention).
+5. File extension must be in the supported set (`.epub`, `.pdf`, `.cbz`, `.cbr`, `.mobi`). Returns HTTP 415 for unsupported types.
+6. The resolved destination path must start with the base upload directory (defense-in-depth against traversal).
+
+**Storage:**
+- Base directory: `path.join(app.getPath('userData'), 'web-uploads')`
+- Destination: `path.resolve(baseDir, ...relParts)` where `relParts` are the sanitized components of the relative path.
+- Parent directories are created recursively via `fsp.mkdir(path.dirname(destPath), { recursive: true })`.
+
+**Duplicate detection:**
+- Before writing, checks `db.comicExistsByPath(destPath)`. If the file is already in the library, drains the request body and returns `{ added: false, skipped: true, reason: 'Already in library' }`.
+
+**Ingestion:**
+- After writing the file to disk, calls `addSingleFile(db, destPath)` — the same function used by the `ingestPathStreaming` flow. This handles:
+  - Comic archives (`.cbz`, `.cbr`): opens the archive, extracts cover image, generates thumbnail, adds to database with `mediaType: 'comic'`.
+  - Book files (`.epub`, `.pdf`, `.mobi`): extracts cover (EPUB/PDF), counts pages (PDF), adds to database with `mediaType: 'book'`.
+- If `addSingleFile` fails, the uploaded file is deleted from disk and an HTTP 500 error is returned.
+
+**Response:** `{ added: boolean, filePath: string }` on success, or `{ added: false, skipped: true, reason: string }` for duplicates.
+
+#### 11d. Design Decisions
+
+1. **Raw body over multipart/form-data** — Streaming the file as the raw request body is simpler, avoids multipart boundary parsing on the server (no new dependencies like `busboy` or `multer`), and allows direct `req.pipe(writeStream)` for memory-efficient handling of large files.
+2. **XHR over fetch for uploads** — The `fetch` API does not expose upload progress events in browsers. `XMLHttpRequest.upload.onprogress` provides real-time progress tracking needed for the per-file progress bars.
+3. **`web-uploads/` inside userData** — Uploaded files are stored alongside the database in the user data directory. This keeps all CB8 data in one place and avoids requiring the user to configure an upload directory. The subdirectory name `web-uploads` is distinct from any existing CB8 data.
+4. **Sequential uploads** — Files are uploaded one at a time rather than in parallel. This simplifies progress tracking, avoids overwhelming the server with concurrent writes, and makes error handling straightforward.
+5. **Admin-only gating** — Both the drop overlay and the upload endpoint require authentication. Non-admin users see no upload affordance and the browser's default drag-and-drop behaviour is preserved for them.
+6. **Reuse of `addSingleFile`** — The upload endpoint reuses the same ingestion function as the server-path scan flow, ensuring consistent cover extraction, metadata population, and database insertion logic.
+
 ## Data Models
 
 ### Extended `QueryOptions` (`src/shared/types.ts`)
@@ -485,6 +593,490 @@ const state = {
 
 `state.tabPanel` is the only field that is not persisted to the URL — it is purely a UI state for which mobile sub-nav sheet (if any) is open.
 
+### 12. Library Management API Endpoints (`webServer.ts`)
+
+These endpoints expose the existing `LibraryDatabase` CRUD methods to the web UI, matching the functionality already available in the desktop Electron GUI via IPC.
+
+#### `PUT /api/libraries/:id` — Rename Library
+
+```
+PUT /api/libraries/:id
+Content-Type: application/json
+Body: { "name": "New Name" }
+Response: { "ok": true }
+```
+
+**Authentication:** Required (admin session cookie). Returns 401 if not authenticated.
+
+**Validation:**
+1. `name` must be a non-empty string after trimming.
+2. Returns HTTP 400 if `name` is missing or empty.
+3. Returns HTTP 409 if a library with the same name already exists (SQLite UNIQUE constraint).
+
+**Implementation:**
+```ts
+const libRenameMatch = pathname.match(/^\/api\/libraries\/(\d+)$/);
+if (method === 'PUT' && libRenameMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const id = parseInt(libRenameMatch[1], 10);
+  const body = await readBody(req);
+  let parsed: { name?: string };
+  try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+  if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+    return sendError(res, 400, 'Provide "name" (non-empty string)');
+  }
+  try {
+    db.renameLibrary(id, parsed.name.trim());
+    return sendJson(res, 200, { ok: true });
+  } catch {
+    return sendError(res, 409, 'A collection with that name already exists');
+  }
+}
+```
+
+#### `DELETE /api/libraries/:id` — Delete Library
+
+```
+DELETE /api/libraries/:id
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+const libDeleteMatch = pathname.match(/^\/api\/libraries\/(\d+)$/);
+if (method === 'DELETE' && libDeleteMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const id = parseInt(libDeleteMatch[1], 10);
+  db.deleteLibrary(id);
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+**Safety:** `deleteLibrary` only removes the library row and its `library_comics` associations. No comic records or files on disk are affected.
+
+#### `DELETE /api/libraries/:id/comics` — Remove Comics from Library
+
+```
+DELETE /api/libraries/:id/comics
+Content-Type: application/json
+Body: { "comicIds": [1, 2, 3] }
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+if (method === 'DELETE' && libAddComicsMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const libId = parseInt(libAddComicsMatch[1], 10);
+  const body = await readBody(req);
+  let parsed: { comicIds?: number[] };
+  try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+  if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) {
+    return sendError(res, 400, 'Provide "comicIds" (non-empty array)');
+  }
+  db.removeComicsFromLibrary(libId, parsed.comicIds.map(Number));
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+### 13. Folder Management API Endpoints (`webServer.ts`)
+
+#### `POST /api/folders` — Create Folder
+
+```
+POST /api/folders
+Content-Type: application/json
+Body: { "name": "My Folder", "comicIds": [] }
+Response: { "id": 5, "name": "My Folder" }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+if (method === 'POST' && pathname === '/api/folders') {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const body = await readBody(req);
+  let parsed: { name?: string; comicIds?: number[] };
+  try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+  if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+    return sendError(res, 400, 'Provide "name" (non-empty string)');
+  }
+  const comicIds = Array.isArray(parsed.comicIds) ? parsed.comicIds.map(Number) : [];
+  const folder = db.createFolder(parsed.name.trim(), comicIds);
+  return sendJson(res, 201, folder);
+}
+```
+
+#### `PUT /api/folders/:id` — Rename Folder
+
+```
+PUT /api/folders/:id
+Content-Type: application/json
+Body: { "name": "New Name" }
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+const folderRenameMatch = pathname.match(/^\/api\/folders\/(\d+)$/);
+if (method === 'PUT' && folderRenameMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const id = parseInt(folderRenameMatch[1], 10);
+  const body = await readBody(req);
+  let parsed: { name?: string };
+  try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+  if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+    return sendError(res, 400, 'Provide "name" (non-empty string)');
+  }
+  db.renameFolder(id, parsed.name.trim());
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+#### `DELETE /api/folders/:id` — Delete Folder
+
+```
+DELETE /api/folders/:id
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+const folderDeleteMatch = pathname.match(/^\/api\/folders\/(\d+)$/);
+if (method === 'DELETE' && folderDeleteMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const id = parseInt(folderDeleteMatch[1], 10);
+  db.deleteFolder(id);
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+**Safety:** `deleteFolder` only removes the folder row and its `folder_comics` associations. No comic records or files on disk are affected.
+
+#### `POST /api/folders/:id/comics` — Add Comics to Folder
+
+```
+POST /api/folders/:id/comics
+Content-Type: application/json
+Body: { "comicIds": [1, 2, 3] }
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+const folderAddComicsMatch = pathname.match(/^\/api\/folders\/(\d+)\/comics$/);
+if (method === 'POST' && folderAddComicsMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const folderId = parseInt(folderAddComicsMatch[1], 10);
+  const body = await readBody(req);
+  let parsed: { comicIds?: number[] };
+  try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+  if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) {
+    return sendError(res, 400, 'Provide "comicIds" (non-empty array)');
+  }
+  db.addComicsToFolder(folderId, parsed.comicIds.map(Number));
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+#### `DELETE /api/folders/:id/comics` — Remove Comics from Folder
+
+```
+DELETE /api/folders/:id/comics
+Content-Type: application/json
+Body: { "comicIds": [1, 2, 3] }
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+if (method === 'DELETE' && folderAddComicsMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const folderId = parseInt(folderAddComicsMatch[1], 10);
+  const body = await readBody(req);
+  let parsed: { comicIds?: number[] };
+  try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+  if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) {
+    return sendError(res, 400, 'Provide "comicIds" (non-empty array)');
+  }
+  db.removeComicsFromFolder(folderId, parsed.comicIds.map(Number));
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+### 14. Tag Management API Endpoints (`webServer.ts`)
+
+#### `PUT /api/comics/:id/tags` — Set Tags on a Comic
+
+```
+PUT /api/comics/:id/tags
+Content-Type: application/json
+Body: { "tags": ["action", "sci-fi"] }
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+Computes the diff between the comic's current tags and the provided tags, then calls `addTag` for new tags and `removeTag` for removed tags.
+
+```ts
+const comicTagsMatch = pathname.match(/^\/api\/comics\/(\d+)\/tags$/);
+if (method === 'PUT' && comicTagsMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const comicId = parseInt(comicTagsMatch[1], 10);
+  const record = db.getComic(comicId);
+  if (!record) return sendError(res, 404, 'Comic not found');
+  const body = await readBody(req);
+  let parsed: { tags?: string[] };
+  try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+  if (!Array.isArray(parsed.tags)) {
+    return sendError(res, 400, 'Provide "tags" (array of strings)');
+  }
+  const newTags = new Set(parsed.tags.map((t) => String(t).trim()).filter(Boolean));
+  const oldTags = new Set(record.tags);
+  for (const tag of newTags) {
+    if (!oldTags.has(tag)) db.addTag(comicId, tag);
+  }
+  for (const tag of oldTags) {
+    if (!newTags.has(tag)) db.removeTag(comicId, tag);
+  }
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+#### `PUT /api/tags/:name` — Rename Tag Globally
+
+```
+PUT /api/tags/:name
+Content-Type: application/json
+Body: { "newName": "science-fiction" }
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+const tagRenameMatch = pathname.match(/^\/api\/tags\/(.+)$/);
+if (method === 'PUT' && tagRenameMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const oldName = decodeURIComponent(tagRenameMatch[1]);
+  const body = await readBody(req);
+  let parsed: { newName?: string };
+  try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+  if (typeof parsed.newName !== 'string' || !parsed.newName.trim()) {
+    return sendError(res, 400, 'Provide "newName" (non-empty string)');
+  }
+  db.renameTag(oldName, parsed.newName.trim());
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+#### `DELETE /api/tags/:name` — Delete Tag Globally
+
+```
+DELETE /api/tags/:name
+Response: { "ok": true }
+```
+
+**Authentication:** Required. Returns 401 if not authenticated.
+
+**Implementation:**
+```ts
+const tagDeleteMatch = pathname.match(/^\/api\/tags\/(.+)$/);
+if (method === 'DELETE' && tagDeleteMatch) {
+  if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+  const tagName = decodeURIComponent(tagDeleteMatch[1]);
+  db.deleteTag(tagName);
+  return sendJson(res, 200, { ok: true });
+}
+```
+
+### 15. Library/Folder Context Menu in Tab_Panel (`app.js` + `style.css`)
+
+The Tab_Panel list items (§2) gain context-menu support for admin users. On desktop, right-clicking a library or folder item opens a Context_Menu. On mobile, a long-press (via `touchstart`/`touchend` timer, ~500ms) triggers the same menu.
+
+**Context_Menu structure:**
+```html
+<div class="context-menu" role="menu">
+  <button role="menuitem" data-action="rename">Rename</button>
+  <button role="menuitem" class="danger" data-action="delete">Delete</button>
+</div>
+```
+
+**Rename flow:**
+1. Clicking "Rename" replaces the Context_Menu with an inline `<input>` pre-filled with the current name.
+2. Pressing Enter or blurring the input sends the `PUT` request.
+3. On success, the Tab_Panel list is refreshed and `cb8:library-changed` is dispatched.
+
+**Delete flow:**
+1. Clicking "Delete" calls `window.confirm('Delete {type} "{name}"? This will not delete any files.')`.
+2. On confirmation, sends the `DELETE` request.
+3. On success, the Tab_Panel list is refreshed, `cb8:library-changed` is dispatched, and if the user was viewing the deleted item, navigates to `#/`.
+
+**"New collection" / "New folder" button:**
+A `+` button is rendered at the bottom of the Collections and Folders Tab_Panel lists (visible only to authenticated admins). Tapping it opens a `window.prompt()` for the name. For collections, a second prompt or toggle selects the media type (comic/book), defaulting to comic.
+
+### 16. Card Context Menu Enhancements (`admin.js` + `views/library.js`)
+
+The existing `openCardContextMenu` in `admin.js` already has an "Add to collection ▸" submenu. Requirements 19–21 extend it with:
+
+#### "Add to folder ▸" submenu
+
+Identical pattern to the existing "Add to collection ▸" submenu:
+- Lazy-loads the folder list via `api.fetchFolders()` on hover/click.
+- Each folder is a tappable option that calls `api.addComicsToFolder(folderId, targets)`.
+- A "+ New folder…" option at the bottom prompts for a name, creates the folder via `api.createFolder(name)`, then adds the comics.
+
+#### "Remove from collection" option (conditional)
+
+Rendered only when `currentRoute.type === 'library'`:
+- Calls `api.removeComicsFromLibrary(currentRoute.id, targets)`.
+- Removes the cards from the grid and dispatches `cb8:library-changed`.
+
+#### "Remove from folder" option (conditional)
+
+Rendered only when `currentRoute.type === 'folder'`:
+- Calls `api.removeComicsFromFolder(currentRoute.id, targets)`.
+- Removes the cards from the grid and dispatches `cb8:library-changed`.
+
+#### "Tags…" option
+
+Opens a Tag_Editor inline within the Context_Menu or as a small popover:
+- Fetches the comic's current tags via `api.fetchComic(targetId)`.
+- Displays tags as removable chips.
+- Provides a text input to add new tags (autocomplete from `api.fetchTags()`).
+- On each add/remove, sends `api.setComicTags(comicId, updatedTags)`.
+- For multi-select (multiple `targets`), shows only tags common to all selected comics, with an indicator for partially-applied tags.
+
+### 17. Web API Client Extensions (`api.js`)
+
+New functions added to `api.js`:
+
+```js
+export async function renameLibrary(id, name) {
+  const res = await fetch(`${API}/api/libraries/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function deleteLibrary(id) {
+  const res = await fetch(`${API}/api/libraries/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function removeComicsFromLibrary(libraryId, comicIds) {
+  const res = await fetch(`${API}/api/libraries/${libraryId}/comics`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function createFolder(name, comicIds = []) {
+  const res = await fetch(`${API}/api/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function renameFolder(id, name) {
+  const res = await fetch(`${API}/api/folders/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function deleteFolder(id) {
+  const res = await fetch(`${API}/api/folders/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function addComicsToFolder(folderId, comicIds) {
+  const res = await fetch(`${API}/api/folders/${folderId}/comics`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function removeComicsFromFolder(folderId, comicIds) {
+  const res = await fetch(`${API}/api/folders/${folderId}/comics`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function setComicTags(comicId, tags) {
+  const res = await fetch(`${API}/api/comics/${comicId}/tags`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function renameTag(oldName, newName) {
+  const res = await fetch(`${API}/api/tags/${encodeURIComponent(oldName)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newName }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function deleteTag(name) {
+  const res = await fetch(`${API}/api/tags/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+```
+
+### 18. Tag Context Menu in Tags Tab_Panel (`app.js`)
+
+The Tags Tab_Panel list items gain context-menu support for admin users, following the same pattern as §15 (Library/Folder Context Menu).
+
+**Context_Menu options:**
+- "Rename tag" — opens an inline text input, sends `PUT /api/tags/:name`.
+- "Delete tag" — shows `window.confirm('Delete tag "{name}"? This will remove the tag from all comics.')`, sends `DELETE /api/tags/:name`.
+
+On success, the Tab_Panel list is refreshed and `cb8:library-changed` is dispatched.
+
 ## Correctness Properties
 
 *A property is a characteristic or behavior that should hold true across all valid executions of a system.*
@@ -515,6 +1107,42 @@ The testable properties centre on the server-side query logic (filter compositio
 
 **Validates: Requirements 13.2, 13.3, 13.4**
 
+### Property 5: Upload File Extension Validation
+
+*For any* filename string, the upload endpoint SHALL accept the file if and only if its extension (case-insensitive) is one of `.epub`, `.pdf`, `.cbz`, `.cbr`, or `.mobi`. Files with any other extension SHALL be rejected with HTTP 415. Files with no extension SHALL be rejected.
+
+**Validates: Requirements 16.7, 16.11**
+
+### Property 6: Upload Path Traversal Prevention
+
+*For any* relative path string containing `..` or `.` components, or starting with `/` or `\`, or containing null bytes, the upload endpoint SHALL reject the request with HTTP 400. *For any* relative path whose resolved destination escapes the `web-uploads/` base directory, the upload endpoint SHALL reject the request with HTTP 400.
+
+**Validates: Requirements 16.8, 16.12**
+
+### Property 7: Library CRUD Auth Gating
+
+*For any* HTTP request to `PUT /api/libraries/:id`, `DELETE /api/libraries/:id`, or `DELETE /api/libraries/:id/comics` that does not include a valid admin session cookie, the server SHALL return HTTP 401. *For any* authenticated request with a valid session cookie, the server SHALL process the request and return a 2xx response (assuming valid input).
+
+**Validates: Requirements 17.8, 19.7**
+
+### Property 8: Folder CRUD Auth Gating
+
+*For any* HTTP request to `POST /api/folders`, `PUT /api/folders/:id`, `DELETE /api/folders/:id`, `POST /api/folders/:id/comics`, or `DELETE /api/folders/:id/comics` that does not include a valid admin session cookie, the server SHALL return HTTP 401. *For any* authenticated request with a valid session cookie, the server SHALL process the request and return a 2xx response (assuming valid input).
+
+**Validates: Requirements 18.9, 20.8**
+
+### Property 9: Tag Set Diff Correctness
+
+*For any* comic with an existing tag set `oldTags` and *for any* new tag set `newTags`, the `PUT /api/comics/:id/tags` endpoint SHALL add exactly the tags in `newTags \ oldTags` and remove exactly the tags in `oldTags \ newTags`. After the operation, the comic's tags SHALL equal `newTags`.
+
+**Validates: Requirements 21.2, 21.3, 21.4**
+
+### Property 10: Delete Library/Folder Preserves Comic Records
+
+*For any* library or folder deletion, the comic records referenced by the deleted library or folder SHALL remain in the database with all their fields unchanged. Only the association rows (in `library_comics` or `folder_comics`) SHALL be removed.
+
+**Validates: Requirements 17.6, 18.7**
+
 ## Error Handling
 
 ### Client-Side Errors
@@ -528,6 +1156,9 @@ The testable properties centre on the server-side query logic (filter compositio
 | Thumbnail image fails to load               | `img.onerror` replaces `src` with the inline SVG data URI placeholder. Dimensions are preserved by the wrapper's `aspect-ratio`. |
 | Invalid hash route                          | Existing `parseRoute()` falls back to `{ type: 'all' }`. No change needed.                                          |
 | Tab_Panel opened with empty list            | Single `<li class="tab-panel-empty">` with "No collections" / "No folders" / "No tags".                             |
+| Drop contains no supported files            | Toast notification: "No supported files in drop (.cbz .cbr .epub .pdf .mobi)".                                      |
+| Drop gather fails (entry API error)         | Toast notification: "Drop failed: {error.message}".                                                                  |
+| File upload fails (network or server error) | Per-file error status in the upload modal; summary toast with failure count for drag-and-drop uploads.               |
 
 ### Server-Side Errors
 
@@ -536,6 +1167,37 @@ The testable properties centre on the server-side query logic (filter compositio
 | Invalid `fileExt` query param         | Treated as a normal filter — the WHERE clause matches no rows and an empty page is returned. No error.  |
 | Invalid `sortBy` value                | Existing `SORT_COLUMN_MAP[...] ?? SORT_COLUMN_MAP.title` fallback handles unknown values.               |
 | `last_read` column is NULL            | `COALESCE(c.last_read, '')` places NULLs at the string-sort boundary (before any real datetime).        |
+
+### Upload Endpoint Errors
+
+| Error                                          | Handling                                                                                                |
+|------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| Missing `X-CB8-Filename` header                | Returns HTTP 400 with "Missing X-CB8-Filename header".                                                  |
+| Invalid percent-encoding in headers            | Returns HTTP 400 with "Headers are not valid percent-encoded UTF-8".                                    |
+| Path traversal attempt (`..` components)       | Returns HTTP 400 with "Invalid relative path".                                                          |
+| Resolved path escapes upload directory         | Returns HTTP 400 with "Resolved path escapes upload directory".                                         |
+| Unsupported file extension                     | Returns HTTP 415 with "Unsupported file type".                                                          |
+| File already in library (duplicate path)       | Returns HTTP 200 with `{ added: false, skipped: true, reason: 'Already in library' }`. Not an error.   |
+| Disk write failure                             | Returns HTTP 500 with the error message. Partially written file is deleted.                             |
+| Ingestion failure (cover extraction, etc.)     | Returns HTTP 500 with the error message. Uploaded file is deleted from disk.                            |
+| Unauthenticated request                        | Returns HTTP 401 with "Unauthorized".                                                                   |
+
+### Library/Folder/Tag Management Endpoint Errors
+
+| Error                                                    | Handling                                                                                                |
+|----------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| Unauthenticated request to any management endpoint       | Returns HTTP 401 with "Unauthorized".                                                                   |
+| `PUT /api/libraries/:id` with empty or missing `name`   | Returns HTTP 400 with "Provide \"name\" (non-empty string)".                                            |
+| `PUT /api/libraries/:id` with duplicate name             | Returns HTTP 409 with "A collection with that name already exists".                                     |
+| `DELETE /api/libraries/:id` for non-existent library     | `deleteLibrary` is a no-op (DELETE WHERE id = ?); returns `{ ok: true }`.                               |
+| `POST /api/folders` with empty or missing `name`         | Returns HTTP 400 with "Provide \"name\" (non-empty string)".                                            |
+| `PUT /api/folders/:id` with empty or missing `name`      | Returns HTTP 400 with "Provide \"name\" (non-empty string)".                                            |
+| `DELETE /api/folders/:id` for non-existent folder        | `deleteFolder` is a no-op; returns `{ ok: true }`.                                                      |
+| `PUT /api/comics/:id/tags` for non-existent comic        | Returns HTTP 404 with "Comic not found".                                                                |
+| `PUT /api/comics/:id/tags` with non-array `tags`         | Returns HTTP 400 with "Provide \"tags\" (array of strings)".                                            |
+| `PUT /api/tags/:name` with empty or missing `newName`    | Returns HTTP 400 with "Provide \"newName\" (non-empty string)".                                         |
+| `DELETE /api/tags/:name` for non-existent tag            | `deleteTag` is a no-op; returns `{ ok: true }`.                                                         |
+| Invalid JSON body on any management endpoint             | Returns HTTP 400 with "Invalid JSON".                                                                   |
 
 ### Headless Mode Errors
 
@@ -554,7 +1216,22 @@ The testable properties centre on the server-side query logic (filter compositio
 - **Headless mode with both `--headless` and `CB8_HEADLESS=1`**: harmless — either one activates headless mode; setting both is equivalent to setting one.
 - **Headless mode on macOS**: `app.dock?.hide()` uses optional chaining to handle non-macOS callers (where `dock` is `undefined`).
 - **`window-all-closed` in headless mode**: the handler returns early, preventing Electron from quitting.
+- **Drag-and-drop while not authenticated**: all drag event handlers return early without calling `preventDefault()`, so the browser's default behaviour is preserved and no overlay is shown.
+- **Drop containing a mix of supported and unsupported files**: `gatherFromDrop` filters to supported extensions only; unsupported files are silently ignored. The toast shows the count of supported files being uploaded.
+- **Drop containing folders with nested supported files**: `gatherFromDataTransferItem` recursively traverses directories via the `webkitGetAsEntry()` API, collecting all supported files with their relative paths preserved.
+- **Upload of a file that already exists at the destination path but is not in the library database**: the file is overwritten on disk and then ingested normally via `addSingleFile`.
+- **Upload of a very large file**: the raw-body streaming approach (`req.pipe(writeStream)`) keeps memory usage constant regardless of file size, as the file is written to disk in chunks rather than buffered in memory.
+- **Concurrent drops**: each drop triggers its own sequential upload loop. Multiple concurrent drops are possible but each processes its files independently.
 - **Tab_Panel open + user taps a card link in a route that is already active**: the hash-change fires anyway (browser default) and `closeTabPanel()` still runs, so the panel closes and the grid refreshes.
+- **Deleting a library while viewing it**: if the user is on `#/library/:id` and deletes that library, the web app navigates to `#/` after the delete succeeds.
+- **Deleting a folder while viewing it**: same as library — navigates to `#/` after the delete succeeds.
+- **Renaming a library/folder with the same name**: the PUT endpoint accepts it (no-op rename); no error is returned.
+- **Adding a comic to a library it's already in**: `addComicsToLibrary` uses `INSERT OR IGNORE`, so duplicates are silently skipped.
+- **Adding a comic to a folder it's already in**: `addComicsToFolder` uses `INSERT OR IGNORE`, so duplicates are silently skipped.
+- **Removing a comic from a library it's not in**: `removeComicsFromLibrary` uses `DELETE WHERE`, so missing associations are silently ignored.
+- **Setting tags to the same set**: the diff computation produces no adds and no removes — a no-op.
+- **Tag names with special characters**: tag names are URL-encoded in the `PUT /api/tags/:name` and `DELETE /api/tags/:name` paths; `decodeURIComponent` on the server handles them correctly.
+- **Context menu on non-admin user**: the "Add to collection…", "Add to folder…", "Tags…", "Remove from collection", and "Remove from folder" options are not rendered when `isAuthenticated()` returns false.
 
 ## Testing Strategy
 
@@ -582,6 +1259,31 @@ Key example tests:
 12. Progress_Badge renders "42%" for `lastPage=42, pageCount=100` and "In progress" for an EPUB with `lastLocation='epubcfi(/…)'` and `lastPage=null`.
 13. On mobile media query, Sidebar and hamburger are hidden; Tab_Bar is displayed.
 14. On desktop media query, Tab_Bar, Tab_Panel, Media_Strip, File_Type_Strip, and Sort_Sheet are all hidden.
+15. Drop overlay appears when `isAuthenticated()` is true and a `dragenter` event fires; hidden when `dragleave` counter reaches zero or after `drop`.
+16. Drop overlay does NOT appear when `isAuthenticated()` returns false.
+17. `gatherFromDrop` returns only files with supported extensions and preserves relative paths for folder drops.
+18. Upload modal queues files, shows per-file progress, and displays "Added" / "Already in library" / error status after each upload completes.
+19. Upload modal auto-closes on a clean run (zero failures) and dispatches `cb8:library-changed`.
+
+### Management Feature Unit Tests (Example-Based)
+
+20. `PUT /api/libraries/:id` with valid session and name returns `{ ok: true }` and the library name is updated in the database.
+21. `PUT /api/libraries/:id` without authentication returns HTTP 401.
+22. `DELETE /api/libraries/:id` with valid session removes the library and its associations but not the comic records.
+23. `DELETE /api/libraries/:id/comics` with valid session removes the specified comics from the library association.
+24. `POST /api/folders` with valid session and name creates a folder and returns `{ id, name }`.
+25. `PUT /api/folders/:id` with valid session and name returns `{ ok: true }` and the folder name is updated.
+26. `DELETE /api/folders/:id` with valid session removes the folder and its associations but not the comic records.
+27. `POST /api/folders/:id/comics` with valid session adds comics to the folder.
+28. `DELETE /api/folders/:id/comics` with valid session removes comics from the folder association.
+29. `PUT /api/comics/:id/tags` with `{ tags: ["a", "b"] }` on a comic with tags `["a", "c"]` results in tags `["a", "b"]` (adds "b", removes "c").
+30. `PUT /api/tags/:name` renames the tag across all comics.
+31. `DELETE /api/tags/:name` removes the tag from all comics.
+32. Card context menu renders "Add to folder ▸" submenu with folder list and "+ New folder…" option.
+33. Card context menu renders "Remove from collection" only when viewing a library route.
+34. Card context menu renders "Remove from folder" only when viewing a folder route.
+35. Card context menu renders "Tags…" option for authenticated admin users.
+36. Tab_Panel context menu (long-press/right-click) on a library item shows "Rename" and "Delete" options for admin users.
 
 ### Property-Based Tests
 
@@ -600,12 +1302,40 @@ Property-based testing applies to the four properties identified above, using [f
 2. **Progress Badge Computation** (Property 2): generate random `(lastPage, lastLocation, pageCount)` tuples. Call the badge computation function. Assert the output matches the spec from the property.
 3. **Format Badge Text and Style** (Property 3): generate random `fileExt` from the valid set plus empty. Call the badge rendering logic. Assert text equals `fileExt.toUpperCase()` and class is `book` for epub/pdf/mobi, default otherwise; empty `fileExt` falls back to mediaType label.
 4. **`lastRead` Sort Ordering** (Property 4): generate random arrays of records with random `lastRead` timestamps (some null). Sort using the `COALESCE(last_read, '')` logic. Assert the ordering invariants for both `asc` and `desc`.
+5. **Upload File Extension Validation** (Property 5): generate random filename strings with random extensions (including valid and invalid ones, empty extensions, mixed case). Run the extension validation logic. Assert acceptance iff the extension is in the supported set.
+6. **Upload Path Traversal Prevention** (Property 6): generate random relative path strings including adversarial components (`..`, `.`, absolute prefixes, null bytes). Run the path validation logic. Assert rejection for all traversal attempts and acceptance for clean relative paths.
+7. **Library/Folder CRUD Auth Gating** (Properties 7 & 8): generate random request configurations (with and without valid session cookies) for each management endpoint. Assert that unauthenticated requests always return 401 and authenticated requests return 2xx.
+8. **Tag Set Diff Correctness** (Property 9): generate random pairs of old and new tag sets. Run the diff logic (compute adds and removes). Assert that the resulting tag set equals the new tag set exactly.
+9. **Delete Preserves Comic Records** (Property 10): seed a database with random libraries/folders containing random comics. Delete a library or folder. Assert all comic records remain in the database with unchanged fields.
 
 ### Integration Tests
 
 - Issue `GET /api/comics?fileExt=epub&mediaType=book&sortBy=lastRead&sortOrder=desc` against a seeded SQLite database and assert the returned records satisfy all three constraints.
 - Verify the `lastRead` option appears in the desktop `<select>` and in the mobile Sort_Sheet.
 - Verify `queryComicsByLibrary` now returns records with non-null `lastLocation` for EPUBs that have been read (regression fix).
+
+### Management Endpoint Integration Tests
+
+- `PUT /api/libraries/:id` with valid session renames the library; subsequent `GET /api/libraries` returns the new name.
+- `DELETE /api/libraries/:id` with valid session removes the library; subsequent `GET /api/libraries` no longer includes it.
+- `DELETE /api/libraries/:id/comics` removes the association; subsequent `GET /api/libraries/:id/comics` no longer includes the removed comics.
+- `POST /api/folders` with valid session creates a folder; subsequent `GET /api/folders` includes it.
+- `PUT /api/folders/:id` with valid session renames the folder.
+- `DELETE /api/folders/:id` with valid session removes the folder.
+- `POST /api/folders/:id/comics` adds comics; subsequent `GET /api/folders/:id/comics` includes them.
+- `DELETE /api/folders/:id/comics` removes comics from the folder.
+- `PUT /api/comics/:id/tags` sets the exact tag list on a comic.
+- `PUT /api/tags/:name` renames a tag across all comics that have it.
+- `DELETE /api/tags/:name` removes a tag from all comics.
+
+### Upload Endpoint Integration Tests
+
+- `POST /api/admin/upload` with a valid `.epub` file and valid session cookie returns `{ added: true }` and the file appears in the database.
+- `POST /api/admin/upload` with an unsupported extension (e.g., `.txt`) returns HTTP 415.
+- `POST /api/admin/upload` without authentication returns HTTP 401.
+- `POST /api/admin/upload` with a path-traversal `X-CB8-Relpath` (e.g., `../../etc/passwd`) returns HTTP 400.
+- `POST /api/admin/upload` for a file already in the library returns `{ added: false, skipped: true }`.
+- `POST /api/admin/upload` with missing `X-CB8-Filename` header returns HTTP 400.
 
 ### Headless Mode Tests (Example-Based)
 
@@ -631,3 +1361,12 @@ Key example tests (may require mocking the `electron` module):
 - Verify the Tab_Bar is not obscured on iOS Safari (safe-area inset respected).
 - Verify desktop (> 640px) layout is visually identical to main except for the new "Recently Read" sort option.
 - Verify headless mode end-to-end: run `CB8_HEADLESS=1 npm start` (or `./out/CB8 --headless`), open the printed URL from a second device on the LAN, browse the library, send SIGINT, confirm clean shutdown.
+- Verify library create/rename/delete from the Collections Tab_Panel on mobile and Sidebar on desktop.
+- Verify folder create/rename/delete from the Folders Tab_Panel on mobile and Sidebar on desktop.
+- Verify "Add to collection…" and "Add to folder…" submenus in the card context menu populate correctly and add comics.
+- Verify "Remove from collection" appears only when viewing a library and removes the comic from the library (not from the database).
+- Verify "Remove from folder" appears only when viewing a folder and removes the comic from the folder (not from the database).
+- Verify tag add/remove via the "Tags…" option in the card context menu.
+- Verify tag rename/delete from the Tags Tab_Panel context menu.
+- Verify all management operations are hidden from non-authenticated users.
+- Verify the confirmation dialog for library/folder delete shows "This will not delete any files."

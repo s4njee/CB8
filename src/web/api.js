@@ -39,6 +39,26 @@ export async function fetchLibraries(mediaType) {
   return res.json();
 }
 
+export async function createLibrary(name, mediaType) {
+  const res = await fetch(`${API}/api/libraries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, mediaType }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function addComicsToLibrary(libraryId, comicIds) {
+  const res = await fetch(`${API}/api/libraries/${libraryId}/comics`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
 export async function fetchLibraryComics(libraryId, options = {}) {
   const params = new URLSearchParams(
     Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== '' && v !== null))
@@ -94,6 +114,12 @@ export async function updateLocation(id, location) {
 }
 
 // --- Admin ---
+
+export async function adminHostInfo() {
+  const res = await fetch(`${API}/api/admin/host-info`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
 
 export async function adminSession() {
   const res = await fetch(`${API}/api/admin/session`);
@@ -215,6 +241,110 @@ export function adminUploadFile(file, relPath, onProgress) {
     xhr.onabort = () => reject(new Error('Upload aborted'));
     xhr.send(file);
   });
+}
+
+// --- Library management ---
+
+export async function renameLibrary(id, name) {
+  const res = await fetch(`${API}/api/libraries/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function deleteLibrary(id) {
+  const res = await fetch(`${API}/api/libraries/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function removeComicsFromLibrary(libraryId, comicIds) {
+  const res = await fetch(`${API}/api/libraries/${libraryId}/comics`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+// --- Folder management ---
+
+export async function createFolder(name, comicIds = []) {
+  const res = await fetch(`${API}/api/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function renameFolder(id, name) {
+  const res = await fetch(`${API}/api/folders/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function deleteFolder(id) {
+  const res = await fetch(`${API}/api/folders/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function addComicsToFolder(folderId, comicIds) {
+  const res = await fetch(`${API}/api/folders/${folderId}/comics`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function removeComicsFromFolder(folderId, comicIds) {
+  const res = await fetch(`${API}/api/folders/${folderId}/comics`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comicIds }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+// --- Tag management ---
+
+export async function setComicTags(comicId, tags) {
+  const res = await fetch(`${API}/api/comics/${comicId}/tags`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function renameTag(oldName, newName) {
+  const res = await fetch(`${API}/api/tags/${encodeURIComponent(oldName)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newName }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
+}
+
+export async function deleteTag(name) {
+  const res = await fetch(`${API}/api/tags/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
+  return res.json();
 }
 
 export async function deleteComic(id) {

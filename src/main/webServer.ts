@@ -118,6 +118,37 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 const sessions = new Map<string, { expiresAt: number }>();
 
+// Path is set once the Electron app is ready (userData is available).
+let sessionsFilePath = '';
+
+function loadSessions(): void {
+  if (!sessionsFilePath) return;
+  try {
+    const raw = fs.readFileSync(sessionsFilePath, 'utf8');
+    const parsed: Record<string, { expiresAt: number }> = JSON.parse(raw);
+    const now = Date.now();
+    for (const [token, data] of Object.entries(parsed)) {
+      if (data.expiresAt > now) sessions.set(token, data);
+    }
+  } catch {
+    // File doesn't exist yet or is corrupt — start fresh.
+  }
+}
+
+function persistSessions(): void {
+  if (!sessionsFilePath) return;
+  const now = Date.now();
+  const out: Record<string, { expiresAt: number }> = {};
+  for (const [token, data] of sessions) {
+    if (data.expiresAt > now) out[token] = data;
+  }
+  try {
+    fs.writeFileSync(sessionsFilePath, JSON.stringify(out), 'utf8');
+  } catch (err) {
+    console.error('[CB8] Failed to persist sessions:', err);
+  }
+}
+
 /**
  * "Superadmin" = authenticated admin whose connection originates from the
  * host machine itself (loopback). Host-path features require this because
@@ -430,6 +461,12 @@ async function handleRequest(
       });
     }
 
+    // --- Admin: host info (home dir for path pre-fill) --------------------
+    if (method === 'GET' && pathname === '/api/admin/host-info') {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      return sendJson(res, 200, { homePath: os.homedir() });
+    }
+
     // --- Admin: login ------------------------------------------------------
     if (method === 'POST' && pathname === '/api/admin/login') {
       const body = await readBody(req);
@@ -440,6 +477,7 @@ async function handleRequest(
       }
       const token = crypto.randomBytes(32).toString('hex');
       sessions.set(token, { expiresAt: Date.now() + SESSION_TTL_MS });
+      persistSessions();
       setSessionCookie(res, token);
       return sendJson(res, 200, { ok: true });
     }
@@ -447,7 +485,7 @@ async function handleRequest(
     // --- Admin: logout -----------------------------------------------------
     if (method === 'POST' && pathname === '/api/admin/logout') {
       const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-      if (token) sessions.delete(token);
+      if (token) { sessions.delete(token); persistSessions(); }
       clearSessionCookie(res);
       return sendJson(res, 200, { ok: true });
     }
@@ -623,6 +661,8 @@ async function handleRequest(
         'Cache-Control': 'no-cache, no-transform',
         'X-Accel-Buffering': 'no',
       });
+      // Disable Nagle's algorithm so each write() flushes immediately to the browser.
+      res.socket?.setNoDelay(true);
 
       // Throttle progress emissions so 10k-file scans don't flood the socket.
       let lastEmit = 0;
@@ -798,6 +838,81 @@ async function handleRequest(
       return sendJson(res, 200, libs);
     }
 
+    // --- POST /api/libraries ------------------------------------------------
+    if (method === 'POST' && pathname === '/api/libraries') {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const body = await readBody(req);
+      let parsed: { name?: string; mediaType?: string };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+        return sendError(res, 400, 'Provide "name" (string)');
+      }
+      const mediaType = parsed.mediaType === 'book' ? 'book' : 'comic';
+      try {
+        const lib = db.createLibrary(parsed.name.trim(), mediaType);
+        return sendJson(res, 201, lib);
+      } catch {
+        return sendError(res, 409, 'A collection with that name already exists');
+      }
+    }
+
+    // --- PUT /api/libraries/:id (rename) ------------------------------------
+    const libRenameMatch = pathname.match(/^\/api\/libraries\/(\d+)$/);
+    if (method === 'PUT' && libRenameMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(libRenameMatch[1], 10);
+      const body = await readBody(req);
+      let parsed: { name?: string };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+        return sendError(res, 400, 'Provide "name" (string)');
+      }
+      try {
+        db.renameLibrary(id, parsed.name.trim());
+        return sendJson(res, 200, { ok: true });
+      } catch {
+        return sendError(res, 409, 'A collection with that name already exists');
+      }
+    }
+
+    // --- DELETE /api/libraries/:id ------------------------------------------
+    if (method === 'DELETE' && libRenameMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(libRenameMatch[1], 10);
+      db.deleteLibrary(id);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- DELETE /api/libraries/:id/comics (remove comics from library) ------
+    const libRemoveComicsMatch = pathname.match(/^\/api\/libraries\/(\d+)\/comics$/);
+    if (method === 'DELETE' && libRemoveComicsMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const libId = parseInt(libRemoveComicsMatch[1], 10);
+      const body = await readBody(req);
+      let parsed: { comicIds?: number[] };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) {
+        return sendError(res, 400, 'Provide "comicIds" (non-empty array)');
+      }
+      db.removeComicsFromLibrary(libId, parsed.comicIds.map(Number));
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- POST /api/libraries/:id/comics -------------------------------------
+    const libAddComicsMatch = pathname.match(/^\/api\/libraries\/(\d+)\/comics$/);
+    if (method === 'POST' && libAddComicsMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const libId = parseInt(libAddComicsMatch[1], 10);
+      const body = await readBody(req);
+      let parsed: { comicIds?: number[] };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) {
+        return sendError(res, 400, 'Provide "comicIds" (non-empty array)');
+      }
+      db.addComicsToLibrary(libId, parsed.comicIds.map(Number));
+      return sendJson(res, 200, { ok: true });
+    }
+
     // --- GET /api/libraries/:id/comics --------------------------------------
     const libComicsMatch = pathname.match(/^\/api\/libraries\/(\d+)\/comics$/);
     if (method === 'GET' && libComicsMatch) {
@@ -822,6 +937,60 @@ async function handleRequest(
         thumbnailUrl: f.coverThumbnail ? `/api/folders/${f.id}/thumbnail` : null,
       }));
       return sendJson(res, 200, safe);
+    }
+
+    // --- POST /api/folders (create) -----------------------------------------
+    if (method === 'POST' && pathname === '/api/folders') {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const body = await readBody(req);
+      let parsed: { name?: string; comicIds?: number[] };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+        return sendError(res, 400, 'Provide "name" (string)');
+      }
+      const ids = Array.isArray(parsed.comicIds) ? parsed.comicIds.map(Number) : [];
+      const folder = db.createFolder(parsed.name.trim(), ids);
+      return sendJson(res, 201, folder);
+    }
+
+    // --- PUT /api/folders/:id (rename) --------------------------------------
+    const folderIdMatch = pathname.match(/^\/api\/folders\/(\d+)$/);
+    if (method === 'PUT' && folderIdMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(folderIdMatch[1], 10);
+      const body = await readBody(req);
+      let parsed: { name?: string };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+        return sendError(res, 400, 'Provide "name" (string)');
+      }
+      db.renameFolder(id, parsed.name.trim());
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- DELETE /api/folders/:id --------------------------------------------
+    if (method === 'DELETE' && folderIdMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(folderIdMatch[1], 10);
+      db.deleteFolder(id);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- POST/DELETE /api/folders/:id/comics --------------------------------
+    const folderComicsMutMatch = pathname.match(/^\/api\/folders\/(\d+)\/comics$/);
+    if ((method === 'POST' || method === 'DELETE') && folderComicsMutMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const folderId = parseInt(folderComicsMutMatch[1], 10);
+      const body = await readBody(req);
+      let parsed: { comicIds?: number[] };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) {
+        return sendError(res, 400, 'Provide "comicIds" (non-empty array)');
+      }
+      const ids = parsed.comicIds.map(Number);
+      if (method === 'POST') db.addComicsToFolder(folderId, ids);
+      else db.removeComicsFromFolder(folderId, ids);
+      return sendJson(res, 200, { ok: true });
     }
 
     // --- GET /api/folders/:id/thumbnail -------------------------------------
@@ -863,6 +1032,50 @@ async function handleRequest(
       return sendJson(res, 200, db.getAllTags());
     }
 
+    // --- PUT /api/comics/:id/tags (set tags) --------------------------------
+    const comicTagsMatch = pathname.match(/^\/api\/comics\/(\d+)\/tags$/);
+    if (method === 'PUT' && comicTagsMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const id = parseInt(comicTagsMatch[1], 10);
+      const record = db.getComic(id);
+      if (!record) return sendError(res, 404, 'Comic not found');
+      const body = await readBody(req);
+      let parsed: { tags?: string[] };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (!Array.isArray(parsed.tags)) return sendError(res, 400, 'Provide "tags" (array)');
+      const nextTags = parsed.tags
+        .map((t) => (typeof t === 'string' ? t.trim() : ''))
+        .filter((t) => t.length > 0);
+      const current = new Set(record.tags);
+      const next = new Set(nextTags);
+      for (const t of current) if (!next.has(t)) db.removeTag(id, t);
+      for (const t of next) if (!current.has(t)) db.addTag(id, t);
+      return sendJson(res, 200, { ok: true, tags: Array.from(next) });
+    }
+
+    // --- PUT /api/tags/:name (rename) ---------------------------------------
+    const tagNameMatch = pathname.match(/^\/api\/tags\/(.+)$/);
+    if (method === 'PUT' && tagNameMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const oldName = decodeURIComponent(tagNameMatch[1]);
+      const body = await readBody(req);
+      let parsed: { newName?: string };
+      try { parsed = JSON.parse(body); } catch { return sendError(res, 400, 'Invalid JSON'); }
+      if (typeof parsed.newName !== 'string' || !parsed.newName.trim()) {
+        return sendError(res, 400, 'Provide "newName" (string)');
+      }
+      db.renameTag(oldName, parsed.newName.trim());
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // --- DELETE /api/tags/:name ---------------------------------------------
+    if (method === 'DELETE' && tagNameMatch) {
+      if (!isAuthenticated(req)) return sendError(res, 401, 'Unauthorized');
+      const name = decodeURIComponent(tagNameMatch[1]);
+      db.deleteTag(name);
+      return sendJson(res, 200, { ok: true });
+    }
+
     // --- GET /api/recently-read ---------------------------------------------
     if (method === 'GET' && pathname === '/api/recently-read') {
       const limit = query.limit ? parseInt(query.limit, 10) : 20;
@@ -896,7 +1109,7 @@ async function handleRequest(
     res.writeHead(200, {
       'Content-Type': mime,
       'Content-Length': String(stat.size),
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300',
+      'Cache-Control': 'no-cache',
     });
     fs.createReadStream(absPath).pipe(res);
   } catch {
@@ -945,6 +1158,9 @@ export interface WebServerHandle {
  * @param port  TCP port to listen on. Default 8008.
  */
 export function startWebServer(db: LibraryDatabase, port = 8008): WebServerHandle {
+  sessionsFilePath = path.join(app.getPath('userData'), 'cb8-sessions.json');
+  loadSessions();
+
   const staticRoot = resolveStaticRoot();
 
   const server = http.createServer((req, res) => {

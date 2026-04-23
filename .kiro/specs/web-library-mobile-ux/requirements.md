@@ -20,6 +20,10 @@ The CB8 web library UI currently hides most navigation behind a hamburger-menu s
 - **Format_Badge**: A small pill overlaid on the top-right of a card thumbnail showing the uppercase file extension (e.g., "EPUB", "CBZ"), derived from the `fileExt` field of the API response.
 - **Empty_State**: A placeholder view with an icon and contextual message displayed when a section has no content to show.
 - **CLS**: Cumulative Layout Shift — an undesirable visual effect where page elements move after initial render, typically caused by images loading late and resizing their containers.
+- **Drop_Zone**: A full-viewport overlay (`<div id="drop-overlay">`) that appears when a user drags files over the Web_App, providing a visual target and instructional label ("Drop to add to library") for the drag-and-drop upload interaction.
+- **Context_Menu**: A floating menu (`<div class="context-menu">`) that appears on right-click (desktop) or long-press (mobile) on a card or list item, providing contextual actions such as "Add to collection…", "Add to folder…", "Rename", and "Delete".
+- **Confirmation_Dialog**: A browser-native `window.confirm()` dialog used to confirm destructive operations (delete library, delete folder, remove comics) before executing them.
+- **Tag_Editor**: A UI component within the card Context_Menu or comic detail view that allows admin users to add, remove, and manage tags on selected comics.
 
 ## Requirements
 
@@ -192,3 +196,116 @@ The CB8 web library UI currently hides most navigation behind a hamburger-menu s
 8. WHEN headless mode is active, THE `window-all-closed` handler SHALL NOT call `app.quit()` (the process must stay alive).
 9. WHEN headless mode is active on macOS, THE CB8 application SHALL call `app.dock?.hide()` at startup.
 10. WHEN initialization fails in headless mode (database open or server listen), THE CB8 application SHALL log the error to stderr and exit with `process.exit(1)` so supervisors can detect the failure.
+
+### Requirement 15: Admin Upload via Modal
+
+**User Story:** As an admin user, I want to upload files through a modal dialog with a file picker and progress tracking so that I can add items to the library from any device without drag-and-drop.
+
+#### Acceptance Criteria
+
+1. WHEN an authenticated admin user opens the admin menu and selects "Upload comics", THE Web_App SHALL display a modal dialog containing a drop zone, file picker buttons ("Choose files…" and "Choose folder…"), and an upload queue.
+2. WHEN the admin selects files via the file picker or drops files onto the modal drop zone, THE Web_App SHALL add only files with supported extensions (.epub, .pdf, .cbz, .cbr, .mobi) to the upload queue and display each file's name and size.
+3. WHEN the admin clicks the "Upload" button, THE Web_App SHALL upload each queued file sequentially to `POST /api/admin/upload` using a raw-body POST with `X-CB8-Filename` and `X-CB8-Relpath` headers (percent-encoded), and display per-file progress and an overall progress bar.
+4. WHEN a file upload completes, THE Web_App SHALL mark the file as "Added", "Already in library" (skipped), or display the error message.
+5. WHEN all uploads complete with zero failures, THE Web_App SHALL auto-close the modal after a short delay and show a toast notification with the count of added items.
+6. IF any upload fails, THEN THE Web_App SHALL keep the modal open, display the failure count, and allow the admin to close manually.
+7. WHEN at least one file is successfully added, THE Web_App SHALL dispatch a `cb8:library-changed` event to refresh the sidebar and Card_Grid.
+
+### Requirement 16: Drag-and-Drop File Upload to Library
+
+**User Story:** As an admin user, I want to drag and drop files (EPUB, PDF, CBZ, CBR, MOBI) onto the web UI library view so that I can quickly add items to the library without navigating through menus.
+
+#### Acceptance Criteria
+
+1. THE Web_App SHALL prevent the browser's default drag-and-drop behaviour (file download dialog or navigation) on the `document` by calling `preventDefault()` on `dragover` and `drop` events.
+2. WHILE an authenticated admin user drags files over the Web_App, THE Web_App SHALL display the Drop_Zone overlay with the label "Drop to add to library".
+3. WHEN a non-authenticated user drags files over the Web_App, THE Web_App SHALL NOT display the Drop_Zone overlay and SHALL allow the browser's default drag-and-drop behaviour.
+4. WHEN an authenticated admin user drops files onto the Web_App, THE Web_App SHALL gather all dropped files (including files within dropped folders, recursively) and filter to only files with supported extensions (.epub, .pdf, .cbz, .cbr, .mobi).
+5. IF the drop contains zero supported files, THEN THE Web_App SHALL display a toast notification with the message "No supported files in drop (.cbz .cbr .epub .pdf .mobi)".
+6. WHEN supported files are gathered from a drop, THE Web_App SHALL upload each file to the server via `POST /api/admin/upload` and display a toast notification indicating the upload count (e.g., "Uploading 3 files…").
+7. WHEN the server receives a `POST /api/admin/upload` request, THE server SHALL validate that the request is authenticated, that the `X-CB8-Filename` header is present and percent-encoded, and that the file extension is one of .epub, .pdf, .cbz, .cbr, or .mobi.
+8. WHEN the server receives a valid upload, THE server SHALL save the file to the `web-uploads/` directory inside the user data directory, preserving any relative path structure from the `X-CB8-Relpath` header.
+9. WHEN the server saves an uploaded file, THE server SHALL add the file to the library database using the same ingestion logic as the `library:add-files` IPC handler (cover extraction, page count detection, metadata population).
+10. IF the uploaded file already exists in the library database (matched by destination path), THEN THE server SHALL skip the file without error and return `{ added: false, skipped: true }`.
+11. IF the uploaded file has an unsupported extension, THEN THE server SHALL return HTTP 415 with an error message "Unsupported file type".
+12. IF the resolved destination path escapes the `web-uploads/` base directory (path traversal), THEN THE server SHALL return HTTP 400 with an error message.
+13. WHEN all uploads from a drop complete, THE Web_App SHALL display a toast notification summarizing the result (e.g., "Added 3 files" or "Added 2, failed 1") and dispatch a `cb8:library-changed` event to refresh the sidebar and Card_Grid.
+14. WHEN the user drags files away from the Web_App or the drop completes, THE Web_App SHALL hide the Drop_Zone overlay.
+
+### Requirement 17: Create, Rename, and Delete Libraries (Collections) via Web UI
+
+**User Story:** As an admin user, I want to create, rename, and delete libraries (collections) from the web UI so that I can organize my content without needing the desktop Electron GUI.
+
+#### Acceptance Criteria
+
+1. WHEN an authenticated admin user activates the "New collection" action from the Collections Tab_Panel or Sidebar, THE Web_App SHALL display a prompt for the collection name and media type (comic or book), and send a `POST /api/libraries` request with `{ name, mediaType }` to create the library.
+2. WHEN an authenticated admin user long-presses (mobile) or right-clicks (desktop) a library item in the Tab_Panel or Sidebar, THE Web_App SHALL display a Context_Menu with "Rename" and "Delete" options.
+3. WHEN an authenticated admin user selects "Rename" from the library Context_Menu, THE Web_App SHALL display an inline text input pre-filled with the current name, and on confirmation send a `PUT /api/libraries/:id` request with `{ name }`.
+4. WHEN the server receives a `PUT /api/libraries/:id` request, THE server SHALL validate that the request is authenticated, that the `name` field is a non-empty string, and update the library name in the database.
+5. WHEN an authenticated admin user selects "Delete" from the library Context_Menu, THE Web_App SHALL display a Confirmation_Dialog with the message "Delete library \"{name}\"? This will not delete any files." and on confirmation send a `DELETE /api/libraries/:id` request.
+6. WHEN the server receives a `DELETE /api/libraries/:id` request, THE server SHALL validate that the request is authenticated and delete the library and its comic associations from the database without deleting any files on disk.
+7. WHEN a library is successfully created, renamed, or deleted, THE Web_App SHALL dispatch a `cb8:library-changed` event to refresh the Sidebar, Tab_Panel, and Card_Grid.
+8. IF a non-authenticated user attempts to create, rename, or delete a library, THEN THE server SHALL return HTTP 401 with the message "Unauthorized".
+9. IF the library name conflicts with an existing library, THEN THE server SHALL return HTTP 409 with the message "A collection with that name already exists".
+
+### Requirement 18: Create, Rename, and Delete Folders via Web UI
+
+**User Story:** As an admin user, I want to create, rename, and delete folders from the web UI so that I can organize comics into folder groups without needing the desktop Electron GUI.
+
+#### Acceptance Criteria
+
+1. WHEN an authenticated admin user activates the "New folder" action from the Folders Tab_Panel, Sidebar, or card Context_Menu, THE Web_App SHALL display a prompt for the folder name and send a `POST /api/folders` request with `{ name, comicIds }` to create the folder.
+2. WHEN the server receives a `POST /api/folders` request, THE server SHALL validate that the request is authenticated, that the `name` field is a non-empty string, create the folder in the database, and optionally add the provided `comicIds` to the folder.
+3. WHEN an authenticated admin user long-presses (mobile) or right-clicks (desktop) a folder item in the Tab_Panel or Sidebar, THE Web_App SHALL display a Context_Menu with "Rename" and "Delete" options.
+4. WHEN an authenticated admin user selects "Rename" from the folder Context_Menu, THE Web_App SHALL display an inline text input pre-filled with the current name, and on confirmation send a `PUT /api/folders/:id` request with `{ name }`.
+5. WHEN the server receives a `PUT /api/folders/:id` request, THE server SHALL validate that the request is authenticated, that the `name` field is a non-empty string, and update the folder name in the database.
+6. WHEN an authenticated admin user selects "Delete" from the folder Context_Menu, THE Web_App SHALL display a Confirmation_Dialog with the message "Delete folder \"{name}\"? This will not delete any files." and on confirmation send a `DELETE /api/folders/:id` request.
+7. WHEN the server receives a `DELETE /api/folders/:id` request, THE server SHALL validate that the request is authenticated and delete the folder and its comic associations from the database without deleting any files on disk.
+8. WHEN a folder is successfully created, renamed, or deleted, THE Web_App SHALL dispatch a `cb8:library-changed` event to refresh the Sidebar, Tab_Panel, and Card_Grid.
+9. IF a non-authenticated user attempts to create, rename, or delete a folder, THEN THE server SHALL return HTTP 401 with the message "Unauthorized".
+
+### Requirement 19: Add and Remove Comics from Libraries via Web UI
+
+**User Story:** As an admin user, I want to add comics to a library or remove them from a library through the web UI so that I can curate collections without needing the desktop Electron GUI.
+
+#### Acceptance Criteria
+
+1. WHEN an authenticated admin user opens the card Context_Menu, THE Web_App SHALL include an "Add to collection…" submenu listing all available libraries, each as a tappable option.
+2. WHEN an authenticated admin user selects a library from the "Add to collection…" submenu, THE Web_App SHALL send a `POST /api/libraries/:id/comics` request with `{ comicIds }` containing the selected comic IDs and display a toast notification confirming the action.
+3. WHEN an authenticated admin user selects "+ New collection…" from the "Add to collection…" submenu, THE Web_App SHALL prompt for a collection name, create the library via `POST /api/libraries`, then add the selected comics to the new library via `POST /api/libraries/:id/comics`.
+4. WHILE viewing a library's contents (route `#/library/:id`), WHEN an authenticated admin user activates a "Remove from collection" action on selected cards, THE Web_App SHALL send a `DELETE /api/libraries/:id/comics` request with `{ comicIds }` and remove the cards from the grid.
+5. WHEN the server receives a `DELETE /api/libraries/:id/comics` request, THE server SHALL validate that the request is authenticated and remove the specified comics from the library association without deleting the comic records or files.
+6. WHEN comics are successfully added to or removed from a library, THE Web_App SHALL dispatch a `cb8:library-changed` event to refresh the Sidebar and Card_Grid.
+7. IF a non-authenticated user attempts to add or remove comics from a library, THEN THE server SHALL return HTTP 401 with the message "Unauthorized".
+
+### Requirement 20: Add and Remove Comics from Folders via Web UI
+
+**User Story:** As an admin user, I want to add comics to a folder or remove them from a folder through the web UI so that I can organize comics into groups without needing the desktop Electron GUI.
+
+#### Acceptance Criteria
+
+1. WHEN an authenticated admin user opens the card Context_Menu, THE Web_App SHALL include an "Add to folder…" submenu listing all available folders plus a "+ New folder…" option, each as a tappable option.
+2. WHEN an authenticated admin user selects a folder from the "Add to folder…" submenu, THE Web_App SHALL send a `POST /api/folders/:id/comics` request with `{ comicIds }` containing the selected comic IDs and display a toast notification confirming the action.
+3. WHEN an authenticated admin user selects "+ New folder…" from the "Add to folder…" submenu, THE Web_App SHALL prompt for a folder name, create the folder via `POST /api/folders` with `{ name, comicIds: [] }`, then add the selected comics to the new folder via `POST /api/folders/:id/comics`.
+4. WHILE viewing a folder's contents (route `#/folder/:id`), WHEN an authenticated admin user activates a "Remove from folder" action on selected cards, THE Web_App SHALL send a `DELETE /api/folders/:id/comics` request with `{ comicIds }` and remove the cards from the grid.
+5. WHEN the server receives a `POST /api/folders/:id/comics` request, THE server SHALL validate that the request is authenticated and add the specified comics to the folder.
+6. WHEN the server receives a `DELETE /api/folders/:id/comics` request, THE server SHALL validate that the request is authenticated and remove the specified comics from the folder association without deleting the comic records or files.
+7. WHEN comics are successfully added to or removed from a folder, THE Web_App SHALL dispatch a `cb8:library-changed` event to refresh the Sidebar and Card_Grid.
+8. IF a non-authenticated user attempts to add or remove comics from a folder, THEN THE server SHALL return HTTP 401 with the message "Unauthorized".
+
+### Requirement 21: Tag Management via Web UI
+
+**User Story:** As an admin user, I want to add, remove, and manage tags on comics through the web UI so that I can categorize and organize my library without needing the desktop Electron GUI.
+
+#### Acceptance Criteria
+
+1. WHEN an authenticated admin user opens the card Context_Menu, THE Web_App SHALL include a "Tags…" option that opens a Tag_Editor showing the current tags on the selected comic(s).
+2. WHEN an authenticated admin user adds a tag in the Tag_Editor, THE Web_App SHALL send a `PUT /api/comics/:id/tags` request with `{ tags }` containing the full updated tag list for the comic.
+3. WHEN an authenticated admin user removes a tag in the Tag_Editor, THE Web_App SHALL send a `PUT /api/comics/:id/tags` request with `{ tags }` containing the updated tag list with the tag removed.
+4. WHEN the server receives a `PUT /api/comics/:id/tags` request, THE server SHALL validate that the request is authenticated, compute the diff between the current tags and the provided tags, and add or remove tags accordingly.
+5. WHEN an authenticated admin user selects "Rename tag" from a tag Context_Menu in the Tags Tab_Panel, THE Web_App SHALL display an inline text input pre-filled with the current tag name, and on confirmation send a `PUT /api/tags/:name` request with `{ newName }`.
+6. WHEN the server receives a `PUT /api/tags/:name` request, THE server SHALL validate that the request is authenticated and rename the tag across all comics in the database.
+7. WHEN an authenticated admin user selects "Delete tag" from a tag Context_Menu in the Tags Tab_Panel, THE Web_App SHALL display a Confirmation_Dialog with the message "Delete tag \"{name}\"? This will remove the tag from all comics." and on confirmation send a `DELETE /api/tags/:name` request.
+8. WHEN the server receives a `DELETE /api/tags/:name` request, THE server SHALL validate that the request is authenticated and remove the tag from all comics in the database.
+9. WHEN tags are successfully modified, THE Web_App SHALL dispatch a `cb8:library-changed` event to refresh the Tags Tab_Panel and Card_Grid.
+10. IF a non-authenticated user attempts to modify tags, THEN THE server SHALL return HTTP 401 with the message "Unauthorized".

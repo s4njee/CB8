@@ -370,85 +370,42 @@ function createCard(record) {
 }
 
 // ---------------------------------------------------------------------------
-// Right-click context menu (admin only)
+// Right-click context menu (admin only) — delegates to admin.js
 // ---------------------------------------------------------------------------
 
-let contextMenu = null;
-
-function closeContextMenu() {
-  contextMenu?.remove();
-  contextMenu = null;
-  document.removeEventListener('click', onDocClickCloseMenu, true);
-  document.removeEventListener('keydown', onDocKeyCloseMenu, true);
-  window.removeEventListener('resize', closeContextMenu);
-  window.removeEventListener('scroll', closeContextMenu, true);
-}
-
-function onDocClickCloseMenu(e) {
-  if (contextMenu && !contextMenu.contains(e.target)) closeContextMenu();
-}
-
-function onDocKeyCloseMenu(e) {
-  if (e.key === 'Escape') closeContextMenu();
-}
-
 function openContextMenu(x, y, targetId) {
-  closeContextMenu();
-
-  // If the right-clicked card isn't already selected, treat it as the sole target.
   const targets = selection.has(targetId) ? Array.from(selection) : [targetId];
-
-  const menu = document.createElement('div');
-  menu.className = 'context-menu';
-  menu.setAttribute('role', 'menu');
-  menu.innerHTML = `
-    <button type="button" role="menuitem" data-action="open">Open</button>
-    <button type="button" role="menuitem" data-action="select">
-      ${selection.has(targetId) ? 'Deselect' : 'Select'}
-    </button>
-    <div class="context-menu-sep"></div>
-    <button type="button" role="menuitem" class="danger" data-action="delete">
-      Delete${targets.length > 1 ? ` ${targets.length} items` : ''}
-    </button>
-  `;
-
-  // Position, clamped to the viewport
-  document.body.appendChild(menu);
-  const rect = menu.getBoundingClientRect();
-  const maxX = window.innerWidth - rect.width - 4;
-  const maxY = window.innerHeight - rect.height - 4;
-  menu.style.left = `${Math.max(4, Math.min(x, maxX))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, maxY))}px`;
-  contextMenu = menu;
-
-  menu.querySelector('[data-action="open"]').addEventListener('click', () => {
-    closeContextMenu();
-    window.location.hash = `#/read/${targetId}`;
+  import('../admin.js').then(({ openCardContextMenu }) => {
+    openCardContextMenu(x, y, {
+      targetId,
+      targets,
+      isSelected: selection.has(targetId),
+      grid,
+      route: currentRoute,
+      onToggleSelect: (id) => toggleSelection(id),
+      onRemoved: (ids) => {
+        for (const id of ids) {
+          selection.delete(id);
+          grid?.querySelector(`.comic-card[data-id="${id}"]`)?.remove();
+          const idx = orderedIds.indexOf(id);
+          if (idx >= 0) orderedIds.splice(idx, 1);
+        }
+        lastClickedId = null;
+        updateSelectionBar();
+      },
+      onDelete: async (ids) => {
+        const { removed } = await bulkDeleteComics(ids);
+        for (const id of removed) {
+          selection.delete(id);
+          grid?.querySelector(`.comic-card[data-id="${id}"]`)?.remove();
+          const idx = orderedIds.indexOf(id);
+          if (idx >= 0) orderedIds.splice(idx, 1);
+        }
+        lastClickedId = null;
+        updateSelectionBar();
+      },
+    });
   });
-  menu.querySelector('[data-action="select"]').addEventListener('click', () => {
-    closeContextMenu();
-    toggleSelection(targetId);
-  });
-  menu.querySelector('[data-action="delete"]').addEventListener('click', async () => {
-    closeContextMenu();
-    const { removed } = await bulkDeleteComics(targets);
-    for (const id of removed) {
-      selection.delete(id);
-      grid?.querySelector(`.comic-card[data-id="${id}"]`)?.remove();
-      const idx = orderedIds.indexOf(id);
-      if (idx >= 0) orderedIds.splice(idx, 1);
-    }
-    lastClickedId = null;
-    updateSelectionBar();
-  });
-
-  // Defer so this event doesn't immediately close the menu
-  setTimeout(() => {
-    document.addEventListener('click', onDocClickCloseMenu, true);
-    document.addEventListener('keydown', onDocKeyCloseMenu, true);
-    window.addEventListener('resize', closeContextMenu);
-    window.addEventListener('scroll', closeContextMenu, true);
-  }, 0);
 }
 
 // ---------------------------------------------------------------------------

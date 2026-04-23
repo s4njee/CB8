@@ -13,7 +13,68 @@
 import * as api from './api.js';
 import { renderLibrary } from './views/library.js';
 import { renderReader, destroyReader } from './views/reader.js';
-import { toggleAdminPanel, openAddComic, refreshSession, onAdminChange, isAuthenticated } from './admin.js';
+import { toggleAdminPanel, openAddComic, refreshSession, onAdminChange, isAuthenticated, gatherFromDrop } from './admin.js';
+
+// ---------------------------------------------------------------------------
+// Generic small context menu used by sidebar/tab-panel item right-click
+// ---------------------------------------------------------------------------
+
+let _sideMenu = null;
+function closeSideMenu() {
+  _sideMenu?.remove();
+  _sideMenu = null;
+  document.removeEventListener('click', _onSideDocClick, true);
+  document.removeEventListener('keydown', _onSideKey, true);
+  window.removeEventListener('scroll', closeSideMenu, true);
+  window.removeEventListener('resize', closeSideMenu);
+}
+function _onSideDocClick(e) { if (_sideMenu && !_sideMenu.contains(e.target)) closeSideMenu(); }
+function _onSideKey(e) { if (e.key === 'Escape') closeSideMenu(); }
+
+function openSideContextMenu(x, y, items) {
+  closeSideMenu();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+  for (const it of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('role', 'menuitem');
+    if (it.danger) btn.className = 'danger';
+    btn.textContent = it.label;
+    btn.addEventListener('click', () => { closeSideMenu(); it.onClick(); });
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - rect.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - rect.height - 4))}px`;
+  _sideMenu = menu;
+  setTimeout(() => {
+    document.addEventListener('click', _onSideDocClick, true);
+    document.addEventListener('keydown', _onSideKey, true);
+    window.addEventListener('scroll', closeSideMenu, true);
+    window.addEventListener('resize', closeSideMenu);
+  }, 0);
+}
+
+function attachLongPress(el, handler) {
+  let timer = null;
+  let startX = 0, startY = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+    timer = setTimeout(() => { timer = null; handler(startX, startY, e); }, 500);
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (!timer) return;
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) cancel();
+  }, { passive: true });
+  el.addEventListener('touchend', cancel);
+  el.addEventListener('touchcancel', cancel);
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -152,7 +213,10 @@ async function populateSidebar() {
 
     const libList = document.getElementById('library-list');
     libList.innerHTML = '';
-    for (const lib of libraries) {
+    const comicLibs = libraries.filter((l) => l.mediaType !== 'book');
+    const bookLibs = libraries.filter((l) => l.mediaType === 'book');
+    const showGroups = comicLibs.length > 0 && bookLibs.length > 0;
+    const appendLib = (lib) => {
       const li = document.createElement('li');
       const a = document.createElement('a');
       a.href = `#/library/${lib.id}`;
@@ -161,6 +225,20 @@ async function populateSidebar() {
       a.dataset.count = lib.comicCount;
       li.appendChild(a);
       libList.appendChild(li);
+    };
+    const appendSubheading = (label) => {
+      const li = document.createElement('li');
+      li.className = 'sidebar-subheading';
+      li.textContent = label;
+      libList.appendChild(li);
+    };
+    if (showGroups) {
+      appendSubheading('Comics');
+      comicLibs.forEach(appendLib);
+      appendSubheading('Books');
+      bookLibs.forEach(appendLib);
+    } else {
+      libraries.forEach(appendLib);
     }
     document.getElementById('section-libraries').hidden = libraries.length === 0;
 
@@ -258,11 +336,23 @@ function openTabPanel(kind) {
     list.appendChild(li);
   } else {
     for (const it of items) {
+      if (it.heading) {
+        const li = document.createElement('li');
+        li.className = 'tab-panel-subheading';
+        li.textContent = it.label;
+        list.appendChild(li);
+        continue;
+      }
       const li = document.createElement('li');
       const a = document.createElement('a');
       a.href = it.href;
-      a.addEventListener('click', () => closeTabPanel());
+      a.className = 'tab-panel-item';
+      a.addEventListener('click', (e) => {
+        if (_sideMenu) { e.preventDefault(); return; }
+        closeTabPanel();
+      });
       const name = document.createElement('span');
+      name.className = 'tab-panel-item-name';
       name.textContent = it.label;
       a.appendChild(name);
       if (it.count != null) {
@@ -271,13 +361,101 @@ function openTabPanel(kind) {
         count.textContent = String(it.count);
         a.appendChild(count);
       }
+
+      if (isAuthenticated() && it.onRename && it.onDelete) {
+        const openCtx = (x, y) => {
+          openSideContextMenu(x, y, [
+            { label: 'Rename', onClick: () => startInlineRename(a, name, it) },
+            { label: it.deleteLabel || 'Delete', danger: true, onClick: it.onDelete },
+          ]);
+        };
+        a.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          openCtx(e.clientX, e.clientY);
+        });
+        attachLongPress(a, (x, y) => openCtx(x, y));
+      }
+
       li.appendChild(a);
       list.appendChild(li);
     }
   }
 
+  const addBtn = document.getElementById('tab-panel-add');
+  if (addBtn) {
+    addBtn.onclick = null;
+    const canAdd = isAuthenticated() && (kind === 'collections' || kind === 'folders');
+    addBtn.hidden = !canAdd;
+    if (canAdd) {
+      addBtn.setAttribute('aria-label', kind === 'collections' ? 'New collection' : 'New folder');
+      addBtn.title = kind === 'collections' ? 'New collection' : 'New folder';
+      addBtn.onclick = () => {
+        if (kind === 'collections') promptNewCollection();
+        else promptNewFolder();
+      };
+    }
+  }
+
   panel.hidden = false;
   updateTabBarActive();
+}
+
+function startInlineRename(anchor, nameEl, item) {
+  const original = nameEl.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'tab-panel-rename-input';
+  input.value = original;
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = async () => {
+    if (done) return; done = true;
+    const next = input.value.trim();
+    if (!next || next === original) {
+      input.replaceWith(nameEl);
+      return;
+    }
+    try {
+      await item.onRename(next);
+      // Panel will re-render via cb8:library-changed
+    } catch (err) {
+      showToast(err.message);
+      input.replaceWith(nameEl);
+    }
+  };
+  const cancel = () => {
+    if (done) return; done = true;
+    input.replaceWith(nameEl);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', commit);
+}
+
+async function promptNewCollection() {
+  const name = window.prompt('New collection name:');
+  if (!name?.trim()) return;
+  const mediaType = window.confirm('Books collection? (Cancel = Comics)') ? 'book' : 'comic';
+  try {
+    await api.createLibrary(name.trim(), mediaType);
+    showToast(`Created "${name.trim()}"`);
+    window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+  } catch (err) { showToast(err.message); }
+}
+
+async function promptNewFolder() {
+  const name = window.prompt('New folder name:');
+  if (!name?.trim()) return;
+  try {
+    await api.createFolder(name.trim(), []);
+    showToast(`Created "${name.trim()}"`);
+    window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+  } catch (err) { showToast(err.message); }
 }
 
 function closeTabPanel() {
@@ -289,23 +467,83 @@ function closeTabPanel() {
 
 function tabPanelItems(kind) {
   if (kind === 'collections') {
-    return sidebarCache.libraries.map((lib) => ({
+    const libToItem = (lib) => ({
       href: `#/library/${lib.id}`,
       label: lib.name,
       count: lib.comicCount,
-    }));
+      onRename: async (next) => {
+        await api.renameLibrary(lib.id, next);
+        window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      },
+      onDelete: async () => {
+        if (!window.confirm(`Delete collection "${lib.name}"? Comics and files are not removed.`)) return;
+        try {
+          await api.deleteLibrary(lib.id);
+          showToast(`Deleted "${lib.name}"`);
+          if (state.route?.type === 'library' && state.route.id === lib.id) {
+            window.location.hash = '#/';
+          }
+          window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+        } catch (err) { showToast(err.message); }
+      },
+    });
+    const comicLibs = sidebarCache.libraries.filter((l) => l.mediaType !== 'book');
+    const bookLibs = sidebarCache.libraries.filter((l) => l.mediaType === 'book');
+    if (comicLibs.length > 0 && bookLibs.length > 0) {
+      return [
+        { heading: true, label: 'Comics' },
+        ...comicLibs.map(libToItem),
+        { heading: true, label: 'Books' },
+        ...bookLibs.map(libToItem),
+      ];
+    }
+    return sidebarCache.libraries.map(libToItem);
   }
   if (kind === 'folders') {
     return sidebarCache.folders.map((f) => ({
       href: `#/folder/${f.id}`,
       label: f.name,
       count: f.comicCount,
+      onRename: async (next) => {
+        await api.renameFolder(f.id, next);
+        window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      },
+      onDelete: async () => {
+        if (!window.confirm(`Delete folder "${f.name}"? Comics and files are not removed.`)) return;
+        try {
+          await api.deleteFolder(f.id);
+          showToast(`Deleted "${f.name}"`);
+          if (state.route?.type === 'folder' && state.route.id === f.id) {
+            window.location.hash = '#/';
+          }
+          window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+        } catch (err) { showToast(err.message); }
+      },
     }));
   }
   if (kind === 'tags') {
     return sidebarCache.tags.map((name) => ({
       href: `#/tag/${encodeURIComponent(name)}`,
       label: name,
+      onRename: async (next) => {
+        await api.renameTag(name, next);
+        if (state.route?.type === 'tag' && state.route.tag === name) {
+          window.location.hash = `#/tag/${encodeURIComponent(next)}`;
+        }
+        window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      },
+      deleteLabel: 'Delete tag',
+      onDelete: async () => {
+        if (!window.confirm(`Delete tag "${name}"? This will remove the tag from all comics.`)) return;
+        try {
+          await api.deleteTag(name);
+          showToast(`Deleted tag "${name}"`);
+          if (state.route?.type === 'tag' && state.route.tag === name) {
+            window.location.hash = '#/';
+          }
+          window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+        } catch (err) { showToast(err.message); }
+      },
     }));
   }
   return [];
@@ -407,17 +645,23 @@ function wireControls() {
   // Admin button
   document.getElementById('admin-button')?.addEventListener('click', toggleAdminPanel);
   document.getElementById('admin-add-button')?.addEventListener('click', openAddComic);
+  document.getElementById('sidebar-add-library')?.addEventListener('click', promptNewCollection);
+  document.getElementById('sidebar-add-folder')?.addEventListener('click', promptNewFolder);
   onAdminChange((authed) => {
     document.body.classList.toggle('admin-authenticated', authed);
     document.getElementById('admin-button')?.classList.toggle('active', authed);
-    const addBtn = document.getElementById('admin-add-button');
-    if (addBtn) addBtn.hidden = !authed;
   });
 
   // Re-navigate when admin mutates the library
-  window.addEventListener('cb8:library-changed', () => {
-    populateSidebar();
+  window.addEventListener('cb8:library-changed', async () => {
+    await populateSidebar();
+    if (state.tabPanel) openTabPanel(state.tabPanel);
     navigate();
+  });
+
+  // Re-render tab panel action button visibility when admin auth changes
+  onAdminChange(() => {
+    if (state.tabPanel) openTabPanel(state.tabPanel);
   });
 
   // Keyboard: Escape closes reader / open overlays
@@ -432,11 +676,85 @@ function wireControls() {
 }
 
 // ---------------------------------------------------------------------------
+// Window-level drag-and-drop
+// ---------------------------------------------------------------------------
+
+function wireDrop() {
+  const overlay = document.getElementById('drop-overlay') || (() => {
+    const el = document.createElement('div');
+    el.id = 'drop-overlay';
+    el.hidden = true;
+    el.innerHTML = '<span>Drop to add to library</span>';
+    document.body.appendChild(el);
+    return el;
+  })();
+
+  let dragCounter = 0;
+
+  document.addEventListener('dragenter', (e) => {
+    if (!isAuthenticated()) return;
+    e.preventDefault();
+    dragCounter++;
+    overlay.hidden = false;
+  });
+
+  document.addEventListener('dragleave', () => {
+    if (!isAuthenticated()) return;
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; overlay.hidden = true; }
+  });
+
+  document.addEventListener('dragover', (e) => {
+    if (!isAuthenticated()) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    overlay.hidden = true;
+    if (!isAuthenticated()) return;
+
+    let items;
+    try {
+      items = await gatherFromDrop(e.dataTransfer);
+    } catch (err) {
+      showToast(`Drop failed: ${err.message}`);
+      return;
+    }
+    if (items.length === 0) {
+      showToast('No supported files in drop (.cbz .cbr .epub .pdf .mobi)');
+      return;
+    }
+
+    showToast(`Uploading ${items.length} file${items.length !== 1 ? 's' : ''}…`);
+    let added = 0;
+    let failed = 0;
+    for (const { file, relPath } of items) {
+      try {
+        await api.adminUploadFile(file, relPath);
+        added++;
+      } catch {
+        failed++;
+      }
+    }
+    if (failed === 0) {
+      showToast(`Added ${added} file${added !== 1 ? 's' : ''}`);
+    } else {
+      showToast(`Added ${added}, failed ${failed}`);
+    }
+    if (added > 0) window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
 async function init() {
   wireControls();
+  wireDrop();
   updateSortLabel();
   await refreshSession();
   await populateSidebar();
