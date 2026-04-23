@@ -13,7 +13,7 @@
 import * as api from './api.js';
 import { renderLibrary } from './views/library.js';
 import { renderReader, destroyReader } from './views/reader.js';
-import { toggleAdminPanel, openAddComic, refreshSession, onAdminChange, isAuthenticated, gatherFromDrop } from './admin.js';
+import { toggleAdminPanel, openAddComic, refreshSession, onAdminChange, isAuthenticated, isAdmin, gatherFromDrop } from './admin.js';
 
 // ---------------------------------------------------------------------------
 // Generic small context menu used by sidebar/tab-panel item right-click
@@ -85,6 +85,8 @@ const state = {
   sortBy:    'title',  // 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead'
   search:    '',
   fileExt:   '',       // '' | 'epub' | 'pdf' | 'cbz' | 'cbr' | 'mobi'
+  readStatus: '',      // '' | 'unread' | 'in-progress' | 'completed'
+  favoritesOnly: false,
   route:     null,
   tabPanel:  null,     // null | 'collections' | 'folders' | 'tags'
 };
@@ -133,6 +135,14 @@ export function setMediaType(next) {
 }
 export function setFileExt(next) {
   state.fileExt = next || '';
+  navigate();
+}
+export function setReadStatus(next) {
+  state.readStatus = next || '';
+  navigate();
+}
+export function setFavoritesOnly(next) {
+  state.favoritesOnly = !!next;
   navigate();
 }
 
@@ -191,6 +201,8 @@ async function navigate() {
       sortBy: state.sortBy,
       search: state.search,
       fileExt: state.fileExt,
+      readStatus: state.readStatus,
+      favorites: state.favoritesOnly ? true : undefined,
     });
   }
 }
@@ -647,9 +659,11 @@ function wireControls() {
   document.getElementById('admin-add-button')?.addEventListener('click', openAddComic);
   document.getElementById('sidebar-add-library')?.addEventListener('click', promptNewCollection);
   document.getElementById('sidebar-add-folder')?.addEventListener('click', promptNewFolder);
-  onAdminChange((authed) => {
-    document.body.classList.toggle('admin-authenticated', authed);
-    document.getElementById('admin-button')?.classList.toggle('active', authed);
+  onAdminChange(() => {
+    const adminFlag = isAdmin();
+    document.body.classList.toggle('admin-authenticated', adminFlag);
+    document.body.classList.toggle('user-authenticated', isAuthenticated());
+    document.getElementById('admin-button')?.classList.toggle('active', isAuthenticated());
   });
 
   // Re-navigate when admin mutates the library

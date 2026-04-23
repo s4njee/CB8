@@ -6,8 +6,8 @@
  */
 
 import * as api from '../api.js';
-import { getState, setMediaType, setFileExt } from '../app.js';
-import { isAuthenticated, bulkDeleteComics, onAdminChange } from '../admin.js';
+import { getState, setMediaType, setFileExt, setReadStatus, setFavoritesOnly } from '../app.js';
+import { isAuthenticated, isAdmin, bulkDeleteComics, onAdminChange } from '../admin.js';
 
 const PAGE_SIZE = 48;
 
@@ -24,6 +24,13 @@ const MEDIA_PILLS = [
   { type: '',      label: 'All' },
   { type: 'comic', label: 'Comics' },
   { type: 'book',  label: 'Books' },
+];
+
+const READ_STATUS_PILLS = [
+  { status: '',            label: 'All' },
+  { status: 'unread',      label: 'Unread' },
+  { status: 'in-progress', label: 'In Progress' },
+  { status: 'completed',   label: 'Completed' },
 ];
 
 // Inline neutral book placeholder (used when a thumbnail fails to load).
@@ -113,6 +120,10 @@ export async function renderLibrary(el, route, options) {
 
   el.appendChild(buildMediaStrip());
   el.appendChild(buildFileTypeStrip());
+  if (isAuthenticated()) {
+    el.appendChild(buildReadStatusStrip());
+    el.appendChild(buildFavoritesToggle());
+  }
 
   grid = document.createElement('div');
   grid.className = 'comics-grid';
@@ -181,6 +192,38 @@ function buildFileTypeStrip() {
     strip.appendChild(btn);
   }
   return strip;
+}
+
+function buildReadStatusStrip() {
+  const strip = document.createElement('div');
+  strip.className = 'read-status-strip';
+  strip.setAttribute('role', 'group');
+  strip.setAttribute('aria-label', 'Read status');
+  const current = getState().readStatus || '';
+  for (const { status, label } of READ_STATUS_PILLS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'strip-pill' + (status === current ? ' active' : '');
+    btn.dataset.status = status;
+    btn.textContent = label;
+    btn.addEventListener('click', () => setReadStatus(status));
+    strip.appendChild(btn);
+  }
+  return strip;
+}
+
+function buildFavoritesToggle() {
+  const wrap = document.createElement('div');
+  wrap.className = 'favorites-toggle';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  const on = Boolean(getState().favoritesOnly);
+  btn.className = 'strip-pill favorites-pill' + (on ? ' active' : '');
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.innerHTML = `<span class="heart">${on ? '♥' : '♡'}</span> Favorites`;
+  btn.addEventListener('click', () => setFavoritesOnly(!on));
+  wrap.appendChild(btn);
+  return wrap;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +349,27 @@ function createCard(record) {
 
   thumbWrap.appendChild(img);
   thumbWrap.appendChild(badge);
+
+  if (record.favorited) card.classList.add('favorited');
+  if (isAuthenticated()) {
+    const heart = document.createElement('div');
+    heart.className = 'card-fav-heart';
+    heart.textContent = record.favorited ? '♥' : '♡';
+    heart.title = 'Toggle favorite';
+    heart.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const on = card.classList.contains('favorited');
+      try {
+        if (on) await api.removeFavorite(record.id);
+        else await api.addFavorite(record.id);
+        card.classList.toggle('favorited', !on);
+        heart.textContent = !on ? '♥' : '♡';
+      } catch (err) {
+        console.error('[CB8] favorite toggle failed:', err);
+      }
+    });
+    thumbWrap.appendChild(heart);
+  }
 
   ensureCheckbox(card);
 

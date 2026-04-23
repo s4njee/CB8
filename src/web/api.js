@@ -20,12 +20,14 @@ export async function fetchComic(id) {
   return res.json();
 }
 
-export function thumbnailUrl(id) {
-  return `${API}/api/comics/${id}/thumbnail`;
+export function thumbnailUrl(id, width) {
+  const q = width ? `?width=${width|0}` : '';
+  return `${API}/api/comics/${id}/thumbnail${q}`;
 }
 
-export function pageUrl(id, page) {
-  return `${API}/api/comics/${id}/pages/${page}`;
+export function pageUrl(id, page, width) {
+  const q = width ? `?width=${width|0}` : '';
+  return `${API}/api/comics/${id}/pages/${page}${q}`;
 }
 
 export function fileUrl(id) {
@@ -353,5 +355,198 @@ export async function deleteComic(id) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     throw new Error(err.error || `HTTP ${res.status}`);
   }
+  return res.json();
+}
+
+// --- Auth (multi-user) ---
+
+export async function getSession() {
+  const res = await fetch(`${API}/api/auth/session`);
+  if (!res.ok) return { authenticated: false };
+  return res.json();
+}
+
+export async function login(username, password) {
+  const res = await fetch(`${API}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Login failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function logout() {
+  await fetch(`${API}/api/auth/logout`, { method: 'POST' });
+}
+
+export async function register(username, password, isAdmin = false) {
+  const res = await fetch(`${API}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, isAdmin }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Register failed (${res.status})`);
+  }
+  return res.json();
+}
+
+// --- Users (admin only) ---
+
+export async function getUsers() {
+  const res = await fetch(`${API}/api/users`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function createUser(username, password, isAdmin = false) {
+  return register(username, password, isAdmin);
+}
+
+export async function deleteUser(id) {
+  const res = await fetch(`${API}/api/users/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function setUserRole(id, isAdmin) {
+  const res = await fetch(`${API}/api/users/${id}/role`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isAdmin }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+// --- Progress ---
+
+export async function clearProgress(comicId) {
+  await fetch(`${API}/api/comics/${comicId}/progress`, { method: 'DELETE' });
+}
+
+export async function setCompleted(comicId, completed) {
+  await fetch(`${API}/api/comics/${comicId}/progress`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ completed }),
+  });
+}
+
+// --- Bookmarks ---
+
+export async function getBookmarks(comicId) {
+  const res = await fetch(`${API}/api/comics/${comicId}/bookmarks`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function createBookmark(comicId, page, note = null) {
+  const res = await fetch(`${API}/api/comics/${comicId}/bookmarks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ page, note }),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function updateBookmark(comicId, bookmarkId, note) {
+  const res = await fetch(`${API}/api/comics/${comicId}/bookmarks/${bookmarkId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function deleteBookmark(comicId, bookmarkId) {
+  await fetch(`${API}/api/comics/${comicId}/bookmarks/${bookmarkId}`, { method: 'DELETE' });
+}
+
+// --- History ---
+
+export async function logHistory(comicId, action, page = null) {
+  await fetch(`${API}/api/history`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comicId, action, page }),
+  });
+}
+
+export async function getHistory(offset = 0, limit = 50) {
+  const res = await fetch(`${API}/api/history?offset=${offset}&limit=${limit}`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// --- Series ---
+
+export async function getSeries() {
+  const res = await fetch(`${API}/api/series`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function getSeriesComics(name) {
+  const res = await fetch(`${API}/api/series/${encodeURIComponent(name)}/comics`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// --- Favorites ---
+
+export async function addFavorite(comicId) {
+  await fetch(`${API}/api/comics/${comicId}/favorite`, { method: 'POST' });
+}
+
+export async function removeFavorite(comicId) {
+  await fetch(`${API}/api/comics/${comicId}/favorite`, { method: 'DELETE' });
+}
+
+// --- Metadata ---
+
+export async function searchMetadata(comicId, query, sources) {
+  const params = new URLSearchParams({ q: query });
+  if (sources?.length) params.set('sources', sources.join(','));
+  const res = await fetch(`${API}/api/comics/${comicId}/metadata-search?${params}`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+export async function applyMetadata(comicId, metadata) {
+  const res = await fetch(`${API}/api/comics/${comicId}/metadata`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(metadata),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+// --- Settings ---
+
+export async function setGuestAccess(enabled) {
+  const res = await fetch(`${API}/api/settings/guest-access`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json();
 }

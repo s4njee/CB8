@@ -27,6 +27,45 @@ let epubPrefs = {
   fontSize: 85,
 };
 
+// Persistent comic-reader preferences (localStorage)
+const PREFS_KEY = 'cb8.reader.prefs.v1';
+const DEFAULT_PREFS = {
+  zoomMode: 'fit-height',   // 'fit-width' | 'fit-height' | 'original'
+  direction: 'ltr',         // 'ltr' | 'rtl'
+  transition: 'none',       // 'none' | 'slide' | 'fade'
+};
+function loadReaderPrefs() {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return { ...DEFAULT_PREFS };
+    return { ...DEFAULT_PREFS, ...JSON.parse(raw) };
+  } catch { return { ...DEFAULT_PREFS }; }
+}
+function saveReaderPrefs(prefs) {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
+}
+
+// Wake lock (Screen Wake Lock API)
+let wakeLockSentinel = null;
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLockSentinel = await navigator.wakeLock.request('screen');
+    wakeLockSentinel.addEventListener?.('release', () => { wakeLockSentinel = null; });
+  } catch { /* user may have denied, or tab not active */ }
+}
+function releaseWakeLock() {
+  if (wakeLockSentinel) {
+    try { wakeLockSentinel.release(); } catch { /* ignore */ }
+    wakeLockSentinel = null;
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && comicState && !wakeLockSentinel) {
+    acquireWakeLock();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -78,6 +117,7 @@ export function destroyReader() {
 
 async function renderComicReader(el, record, initialPage, onBack) {
   const startPage = initialPage ?? record.lastPage ?? 0;
+  const prefs = loadReaderPrefs();
 
   comicState = {
     id: record.id,
@@ -85,20 +125,56 @@ async function renderComicReader(el, record, initialPage, onBack) {
     currentPage: startPage,
     title: record.title,
     onBack,
+    prefs,
   };
 
   const toolbar = buildToolbar(record.title, onBack);
   const pageLabel = toolbar.querySelector('.toolbar-pages');
   const slider = toolbar.querySelector('.reader-page-slider');
 
+  // --- Extra toolbar buttons for comic reader ---
+  const extraControls = document.createElement('div');
+  extraControls.className = 'reader-extra-controls';
+
+  const zoomBtn = document.createElement('button');
+  zoomBtn.className = 'reader-tool-btn';
+  zoomBtn.type = 'button';
+  zoomBtn.title = 'Cycle zoom mode';
+
+  const dirBtn = document.createElement('button');
+  dirBtn.className = 'reader-tool-btn';
+  dirBtn.type = 'button';
+  dirBtn.title = 'Toggle reading direction';
+
+  const fsBtn = document.createElement('button');
+  fsBtn.className = 'reader-tool-btn';
+  fsBtn.type = 'button';
+  fsBtn.title = 'Fullscreen';
+
+  const bmBtn = document.createElement('button');
+  bmBtn.className = 'reader-tool-btn';
+  bmBtn.type = 'button';
+  bmBtn.title = 'Bookmark this page';
+
+  const favBtn = document.createElement('button');
+  favBtn.className = 'reader-tool-btn';
+  favBtn.type = 'button';
+  favBtn.title = 'Favorite';
+
+  extraControls.append(zoomBtn, dirBtn, bmBtn, favBtn, fsBtn);
+  toolbar.appendChild(extraControls);
+
   const readerBody = document.createElement('div');
   readerBody.className = 'comic-reader';
   readerBody.id = 'comic-reader';
+  readerBody.dataset.zoom = prefs.zoomMode;
+  readerBody.dataset.direction = prefs.direction;
 
   const img = document.createElement('img');
   img.className = 'comic-page-img';
   img.alt = 'Comic page';
   img.id = 'comic-page-img';
+  img.dataset.zoom = prefs.zoomMode;
   readerBody.appendChild(img);
 
   const hint = document.createElement('div');
@@ -108,11 +184,14 @@ async function renderComicReader(el, record, initialPage, onBack) {
 
   const tapPrev = document.createElement('div');
   tapPrev.className = 'reader-tap-zone tap-prev';
-  tapPrev.addEventListener('click', () => gotoPage(comicState.currentPage - 1));
 
   const tapNext = document.createElement('div');
   tapNext.className = 'reader-tap-zone tap-next';
-  tapNext.addEventListener('click', () => gotoPage(comicState.currentPage + 1));
+
+  // direction-aware nav: in RTL, tap-prev goes forward, tap-next goes back
+  const pageDelta = (dir) => prefs.direction === 'rtl' ? -dir : dir;
+  tapPrev.addEventListener('click', () => gotoPage(comicState.currentPage + pageDelta(-1)));
+  tapNext.addEventListener('click', () => gotoPage(comicState.currentPage + pageDelta(1)));
 
   readerBody.appendChild(tapPrev);
   readerBody.appendChild(tapNext);
@@ -125,6 +204,92 @@ async function renderComicReader(el, record, initialPage, onBack) {
     slider.max = record.pageCount - 1;
     slider.addEventListener('input', () => gotoPage(parseInt(slider.value, 10)));
   }
+
+  // --- Zoom mode cycling ---
+  const ZOOM_MODES = ['fit-height', 'fit-width', 'original'];
+  const ZOOM_ICONS = { 'fit-height': '↕', 'fit-width': '↔', 'original': '1:1' };
+  function applyZoom() {
+    readerBody.dataset.zoom = prefs.zoomMode;
+    img.dataset.zoom = prefs.zoomMode;
+    zoomBtn.textContent = ZOOM_ICONS[prefs.zoomMode] || '↕';
+  }
+  zoomBtn.addEventListener('click', () => {
+    const i = ZOOM_MODES.indexOf(prefs.zoomMode);
+    prefs.zoomMode = ZOOM_MODES[(i + 1) % ZOOM_MODES.length];
+    saveReaderPrefs(prefs);
+    applyZoom();
+  });
+  applyZoom();
+
+  // --- Direction toggle ---
+  function applyDirection() {
+    readerBody.dataset.direction = prefs.direction;
+    dirBtn.textContent = prefs.direction === 'rtl' ? '→←' : '←→';
+  }
+  dirBtn.addEventListener('click', () => {
+    prefs.direction = prefs.direction === 'ltr' ? 'rtl' : 'ltr';
+    saveReaderPrefs(prefs);
+    applyDirection();
+  });
+  applyDirection();
+
+  // --- Fullscreen ---
+  const fsSupported = !!(el.requestFullscreen || document.documentElement.requestFullscreen);
+  if (!fsSupported) {
+    fsBtn.style.display = 'none';
+  }
+  function updateFsIcon() {
+    fsBtn.textContent = document.fullscreenElement ? '⛶' : '⛶';
+    fsBtn.classList.toggle('active', !!document.fullscreenElement);
+  }
+  fsBtn.addEventListener('click', () => {
+    const target = document.getElementById('reader-overlay') || el;
+    if (!document.fullscreenElement) target.requestFullscreen?.().catch(() => {});
+    else document.exitFullscreen?.().catch(() => {});
+  });
+  document.addEventListener('fullscreenchange', updateFsIcon);
+  updateFsIcon();
+
+  // --- Bookmark toggle ---
+  let bookmarks = [];
+  async function refreshBookmarks() {
+    try { bookmarks = await api.getBookmarks(record.id); } catch { bookmarks = []; }
+    updateBmIcon();
+  }
+  function updateBmIcon() {
+    const on = bookmarks.some((b) => b.page === comicState.currentPage);
+    bmBtn.textContent = on ? '★' : '☆';
+    bmBtn.classList.toggle('active', on);
+  }
+  bmBtn.addEventListener('click', async () => {
+    const existing = bookmarks.find((b) => b.page === comicState.currentPage);
+    try {
+      if (existing) await api.deleteBookmark(record.id, existing.id);
+      else await api.createBookmark(record.id, comicState.currentPage);
+      await refreshBookmarks();
+    } catch (err) {
+      showToast(err.message || 'Bookmark failed');
+    }
+  });
+  refreshBookmarks().catch(() => {});
+
+  // --- Favorite toggle ---
+  let isFav = record.favorited === true;
+  function updateFavIcon() {
+    favBtn.textContent = isFav ? '♥' : '♡';
+    favBtn.classList.toggle('active', isFav);
+  }
+  favBtn.addEventListener('click', async () => {
+    try {
+      if (isFav) await api.removeFavorite(record.id);
+      else await api.addFavorite(record.id);
+      isFav = !isFav;
+      updateFavIcon();
+    } catch (err) {
+      showToast(err.message || 'Favorite failed');
+    }
+  });
+  updateFavIcon();
 
   // Preload image map
   const preloadCache = new Map();
@@ -165,6 +330,7 @@ async function renderComicReader(el, record, initialPage, onBack) {
     }
 
     api.updateProgress(record.id, page).catch(() => {});
+    updateBmIcon();
 
     if (page + 1 < record.pageCount) loadPageImg(page + 1).catch(() => {});
     if (page > 0) loadPageImg(page - 1).catch(() => {});
@@ -179,7 +345,8 @@ async function renderComicReader(el, record, initialPage, onBack) {
     const dx = e.changedTouches[0].clientX - touchStartX;
     const dy = e.changedTouches[0].clientY - touchStartY;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
-      gotoPage(comicState.currentPage + (dx < 0 ? 1 : -1));
+      const swipeDir = dx < 0 ? 1 : -1;
+      gotoPage(comicState.currentPage + pageDelta(swipeDir));
     }
   }, { passive: true });
 
@@ -189,12 +356,23 @@ async function renderComicReader(el, record, initialPage, onBack) {
       case 'ArrowLeft':  case 'Backspace': e.preventDefault(); gotoPage(comicState.currentPage - 1); break;
       case 'Home': e.preventDefault(); gotoPage(0); break;
       case 'End':  e.preventDefault(); gotoPage(record.pageCount - 1); break;
+      case 'f': case 'F': fsBtn.click(); break;
+      case 'z': case 'Z': zoomBtn.click(); break;
+      case 'b': case 'B': bmBtn.click(); break;
     }
   };
   document.addEventListener('keydown', onKey);
-  readerEl._cleanupKey = () => document.removeEventListener('keydown', onKey);
+  readerEl._cleanupKey = () => {
+    document.removeEventListener('keydown', onKey);
+    document.removeEventListener('fullscreenchange', updateFsIcon);
+    releaseWakeLock();
+    api.logHistory(record.id, 'closed', comicState?.currentPage ?? null).catch(() => {});
+  };
 
   img.addEventListener('click', () => toolbar.classList.toggle('hidden'));
+
+  acquireWakeLock();
+  api.logHistory(record.id, 'opened', startPage).catch(() => {});
 
   await gotoPage(startPage);
   if (startPage > 0) showToast(`Resuming from page ${startPage + 1}`);

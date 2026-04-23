@@ -12,6 +12,8 @@ import { showToast } from './app.js';
 const state = {
   authenticated: false,
   host: false,
+  user: null,
+  guestAccess: false,
   listeners: new Set(),
 };
 
@@ -19,9 +21,16 @@ export function isAuthenticated() {
   return state.authenticated;
 }
 
-export function isSuperadmin() {
-  return state.authenticated && state.host;
+export function isAdmin() {
+  return Boolean(state.user?.isAdmin);
 }
+
+export function isSuperadmin() {
+  return state.authenticated && state.host && isAdmin();
+}
+
+export function getCurrentUser() { return state.user; }
+export function isGuestAccessEnabled() { return state.guestAccess; }
 
 export function onAdminChange(fn) {
   state.listeners.add(fn);
@@ -36,12 +45,16 @@ function notify() {
 
 export async function refreshSession() {
   try {
-    const { authenticated, host } = await api.adminSession();
-    state.authenticated = Boolean(authenticated);
-    state.host = Boolean(host);
+    const resp = await api.getSession();
+    state.authenticated = Boolean(resp.authenticated);
+    state.host = Boolean(resp.host);
+    state.user = resp.user ?? null;
+    state.guestAccess = Boolean(resp.guestAccess);
   } catch {
     state.authenticated = false;
     state.host = false;
+    state.user = null;
+    state.guestAccess = false;
   }
   notify();
   return state.authenticated;
@@ -95,10 +108,12 @@ function closeModal() {
 
 function renderLogin(body, { onSuccess } = {}) {
   body.innerHTML = `
-    <h2 class="admin-modal-title">Admin login</h2>
+    <h2 class="admin-modal-title">Sign in</h2>
     <form class="admin-form" autocomplete="off">
+      <label class="admin-label" for="admin-user">Username</label>
+      <input id="admin-user" type="text" class="admin-input" value="admin" autofocus />
       <label class="admin-label" for="admin-pass">Password</label>
-      <input id="admin-pass" type="password" class="admin-input" autofocus />
+      <input id="admin-pass" type="password" class="admin-input" />
       <div class="admin-error" hidden></div>
       <div class="admin-actions">
         <button type="button" class="admin-btn-secondary" data-action="back">Back</button>
@@ -107,22 +122,24 @@ function renderLogin(body, { onSuccess } = {}) {
     </form>
   `;
   const form = body.querySelector('form');
-  const input = body.querySelector('#admin-pass');
+  const userInput = body.querySelector('#admin-user');
+  const passInput = body.querySelector('#admin-pass');
   const err = body.querySelector('.admin-error');
   body.querySelector('[data-action="back"]').addEventListener('click', () => openModal(renderMenu));
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     err.hidden = true;
-    const ok = await api.adminLogin(input.value);
-    if (!ok) {
-      err.textContent = 'Incorrect password';
+    try {
+      await api.login(userInput.value.trim(), passInput.value);
+    } catch (loginErr) {
+      err.textContent = loginErr.message || 'Sign-in failed';
       err.hidden = false;
-      input.select();
+      passInput.select();
       return;
     }
     await refreshSession();
-    showToast('Signed in as admin');
+    showToast('Signed in');
     if (onSuccess) onSuccess();
     else closeModal();
   });
@@ -130,7 +147,7 @@ function renderLogin(body, { onSuccess } = {}) {
 
 function renderMenu(body) {
   const authed = state.authenticated;
-  const superadmin = state.authenticated;
+  const superadmin = isAdmin();
   body.innerHTML = `
     <h2 class="admin-modal-title">Admin</h2>
     <div class="admin-menu">
@@ -181,7 +198,7 @@ function renderMenu(body) {
   const logoutBtn = body.querySelector('[data-action="logout"]');
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
-      await api.adminLogout();
+      await api.logout();
       await refreshSession();
       openModal(renderMenu);
       showToast('Signed out');
@@ -829,12 +846,14 @@ export function openCardContextMenu(x, y, { targetId, targets, isSelected, grid,
       <div class="context-submenu" hidden></div>
     </div>
     ${targets.length === 1 ? '<button type="button" role="menuitem" data-action="tags">Tags…</button>' : ''}
+    <div class="context-menu-sep"></div>
+    <button type="button" role="menuitem" data-action="mark-read">Mark as read</button>
+    <button type="button" role="menuitem" data-action="mark-unread">Mark as unread</button>
+    ${targets.length === 1 ? '<button type="button" role="menuitem" data-action="toggle-favorite">Toggle favorite</button>' : ''}
+    ${inLibrary || inFolder ? '<div class="context-menu-sep"></div>' : ''}
     ${inLibrary ? '<button type="button" role="menuitem" data-action="remove-from-library">Remove from collection</button>' : ''}
     ${inFolder ? '<button type="button" role="menuitem" data-action="remove-from-folder">Remove from folder</button>' : ''}
-    <div class="context-menu-sep"></div>
-    <button type="button" role="menuitem" class="danger" data-action="delete">
-      Delete${targets.length > 1 ? ` ${targets.length} items` : ''}
-    </button>
+    ${isAdmin() ? '<div class="context-menu-sep"></div><button type="button" role="menuitem" class="danger" data-action="delete">Delete' + (targets.length > 1 ? ` ${targets.length} items` : '') + '</button>' : ''}
   `;
 
   document.body.appendChild(menu);
@@ -1010,11 +1029,52 @@ export function openCardContextMenu(x, y, { targetId, targets, isSelected, grid,
     });
   }
 
-  // ---- Delete ----
-  menu.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+  // ---- Mark as read / unread ----
+  menu.querySelector('[data-action="mark-read"]').addEventListener('click', async () => {
     _closeContextMenu();
-    await onDelete(targets);
+    try {
+      await Promise.all(targets.map((id) => api.setCompleted(id)));
+      showToast(`Marked ${targets.length} item${targets.length === 1 ? '' : 's'} as read`);
+      window.dispatchEvent(new CustomEvent('cb8:progress-changed', { detail: { ids: targets } }));
+    } catch (err) { showToast(err.message); }
   });
+
+  menu.querySelector('[data-action="mark-unread"]').addEventListener('click', async () => {
+    _closeContextMenu();
+    try {
+      await Promise.all(targets.map((id) => api.clearProgress(id)));
+      showToast(`Marked ${targets.length} item${targets.length === 1 ? '' : 's'} as unread`);
+      window.dispatchEvent(new CustomEvent('cb8:progress-changed', { detail: { ids: targets } }));
+    } catch (err) { showToast(err.message); }
+  });
+
+  // ---- Toggle favorite (single target) ----
+  const favBtn = menu.querySelector('[data-action="toggle-favorite"]');
+  if (favBtn) {
+    favBtn.addEventListener('click', async () => {
+      _closeContextMenu();
+      const card = grid?.querySelector(`.comic-card[data-id="${targetId}"]`);
+      const isFav = card?.classList.contains('favorited');
+      try {
+        if (isFav) await api.removeFavorite(targetId);
+        else await api.addFavorite(targetId);
+        card?.classList.toggle('favorited', !isFav);
+        card?.querySelector('.card-fav-heart')?.replaceChildren(
+          document.createTextNode(!isFav ? '♥' : '♡'),
+        );
+        showToast(!isFav ? 'Added to favorites' : 'Removed from favorites');
+      } catch (err) { showToast(err.message); }
+    });
+  }
+
+  // ---- Delete (admin only) ----
+  const deleteBtn = menu.querySelector('[data-action="delete"]');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      _closeContextMenu();
+      await onDelete(targets);
+    });
+  }
 
   setTimeout(() => {
     document.addEventListener('click', _onDocClick, true);

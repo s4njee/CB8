@@ -336,6 +336,31 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
 }
 .card-badge.book { color: #a3cfff; }
 
+.card-fav-heart {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, transform 0.1s;
+  backdrop-filter: blur(4px);
+  user-select: none;
+}
+.comic-card:hover .card-fav-heart,
+.comic-card.favorited .card-fav-heart { opacity: 1; }
+.comic-card.favorited .card-fav-heart { color: #ff6b81; }
+.card-fav-heart:hover { transform: scale(1.1); }
+
 .progress-badge {
   position: absolute;
   bottom: 6px;
@@ -409,6 +434,22 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
 }
 .media-strip::-webkit-scrollbar,
 .filetype-strip::-webkit-scrollbar { display: none; }
+
+/* Read-status + favorites filters — always visible when authenticated */
+.read-status-strip,
+.favorites-toggle {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.read-status-strip::-webkit-scrollbar,
+.favorites-toggle::-webkit-scrollbar { display: none; }
+
+.favorites-pill .heart { color: #ff6b81; margin-right: 4px; }
+.favorites-pill.active { background: color-mix(in srgb, #ff6b81 18%, transparent); border-color: #ff6b81; color: #ff6b81; }
 
 .strip-pill {
   flex-shrink: 0;
@@ -684,6 +725,68 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   transition: opacity 0.15s;
 }
 .comic-page-img.loading { opacity: 0.2; }
+
+/* Zoom modes ---------------------------------------------------- */
+.comic-reader[data-zoom="fit-width"] {
+  overflow-y: auto;
+  align-items: flex-start;
+}
+.comic-page-img[data-zoom="fit-width"] {
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  height: auto;
+}
+.comic-reader[data-zoom="fit-height"] .comic-page-img {
+  max-width: 100%;
+  max-height: 100vh;
+  width: auto;
+  height: auto;
+}
+.comic-reader[data-zoom="original"] {
+  overflow: auto;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.comic-page-img[data-zoom="original"] {
+  max-width: none;
+  max-height: none;
+  width: auto;
+  height: auto;
+}
+
+/* Extra reader toolbar controls --------------------------------- */
+.reader-extra-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: 4px;
+}
+.reader-tool-btn {
+  background: transparent;
+  color: #bbb;
+  border: 1px solid #333;
+  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.reader-tool-btn:hover {
+  background: #2a2a2a;
+  color: #fff;
+  border-color: #555;
+}
+.reader-tool-btn.active {
+  background: #5b9aff;
+  color: #fff;
+  border-color: #5b9aff;
+}
 
 .reader-tap-zone {
   position: absolute;
