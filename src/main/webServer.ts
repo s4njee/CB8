@@ -14,41 +14,25 @@ import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as url from 'node:url';
-import * as crypto from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import { app, dialog, BrowserWindow } from 'electron';
 import { LibraryDatabase } from './libraryDatabase';
 import * as ArchiveLoader from './archiveLoader';
 import type { ArchiveHandle } from './archiveLoader';
-import { FileScannerImpl } from './fileScanner';
-import { extractEpubCover } from './epubCoverExtractor';
-import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
 import { generateThumbnail } from './thumbnailGenerator';
-import { parseSeriesFromFilename } from './seriesParser';
 import { getCachedOrResize, invalidateCacheForComic } from './imageResizer';
 import { searchMetadata } from './metadataScraper';
 import type { QueryOptions } from '../shared/types';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/** Safe comic record that does not expose the server file-system path. */
-interface WebComicRecord {
-  id: number;
-  title: string;
-  pageCount: number;
-  fileSize: number;
-  dateAdded: string;
-  tags: string[];
-  lastPage: number | null;
-  lastLocation: string | null;
-  lastRead: string | null;
-  mediaType: 'comic' | 'book';
-  thumbnailUrl: string;
-  /** File extension without the dot: 'epub' | 'pdf' | 'mobi' | 'cbz' | 'cbr' */
-  fileExt: string;
-}
+import {
+  SESSION_COOKIE, GUEST_ACCESS_KEY,
+  setSessionsFilePath, loadSessions,
+  isHostConnection, parseCookies, resolveUser, isAuthenticated, isAdmin,
+  isGuestAccessEnabled, setSessionCookie, clearSessionCookie, createSession,
+  deleteSession, ensureInitialAdmin,
+  sendJson, sendError, parseQueryOptions, readBody,
+} from './webServer/middleware';
+import { toWebRecord, overlayUserState } from './webServer/mapping';
+import { COMIC_EXTS, BOOK_EXTS, addSingleFile, ingestPathStreaming, type IngestEvent } from './webServer/ingest';
 
 // ---------------------------------------------------------------------------
 // Archive handle LRU cache (Phase 3)
@@ -121,345 +105,6 @@ export async function closeAllHandles(): Promise<void> {
   for (const entry of entries) {
     await entry.handle.then((h) => ArchiveLoader.close(h)).catch(() => {});
   }
-}
-
-// ---------------------------------------------------------------------------
-// Auth (session cookie, multi-user)
-// ---------------------------------------------------------------------------
-
-/** Legacy hardcoded admin password, migrated to the first users row on startup. */
-const LEGACY_ADMIN_PASSWORD = 'gentrification';
-const SESSION_COOKIE = 'cb8_admin';
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-const GUEST_ACCESS_KEY = 'guest_access';
-
-interface SessionData {
-  userId: number;
-  expiresAt: number;
-}
-
-const sessions = new Map<string, SessionData>();
-
-// Path is set once the Electron app is ready (userData is available).
-let sessionsFilePath = '';
-
-function loadSessions(): void {
-  if (!sessionsFilePath) return;
-  try {
-    const raw = fs.readFileSync(sessionsFilePath, 'utf8');
-    const parsed: Record<string, SessionData> = JSON.parse(raw);
-    const now = Date.now();
-    for (const [token, data] of Object.entries(parsed)) {
-      if (data.expiresAt > now && typeof data.userId === 'number') {
-        sessions.set(token, data);
-      }
-    }
-  } catch {
-    // File doesn't exist yet or is corrupt — start fresh.
-  }
-}
-
-function persistSessions(): void {
-  if (!sessionsFilePath) return;
-  const now = Date.now();
-  const out: Record<string, SessionData> = {};
-  for (const [token, data] of sessions) {
-    if (data.expiresAt > now) out[token] = data;
-  }
-  try {
-    fs.writeFileSync(sessionsFilePath, JSON.stringify(out), 'utf8');
-  } catch (err) {
-    console.error('[CB8] Failed to persist sessions:', err);
-  }
-}
-
-/**
- * "Superadmin" = authenticated admin whose connection originates from the
- * host machine itself (loopback). Host-path features require this because
- * paths only make sense for someone sitting at the server.
- */
-function isHostConnection(req: http.IncomingMessage): boolean {
-  const addr = req.socket.remoteAddress ?? '';
-  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
-}
-
-function parseCookies(header: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!header) return out;
-  for (const pair of header.split(';')) {
-    const eq = pair.indexOf('=');
-    if (eq < 0) continue;
-    const k = pair.slice(0, eq).trim();
-    const v = pair.slice(eq + 1).trim();
-    if (k) out[k] = decodeURIComponent(v);
-  }
-  return out;
-}
-
-interface ResolvedUser {
-  id: number;
-  username: string;
-  isAdmin: boolean;
-}
-
-function resolveUser(req: http.IncomingMessage, db: LibraryDatabase): ResolvedUser | null {
-  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-  if (!token) return null;
-  const session = sessions.get(token);
-  if (!session) return null;
-  if (session.expiresAt < Date.now()) {
-    sessions.delete(token);
-    return null;
-  }
-  const user = db.getUserById(session.userId);
-  if (!user) {
-    sessions.delete(token);
-    return null;
-  }
-  return { id: user.id, username: user.username, isAdmin: user.isAdmin };
-}
-
-function isAuthenticated(req: http.IncomingMessage, db: LibraryDatabase): boolean {
-  return resolveUser(req, db) !== null;
-}
-
-function isAdmin(req: http.IncomingMessage, db: LibraryDatabase): boolean {
-  return resolveUser(req, db)?.isAdmin === true;
-}
-
-function isGuestAccessEnabled(db: LibraryDatabase): boolean {
-  // Default: guests can read. Only disabled if an admin explicitly sets 'false'.
-  const v = db.getAppMeta(GUEST_ACCESS_KEY);
-  return v !== 'false';
-}
-
-function setSessionCookie(res: http.ServerResponse, token: string): void {
-  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
-}
-
-function clearSessionCookie(res: http.ServerResponse): void {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
-}
-
-function createSession(userId: number): string {
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { userId, expiresAt: Date.now() + SESSION_TTL_MS });
-  persistSessions();
-  return token;
-}
-
-async function ensureInitialAdmin(db: LibraryDatabase): Promise<void> {
-  if (db.countUsers() > 0) return;
-  const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
-  db.createUser('admin', hash, true);
-  console.log('[CB8] Created initial admin user (username=admin, default password).');
-}
-
-// ---------------------------------------------------------------------------
-// Admin helpers: ingest a file or directory in-place
-// ---------------------------------------------------------------------------
-
-const COMIC_EXTS = new Set(['.cbz', '.cbr']);
-const BOOK_EXTS = new Set(['.pdf', '.epub', '.mobi']);
-const COVER_EXTRACTION_TIMEOUT_MS = 5000;
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
-    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
-  });
-}
-
-async function addSingleFile(db: LibraryDatabase, filePath: string): Promise<{ added: boolean; error?: string }> {
-  const ext = path.extname(filePath).toLowerCase();
-  if (!COMIC_EXTS.has(ext) && !BOOK_EXTS.has(ext)) {
-    return { added: false, error: 'Unsupported file type' };
-  }
-  if (db.comicExistsByPath(filePath)) return { added: false };
-  try {
-    const stats = fs.statSync(filePath);
-    const title = path.basename(filePath, ext);
-    const seriesInfo = parseSeriesFromFilename(path.basename(filePath));
-
-    if (BOOK_EXTS.has(ext)) {
-      let pageCount = 0;
-      if (ext === '.pdf') {
-        try { pageCount = await withTimeout(getPdfPageCount(filePath), COVER_EXTRACTION_TIMEOUT_MS); } catch { /* ignore */ }
-      }
-      const record = db.addComic({
-        filePath, title, pageCount, fileSize: stats.size,
-        coverThumbnail: null, tags: [], mediaType: 'book',
-        lastPage: null, lastLocation: null, lastRead: null,
-      });
-      if (seriesInfo.seriesName) {
-        db.setComicSeries(record.id, seriesInfo.seriesName, seriesInfo.volumeNumber, seriesInfo.chapterNumber);
-      }
-      if (ext === '.epub' || ext === '.pdf') {
-        try {
-          const coverThumbnail = ext === '.epub'
-            ? generateThumbnail(await withTimeout(extractEpubCover(filePath), COVER_EXTRACTION_TIMEOUT_MS))
-            : await withTimeout(renderPdfFirstPageCover(filePath), COVER_EXTRACTION_TIMEOUT_MS);
-          if (coverThumbnail) db.updateCoverThumbnailByPath(record.filePath, coverThumbnail);
-        } catch { /* placeholder thumbnail */ }
-      }
-      return { added: true };
-    }
-
-    const handle = await ArchiveLoader.open(filePath);
-    try {
-      let coverImage: Buffer | null = null;
-      try { coverImage = await ArchiveLoader.getCoverImage(handle); } catch { /* placeholder */ }
-      const coverThumbnail = generateThumbnail(coverImage);
-      const record = db.addComic({
-        filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
-        coverThumbnail, tags: [], mediaType: 'comic',
-        lastPage: null, lastLocation: null, lastRead: null,
-      });
-      if (seriesInfo.seriesName) {
-        db.setComicSeries(record.id, seriesInfo.seriesName, seriesInfo.volumeNumber, seriesInfo.chapterNumber);
-      }
-    } finally {
-      await ArchiveLoader.close(handle);
-    }
-    return { added: true };
-  } catch (err) {
-    return { added: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-type IngestEvent =
-  | { type: 'progress'; phase: 'comics' | 'books' | 'file'; discovered: number; processed: number; currentFile: string }
-  | { type: 'error'; message: string }
-  | { type: 'done'; added: number };
-
-async function ingestPathStreaming(
-  db: LibraryDatabase,
-  targetPath: string,
-  emit: (event: IngestEvent) => void,
-): Promise<void> {
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(targetPath);
-  } catch (err) {
-    emit({ type: 'error', message: `Cannot access path: ${err instanceof Error ? err.message : String(err)}` });
-    emit({ type: 'done', added: 0 });
-    return;
-  }
-
-  if (stat.isDirectory()) {
-    const scanner = new FileScannerImpl(db);
-    let added = 0;
-    try {
-      added += await scanner.scan(targetPath, (p) => {
-        emit({ type: 'progress', phase: 'comics', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
-      });
-    } catch (err) {
-      emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
-    }
-    try {
-      added += await scanner.scanBooks(targetPath, (p) => {
-        emit({ type: 'progress', phase: 'books', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
-      });
-    } catch (err) {
-      emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
-    }
-    emit({ type: 'done', added });
-    return;
-  }
-
-  if (stat.isFile()) {
-    emit({ type: 'progress', phase: 'file', discovered: 1, processed: 0, currentFile: path.basename(targetPath) });
-    const result = await addSingleFile(db, targetPath);
-    emit({ type: 'progress', phase: 'file', discovered: 1, processed: 1, currentFile: path.basename(targetPath) });
-    if (result.error) emit({ type: 'error', message: `${targetPath}: ${result.error}` });
-    emit({ type: 'done', added: result.added ? 1 : 0 });
-    return;
-  }
-
-  emit({ type: 'error', message: 'Path is not a regular file or directory' });
-  emit({ type: 'done', added: 0 });
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-  });
-  res.end(payload);
-}
-
-function sendError(res: http.ServerResponse, status: number, message: string): void {
-  sendJson(res, status, { error: message });
-}
-
-function parseQueryOptions(query: Record<string, string>): QueryOptions {
-  const options: QueryOptions = {};
-  if (query.search) options.search = query.search;
-  if (query.tag) options.tag = query.tag;
-  if (query.sortBy) options.sortBy = query.sortBy as QueryOptions['sortBy'];
-  if (query.sortOrder) options.sortOrder = query.sortOrder as 'asc' | 'desc';
-  if (query.offset) options.offset = parseInt(query.offset, 10);
-  if (query.limit) options.limit = Math.min(parseInt(query.limit, 10), 200);
-  if (query.mediaType) options.mediaType = query.mediaType as 'comic' | 'book';
-  if (query.excludeFoldered) options.excludeFoldered = query.excludeFoldered === 'true';
-  if (query.fileExt) options.fileExt = String(query.fileExt).toLowerCase().replace(/^\./, '');
-  return options;
-}
-
-function toWebRecord(record: ReturnType<LibraryDatabase['getComic']>): WebComicRecord | null {
-  if (!record) return null;
-  return {
-    id: record.id,
-    title: record.title,
-    pageCount: record.pageCount,
-    fileSize: record.fileSize,
-    dateAdded: record.dateAdded,
-    tags: record.tags,
-    lastPage: record.lastPage,
-    lastLocation: record.lastLocation ?? null,
-    lastRead: record.lastRead,
-    mediaType: record.mediaType,
-    thumbnailUrl: `/api/comics/${record.id}/thumbnail`,
-    fileExt: path.extname(record.filePath).toLowerCase().replace(/^\./,''),
-  };
-}
-
-/**
- * Overlay per-user progress and favorited onto a base web record. For guests
- * (userId == null), blank out progress fields — the shared row's values
- * reflect the admin's reading and leak their position across users.
- */
-function overlayUserState(
-  base: WebComicRecord,
-  db: LibraryDatabase,
-  userId: number | null,
-): WebComicRecord & { favorited: boolean } {
-  if (userId == null) {
-    return { ...base, lastPage: null, lastLocation: null, lastRead: null, favorited: false };
-  }
-  const up = db.getUserProgress(userId, base.id);
-  return {
-    ...base,
-    lastPage: up?.lastPage ?? null,
-    lastLocation: up?.lastLocation ?? null,
-    lastRead: up?.lastRead ?? null,
-    favorited: db.isFavorite(userId, base.id),
-  };
-}
-
-async function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -611,7 +256,7 @@ async function handleRequest(
     // --- Auth / Admin: logout ---------------------------------------------
     if (method === 'POST' && (pathname === '/api/auth/logout' || pathname === '/api/admin/logout')) {
       const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-      if (token) { sessions.delete(token); persistSessions(); }
+      if (token) deleteSession(token);
       clearSessionCookie(res);
       return sendJson(res, 200, { ok: true });
     }
@@ -1588,7 +1233,7 @@ export interface WebServerHandle {
  * @param port  TCP port to listen on. Default 8008.
  */
 export function startWebServer(db: LibraryDatabase, port = 8008): WebServerHandle {
-  sessionsFilePath = path.join(app.getPath('userData'), 'cb8-sessions.json');
+  setSessionsFilePath(path.join(app.getPath('userData'), 'cb8-sessions.json'));
   loadSessions();
 
   // Create initial admin user on first startup (uses legacy password).
