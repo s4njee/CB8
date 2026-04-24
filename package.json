@@ -57,6 +57,7 @@
     "@tanstack/react-virtual": "^3.11.2",
     "@tanstack/virtual-core": "^3.14.0",
     "bcryptjs": "^3.0.3",
+    "better-auth": "^1.6.8",
     "better-sqlite3": "^11.7.0",
     "epubjs": "^0.3.93",
     "node-unrar-js": "^2.0.0",

@@ -1,19 +1,25 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useConfirm } from './useConfirm';
 import {
   addComicFiles,
   addComicsToLibrary,
   addFoldersToLibrary,
   createLibrary,
+  createFolder,
+  deleteFolder,
   deleteLibrary,
   getComicByPath,
   getPathForFile,
+  getFolders,
   getLibraries,
+  renameFolder,
   renameLibrary,
 } from '../ipcClient';
 import { isSupportedFile } from '../../shared/dropValidator';
-import type { LibrarySummary } from '../../shared/ipcTypes';
+import type { FolderSummary, LibrarySummary } from '../../shared/ipcTypes';
 
 type LibraryItem = LibrarySummary;
+type FolderItem = { id: number; name: string; comicCount: number };
 
 const CONTEXT_MENU_WIDTH = 220;
 const CONTEXT_MENU_MARGIN = 8;
@@ -28,18 +34,22 @@ interface LibraryContextMenu {
 
 interface Props {
   activeLibraryId: number | null;
-  activeView: 'comics' | 'books';
+  activeFolderId: number | null;
+  activeView: 'all' | 'comics' | 'books';
   onSelectLibrary: (id: number | null) => void;
-  onSelectView: (view: 'comics' | 'books') => void;
+  onSelectFolder: (id: number | null) => void;
+  onSelectView: (view: 'all' | 'comics' | 'books') => void;
   onLibrariesChanged: () => void;
 }
 
-export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, onSelectLibrary, onSelectView, onLibrariesChanged }) => {
+export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeFolderId, activeView, onSelectLibrary, onSelectFolder, onSelectView, onLibrariesChanged }) => {
+  const { confirm, modal: confirmModal } = useConfirm();
   const [comicLibraries, setComicLibraries] = useState<LibraryItem[]>([]);
   const [bookLibraries, setBookLibraries] = useState<LibraryItem[]>([]);
+  const [folderItems, setFolderItems] = useState<FolderItem[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
-  const [creatingFor, setCreatingFor] = useState<'comics' | 'books' | null>(null);
+  const [creatingFor, setCreatingFor] = useState<'comics' | 'books' | 'folders' | null>(null);
   const [newName, setNewName] = useState('');
   const [dropTargetId, setDropTargetId] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<LibraryContextMenu | null>(null);
@@ -48,12 +58,14 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
   const [contextError, setContextError] = useState<string | null>(null);
 
   const loadLibraries = useCallback(async () => {
-    const [comics, books] = await Promise.all([
+    const [comics, books, folders] = await Promise.all([
       getLibraries('comic'),
       getLibraries('book'),
+      getFolders(),
     ]);
     setComicLibraries(comics ?? []);
     setBookLibraries(books ?? []);
+    setFolderItems((folders ?? []).map((f) => ({ id: f.id, name: f.name, comicCount: f.comicCount })));
   }, []);
 
   useEffect(() => { loadLibraries(); }, [loadLibraries]);
@@ -131,7 +143,7 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
 
   const handleContextDelete = async () => {
     if (!contextMenu) return;
-    const confirmed = window.confirm(`Delete library "${contextMenu.library.name}"?\n\nThis will not delete any files.`);
+    const confirmed = await confirm(`Delete library "${contextMenu.library.name}"?\n\nThis will not delete any files.`);
     if (!confirmed) return;
     await deleteLibrary(contextMenu.library.id);
     if (activeLibraryId === contextMenu.library.id) onSelectLibrary(null);
@@ -212,8 +224,41 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
   };
 
   const selectLibrary = (lib: LibraryItem) => {
+    onSelectFolder(null);
     onSelectView(lib.mediaType === 'book' ? 'books' : 'comics');
     onSelectLibrary(lib.id);
+  };
+
+  const selectFolder = (folder: FolderItem) => {
+    onSelectLibrary(null);
+    onSelectFolder(folder.id);
+  };
+
+  const handleCreateFolder = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    await createFolder(name, []);
+    setNewName(''); setCreatingFor(null);
+    await loadLibraries();
+    onLibrariesChanged();
+  };
+
+  const handleRenameFolder = async (id: number) => {
+    const name = editName.trim();
+    if (!name) return;
+    await renameFolder(id, name);
+    setEditingId(null); setEditName('');
+    await loadLibraries();
+    onLibrariesChanged();
+  };
+
+  const handleDeleteFolder = async (id: number) => {
+    const confirmed = await confirm('Delete this folder?\n\nThis will not delete any files.');
+    if (!confirmed) return;
+    await deleteFolder(id);
+    if (activeFolderId === id) onSelectFolder(null);
+    await loadLibraries();
+    onLibrariesChanged();
   };
 
   const renderLibraryItem = (lib: LibraryItem) => (
@@ -273,6 +318,14 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
       }}>Libraries</div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
+        {/* All items */}
+        <div onClick={() => { onSelectLibrary(null); onSelectFolder(null); onSelectView('all'); }} style={{
+          padding: '6px 12px 6px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
+          color: activeLibraryId === null && activeFolderId === null && activeView === 'all' ? '#fff' : '#ccc',
+          borderLeft: activeLibraryId === null && activeFolderId === null && activeView === 'all' ? '3px solid #5b9aff' : '3px solid transparent',
+          backgroundColor: activeLibraryId === null && activeFolderId === null && activeView === 'all' ? '#2a2a3a' : 'transparent',
+        }}>All</div>
+
         {/* Books section */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px 2px' }}>
           <div onClick={() => { onSelectLibrary(null); onSelectView('books'); }} style={{
@@ -304,6 +357,80 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
         }} />
         {comicLibraries.map(renderLibraryItem)}
         {creatingFor === 'comics' && renderCreateInput('comic')}
+
+        {/* Folders section */}
+        {folderItems.length > 0 && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 12px 2px' }}>
+              <div style={{ fontSize: 13, fontWeight: 'bold', color: '#ccc' }}>Folders</div>
+              <button onClick={() => setCreatingFor('folders')} style={{
+                background: 'none', border: 'none', color: '#5b9aff', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
+              }} title="New folder">+</button>
+            </div>
+            {folderItems.map((folder) => (
+              <div key={`folder-${folder.id}`}
+                onClick={() => selectFolder(folder)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                style={{
+                  padding: '6px 12px 6px 20px', cursor: 'pointer', fontSize: 13,
+                  backgroundColor: activeFolderId === folder.id ? '#2a2a3a' : 'transparent',
+                  color: activeFolderId === folder.id ? '#fff' : '#ccc',
+                  borderLeft: activeFolderId === folder.id ? '3px solid #5b9aff' : '3px solid transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4,
+                  transition: 'background-color 0.1s',
+                }}
+              >
+                {editingId === -folder.id ? (
+                  <input autoFocus value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleRenameFolder(folder.id); if (e.key === 'Escape') setEditingId(null); }}
+                    onBlur={() => handleRenameFolder(folder.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ flex: 1, backgroundColor: '#333', color: '#eee', border: '1px solid #555', borderRadius: 2, padding: '2px 4px', fontSize: 12, outline: 'none' }}
+                  />
+                ) : (
+                  <>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{folder.name}</span>
+                    <span style={{ fontSize: 11, color: '#666', flexShrink: 0 }}>{folder.comicCount}</span>
+                    <span onClick={(e) => { e.stopPropagation(); setEditingId(-folder.id); setEditName(folder.name); }} style={{ cursor: 'pointer', color: '#666', fontSize: 11, flexShrink: 0 }} title="Rename">✎</span>
+                    <span onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder.id); }} style={{ cursor: 'pointer', color: '#666', fontSize: 11, flexShrink: 0 }} title="Delete">✕</span>
+                  </>
+                )}
+              </div>
+            ))}
+            {creatingFor === 'folders' && (
+              <div style={{ padding: '6px 12px' }}>
+                <input autoFocus placeholder="Folder name..." value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setCreatingFor(null); setNewName(''); } }}
+                  onBlur={() => { if (newName.trim()) handleCreateFolder(); else { setCreatingFor(null); setNewName(''); } }}
+                  style={{ width: '100%', backgroundColor: '#333', color: '#eee', border: '1px solid #555', borderRadius: 2, padding: '4px 6px', fontSize: 12, outline: 'none' }}
+                />
+              </div>
+            )}
+          </>
+        )}
+        {folderItems.length === 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 12px 2px' }}>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: '#ccc' }}>Folders</div>
+            <button onClick={() => setCreatingFor('folders')} style={{
+              background: 'none', border: 'none', color: '#5b9aff', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
+            }} title="New folder">+</button>
+          </div>
+        )}
+        {folderItems.length === 0 && creatingFor === 'folders' && (
+          <div style={{ padding: '6px 12px' }}>
+            <input autoFocus placeholder="Folder name..." value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setCreatingFor(null); setNewName(''); } }}
+              onBlur={() => { if (newName.trim()) handleCreateFolder(); else { setCreatingFor(null); setNewName(''); } }}
+              style={{ width: '100%', backgroundColor: '#333', color: '#eee', border: '1px solid #555', borderRadius: 2, padding: '4px 6px', fontSize: 12, outline: 'none' }}
+            />
+          </div>
+        )}
       </div>
 
       {contextMenu && (
@@ -354,6 +481,7 @@ export const LibrarySidebar: React.FC<Props> = ({ activeLibraryId, activeView, o
           )}
         </div>
       )}
+      {confirmModal}
     </div>
   );
 };

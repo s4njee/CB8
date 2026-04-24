@@ -1,10 +1,11 @@
 import * as bcrypt from 'bcryptjs';
+import { fromNodeHeaders } from 'better-auth/node';
 import {
-  SESSION_COOKIE, GUEST_ACCESS_KEY,
+  GUEST_ACCESS_KEY,
   sendJson, sendError, readBody,
-  parseCookies, isHostConnection,
-  createSession, deleteSession, setSessionCookie, clearSessionCookie,
+  isHostConnection,
 } from '../middleware';
+import { getAuth } from '../auth';
 import { requireAdmin, type RouteHandler } from '../context';
 
 export const handle: RouteHandler = async (ctx) => {
@@ -21,20 +22,27 @@ export const handle: RouteHandler = async (ctx) => {
     return true;
   }
 
-  // Login
+  // Login — delegate credential verification and session creation to better-auth.
   if (method === 'POST' && (pathname === '/api/auth/login' || pathname === '/api/admin/login')) {
     const body = await readBody(req);
     let parsed: { username?: string; password?: string };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.password !== 'string') { sendError(res, 400, 'Provide "password"'); return true; }
     const username = typeof parsed.username === 'string' && parsed.username ? parsed.username : 'admin';
-    const user = db.getUserByUsername(username);
-    if (!user) { sendError(res, 401, 'Invalid credentials'); return true; }
-    const ok = await bcrypt.compare(parsed.password, user.passwordHash);
-    if (!ok) { sendError(res, 401, 'Invalid credentials'); return true; }
-    const token = createSession(user.id);
-    setSessionCookie(res, token);
-    sendJson(res, 200, { ok: true, user: { id: user.id, username: user.username, isAdmin: user.isAdmin } });
+    try {
+      const result = await getAuth().api.signInUsername({
+        body: { username, password: parsed.password },
+        returnHeaders: true,
+      });
+      const cookies = result.headers?.getSetCookie?.() ?? [];
+      if (cookies.length) res.setHeader('Set-Cookie', cookies);
+      sendJson(res, 200, {
+        ok: true,
+        user: { id: result.user.id, username: result.user.username ?? result.user.name, isAdmin: result.user.isAdmin === true },
+      });
+    } catch {
+      sendError(res, 401, 'Invalid credentials');
+    }
     return true;
   }
 
@@ -49,15 +57,23 @@ export const handle: RouteHandler = async (ctx) => {
     if (db.getUserByUsername(parsed.username.trim())) { sendError(res, 409, 'Username already exists'); return true; }
     const hash = await bcrypt.hash(parsed.password, 10);
     const user = db.createUser(parsed.username.trim(), hash, parsed.isAdmin === true);
+    db.upsertCredentialAccount(user.id, parsed.username.trim(), hash);
     sendJson(res, 201, user);
     return true;
   }
 
-  // Logout
+  // Logout — let better-auth clear its own session cookie.
   if (method === 'POST' && (pathname === '/api/auth/logout' || pathname === '/api/admin/logout')) {
-    const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    if (token) deleteSession(token);
-    clearSessionCookie(res);
+    try {
+      const result = await getAuth().api.signOut({
+        headers: fromNodeHeaders(req.headers),
+        returnHeaders: true,
+      });
+      const cookies = result.headers?.getSetCookie?.() ?? [];
+      if (cookies.length) res.setHeader('Set-Cookie', cookies);
+    } catch {
+      // best-effort; always succeed
+    }
     sendJson(res, 200, { ok: true });
     return true;
   }

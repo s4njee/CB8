@@ -1,10 +1,17 @@
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { createRequire } from 'node:module';
 
 const COVER_WIDTH = 240;
 const COVER_HEIGHT = 360;
 const JPEG_QUALITY = 82;
 const require = createRequire(import.meta.url);
+
+// Resolve the worker path once — pdfjs needs it even in Node.js "fake worker" mode.
+const WORKER_SRC = path.join(
+  path.dirname(require.resolve('pdfjs-dist/legacy/build/pdf.mjs')),
+  'pdf.worker.mjs',
+);
 
 interface CanvasSurface {
   width: number;
@@ -45,10 +52,12 @@ export async function renderPdfFirstPageCover(filePath: string): Promise<Buffer 
   ensureUint8ArrayToHex();
 
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  // Point at the real worker file so the "fake worker" (same-thread) mode works in Node.js.
+  pdfjs.GlobalWorkerOptions.workerSrc = WORKER_SRC;
   const { createCanvas } = loadCanvasModule();
   const bytes = await fs.readFile(filePath);
   const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  const loadingTask = pdfjs.getDocument({ data });
+  const loadingTask = pdfjs.getDocument({ data, useWorkerFetch: false, isEvalSupported: false } as Parameters<typeof pdfjs.getDocument>[0]);
   const pdf = await loadingTask.promise;
 
   try {
@@ -80,9 +89,10 @@ export async function getPdfPageCount(filePath: string): Promise<number> {
   ensureUint8ArrayToHex();
 
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = WORKER_SRC;
   const bytes = await fs.readFile(filePath);
   const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  const loadingTask = pdfjs.getDocument({ data });
+  const loadingTask = pdfjs.getDocument({ data, useWorkerFetch: false, isEvalSupported: false } as Parameters<typeof pdfjs.getDocument>[0]);
   const pdf = await loadingTask.promise;
 
   try {

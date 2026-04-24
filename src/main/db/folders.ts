@@ -33,21 +33,42 @@ export function deleteFolder(db: Database.Database, id: number): void {
 export function getAllFolders(
   db: Database.Database,
   libraryId?: number | null,
-): { id: number; name: string; comicCount: number; coverThumbnail: Buffer | null }[] {
+): { id: number; name: string; comicCount: number; coverThumbnail: Buffer | null; mediaType: 'comic' | 'book' | 'mixed' | 'empty' }[] {
   const where = libraryId != null
     ? 'WHERE f.id IN (SELECT folder_id FROM library_folders WHERE library_id = ?)'
     : '';
   const params = libraryId != null ? [libraryId] : [];
+  // Count comic vs book items per folder so the caller can decide whether a
+  // folder is relevant for the current media-type filter. An empty folder is
+  // neither and gets flagged so the sidebar can hide it.
   const rows = db.prepare(
-    `SELECT f.id, f.name, COUNT(fc.comic_id) as comic_count, c.cover_thumbnail
+    `SELECT f.id, f.name,
+            COUNT(fc.comic_id) as comic_count,
+            SUM(CASE WHEN ic.media_type = 'comic' THEN 1 ELSE 0 END) as n_comic,
+            SUM(CASE WHEN ic.media_type = 'book'  THEN 1 ELSE 0 END) as n_book,
+            cc.cover_thumbnail
      FROM folders f
      LEFT JOIN folder_comics fc ON f.id = fc.folder_id
-     LEFT JOIN comics c ON f.cover_comic_id = c.id
+     LEFT JOIN comics ic ON fc.comic_id = ic.id
+     LEFT JOIN comics cc ON f.cover_comic_id = cc.id
      ${where}
      GROUP BY f.id
      ORDER BY f.name COLLATE NOCASE`
-  ).all(...params) as { id: number; name: string; comic_count: number; cover_thumbnail: Buffer | null }[];
-  return rows.map((r) => ({ id: r.id, name: r.name, comicCount: r.comic_count, coverThumbnail: r.cover_thumbnail }));
+  ).all(...params) as {
+    id: number; name: string; comic_count: number;
+    n_comic: number | null; n_book: number | null;
+    cover_thumbnail: Buffer | null;
+  }[];
+  return rows.map((r) => {
+    const nComic = r.n_comic ?? 0;
+    const nBook = r.n_book ?? 0;
+    const mediaType: 'comic' | 'book' | 'mixed' | 'empty' =
+      r.comic_count === 0 ? 'empty'
+      : nComic > 0 && nBook > 0 ? 'mixed'
+      : nBook > 0 ? 'book'
+      : 'comic';
+    return { id: r.id, name: r.name, comicCount: r.comic_count, coverThumbnail: r.cover_thumbnail, mediaType };
+  });
 }
 
 export function addComicsToFolder(db: Database.Database, folderId: number, comicIds: number[]): void {

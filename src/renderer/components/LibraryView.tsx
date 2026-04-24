@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { isSupportedFile } from '../../shared/dropValidator';
-import type { QueryOptions, FilterPreset } from '../../shared/types';
-import { parseFilterPreset, getDefaultSortOrder, toggleSortOrder } from '../../shared/filterLogic';
+import type { FilterPreset } from '../../shared/types';
+import { parseFilterPreset } from '../../shared/filterLogic';
 import { ContinueReadingShelf } from './ContinueReadingShelf';
+import { useConfirm } from './useConfirm';
 import { SortControl } from './SortControl';
 import { FilterBar } from './FilterBar';
 import { ComicCard } from './library/ComicCard';
@@ -11,8 +12,11 @@ import { FolderCard } from './library/FolderCard';
 import { ComicContextMenu } from './library/ComicContextMenu';
 import { FolderContextMenu } from './library/FolderContextMenu';
 import { DetailsModal } from './library/DetailsModal';
-import { parseThumb, getFileExtension } from './library/utils';
+import { getFileExtension } from './library/utils';
 import { useScanProgress } from './library/hooks/useScanProgress';
+import { useLibraryQuery } from './library/hooks/useLibraryQuery';
+import { useLibraryFilters } from './library/hooks/useLibraryFilters';
+import { useLibrarySelection } from './library/hooks/useLibrarySelection';
 import {
   CELL_WIDTH, GAP, PAGE_SIZE, ROW_HEIGHT,
   type ComicEntry, type FolderEntry,
@@ -31,9 +35,6 @@ import {
   getFolders,
   getLibraries,
   openDirectoryDialog,
-  queryComics,
-  queryFolderComics,
-  queryLibraryComics,
   renameFolder,
   removeComics,
   removeComicsFromLibrary,
@@ -41,15 +42,20 @@ import {
   refreshBookMetadata,
   scanDirectory,
   scanBooksDirectory,
+  cancelScan,
   classifyPaths,
   getAllTags,
   getAppMeta,
   setAppMeta,
 } from '../ipcClient';
 
+// PAGE_SIZE is imported above but not used directly in this file after hook extraction
+void PAGE_SIZE;
+
 interface Props {
   activeLibraryId: number | null;
-  activeView: 'comics' | 'books';
+  activeFolderId: number | null;
+  activeView: 'all' | 'comics' | 'books';
   onOpenFile: (filePath: string) => void;
   onComicsChanged: () => void;
   selectedIds: Set<number>;
@@ -58,24 +64,15 @@ interface Props {
 }
 
 export const LibraryView: React.FC<Props> = ({
-  activeLibraryId, activeView, onOpenFile, onComicsChanged, selectedIds, onSelectionChange, refreshKey,
+  activeLibraryId, activeFolderId, activeView, onOpenFile, onComicsChanged, selectedIds, onSelectionChange, refreshKey,
 }) => {
-  const [comics, setComics] = useState<ComicEntry[]>([]);
-  const [folders, setFolders] = useState<FolderEntry[]>([]);
+  const { confirm, modal: confirmModal } = useConfirm();
   const [activeFolder, setActiveFolder] = useState<{ id: number; name: string } | null>(null);
-  const [totalCount, setTotalCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<QueryOptions['sortBy']>('title');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-  const [readStatus, setReadStatus] = useState<QueryOptions['readStatus'] | undefined>(undefined);
-  const [fileExt, setFileExt] = useState<string | undefined>(undefined);
-  const [filterTag, setFilterTag] = useState<string | undefined>(undefined);
-  const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const { scanProgress, setScanProgress } = useScanProgress();
   const [dragOver, setDragOver] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [folderDropTargetId, setFolderDropTargetId] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<ComicContextMenuState | null>(null);
   const [folderContextMenu, setFolderContextMenu] = useState<FolderContextMenuState | null>(null);
@@ -89,18 +86,63 @@ export const LibraryView: React.FC<Props> = ({
   const [folderRenameName, setFolderRenameName] = useState('');
   const [folderRenameError, setFolderRenameError] = useState<string | null>(null);
   const [columnCount, setColumnCount] = useState(4);
-  const lastClickedIndex = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const thumbnailUrls = useRef<Set<string>>(new Set());
-  const comicsRef = useRef<ComicEntry[]>([]);
-  const selectedIdsRef = useRef<Set<number>>(selectedIds);
   const activeFolderRef = useRef<{ id: number; name: string } | null>(activeFolder);
-  const hasMore = comics.length < totalCount;
-  const isBooks = activeView === 'books';
-  const currentSearch = useRef('');
-  comicsRef.current = comics;
-  selectedIdsRef.current = selectedIds;
   activeFolderRef.current = activeFolder;
+
+  // --- Filters hook ---
+  const persistAndReset = useCallback((preset: FilterPreset) => {
+    setAppMeta('filterPreset', JSON.stringify(preset)).catch((err) =>
+      console.warn('Failed to persist filter preset:', err)
+    );
+    setComics([]);
+    setTotalCount(0);
+  }, []);
+
+  const {
+    sortBy, setSortBy, sortOrder, setSortOrder,
+    readStatus, setReadStatus, fileExt, setFileExt,
+    filterTag, setFilterTag, availableTags, setAvailableTags,
+    handleSortByChange, handleSortOrderToggle,
+    handleReadStatusChange, handleFileExtChange, handleTagChange,
+  } = useLibraryFilters({ onPresetChange: persistAndReset });
+
+  // --- Query hook ---
+  const {
+    comics, folders, totalCount, loadingMore, hasMore,
+    loadInitial, loadMore, setComics, setFolders, setTotalCount, currentSearch,
+  } = useLibraryQuery({
+    activeFolder, activeLibraryId, activeView,
+    sortBy, sortOrder, readStatus, fileExt, filterTag,
+  });
+
+  const isBooks = activeView === 'books';
+  const isAll = activeView === 'all';
+  const mediaLabel = isAll ? 'items' : isBooks ? 'books' : 'comics';
+
+  // --- Selection hook ---
+  const { handleComicClick, handleCheckboxClick, handleComicDragStart } = useLibrarySelection({
+    comics,
+    selectedIds,
+    onSelectionChange,
+  });
+
+  // Sync external activeFolderId prop with internal activeFolder state
+  useEffect(() => {
+    if (activeFolderId != null) {
+      // If the folder ID changed from the sidebar, update internal state
+      if (activeFolder?.id !== activeFolderId) {
+        getFolders().then((allFolders) => {
+          const match = allFolders.find((f) => f.id === activeFolderId);
+          if (match) setActiveFolder({ id: match.id, name: match.name });
+        }).catch(() => {});
+      }
+    } else if (activeFolder != null && activeFolderId == null) {
+      // Sidebar cleared the folder selection
+      setActiveFolder(null);
+    }
+  }, [activeFolderId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -136,69 +178,29 @@ export const LibraryView: React.FC<Props> = ({
     overscan: 1,
   });
 
-  const fetchPage = useCallback(async (search: string, offset: number): Promise<{ entries: ComicEntry[]; total: number }> => {
-    const trimmedSearch = search.trim();
-    const opts: QueryOptions = {
-      search: trimmedSearch || undefined,
-      limit: PAGE_SIZE,
-      offset,
-      sortBy,
-      sortOrder,
-      readStatus,
-      fileExt,
-      tag: filterTag,
-      excludeFoldered: activeFolder == null && activeLibraryId == null && !trimmedSearch,
-      mediaType: activeView === 'books' ? 'book' : 'comic',
-    };
-    const result = activeFolder != null
-      ? await queryFolderComics(activeFolder.id, opts)
-      : activeLibraryId != null
-      ? await queryLibraryComics(activeLibraryId, opts)
-      : await queryComics(opts);
-    if (!result?.records) return { entries: [], total: 0 };
-    const entries: ComicEntry[] = result.records.map((rec) => ({
-      id: rec.id, title: rec.title, pageCount: rec.pageCount,
-      fileSize: rec.fileSize, filePath: rec.filePath,
-      thumbnailUrl: parseThumb(rec.coverThumbnail),
-      mediaType: rec.mediaType,
-    }));
-    return { entries, total: result.totalCount };
-  }, [activeFolder, activeLibraryId, activeView, sortBy, sortOrder, readStatus, fileExt, filterTag]);
-
-  const loadFolders = useCallback(async (search?: string) => {
-    if (activeFolder || activeLibraryId != null) {
-      setFolders([]);
-      return;
+  // URL cleanup effect for thumbnails
+  useEffect(() => {
+    const currentUrls = new Set(comics.map((comic) => comic.thumbnailUrl).filter((url): url is string => url !== null));
+    for (const url of thumbnailUrls.current) {
+      if (!currentUrls.has(url)) URL.revokeObjectURL(url);
     }
+    thumbnailUrls.current = currentUrls;
+  }, [comics]);
 
-    const query = (search ?? '').trim().toLowerCase();
-    try {
-      const result = await getFolders();
-      setFolders(result
-        .filter((folder) => !query || folder.name.toLowerCase().includes(query))
-        .map((folder) => ({
-          id: folder.id,
-          name: folder.name,
-          comicCount: folder.comicCount,
-          thumbnailUrl: parseThumb(folder.coverThumbnail),
-        })));
-    } catch (err) {
-      console.error('Failed to load folders:', err);
-      setFolders([]);
-    }
-  }, [activeFolder, activeLibraryId]);
+  useEffect(() => () => {
+    for (const url of thumbnailUrls.current) URL.revokeObjectURL(url);
+  }, []);
 
-  const loadInitial = useCallback(async (search?: string) => {
-    const s = search ?? '';
-    currentSearch.current = s;
-    const [{ entries, total }] = await Promise.all([
-      fetchPage(s, 0),
-      loadFolders(s),
-    ]);
-    setComics(entries);
-    setTotalCount(total);
-  }, [fetchPage, loadFolders]);
+  useEffect(() => {
+    onSelectionChange(new Set());
+    loadInitial();
+  }, [loadInitial, activeFolder]);
 
+  useEffect(() => {
+    setActiveFolder(null);
+  }, [activeLibraryId, activeView]);
+
+  // Load initial filter preset + tags on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -221,39 +223,6 @@ export const LibraryView: React.FC<Props> = ({
     })();
     return () => { cancelled = true; };
   }, []);
-
-  const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return;
-    setLoadingMore(true);
-    try {
-      const { entries, total } = await fetchPage(currentSearch.current, comics.length);
-      setComics((prev) => [...prev, ...entries]);
-      setTotalCount(total);
-    } catch (err) { console.error('Failed to load more:', err); }
-    finally { setLoadingMore(false); }
-  }, [fetchPage, comics.length, hasMore, loadingMore]);
-
-  useEffect(() => {
-    const currentUrls = new Set(comics.map((comic) => comic.thumbnailUrl).filter((url): url is string => url !== null));
-    for (const url of thumbnailUrls.current) {
-      if (!currentUrls.has(url)) URL.revokeObjectURL(url);
-    }
-    thumbnailUrls.current = currentUrls;
-  }, [comics]);
-
-  useEffect(() => () => {
-    for (const url of thumbnailUrls.current) URL.revokeObjectURL(url);
-  }, []);
-
-  useEffect(() => {
-    onSelectionChange(new Set());
-    lastClickedIndex.current = null;
-    loadInitial();
-  }, [loadInitial, activeFolder]);
-
-  useEffect(() => {
-    setActiveFolder(null);
-  }, [activeLibraryId, activeView]);
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const lastVirtualRow = virtualRows[virtualRows.length - 1];
@@ -297,7 +266,6 @@ export const LibraryView: React.FC<Props> = ({
         if (contextMenu || folderContextMenu || comics.length === 0) return;
         e.preventDefault();
         onSelectionChange(new Set(comics.map((comic) => comic.id)));
-        lastClickedIndex.current = comics.length - 1;
         return;
       }
 
@@ -315,7 +283,10 @@ export const LibraryView: React.FC<Props> = ({
     if (!dirPath) return;
     setScanning(true); setScanProgress(null);
     try {
-      if (activeView === 'books') {
+      if (activeView === 'all') {
+        await scanDirectory(dirPath);
+        await scanBooksDirectory(dirPath);
+      } else if (activeView === 'books') {
         await scanBooksDirectory(dirPath);
       } else {
         await scanDirectory(dirPath);
@@ -333,53 +304,11 @@ export const LibraryView: React.FC<Props> = ({
     loadInitial('');
   };
 
-  const persistAndReset = useCallback((preset: FilterPreset) => {
-    setAppMeta('filterPreset', JSON.stringify(preset)).catch((err) =>
-      console.warn('Failed to persist filter preset:', err)
-    );
-    setComics([]);
-    setTotalCount(0);
-  }, []);
-
-  const handleSortByChange = useCallback((field: QueryOptions['sortBy']) => {
-    const newOrder = getDefaultSortOrder(field);
-    setSortBy(field);
-    setSortOrder(newOrder);
-    const preset: FilterPreset = { sortBy: field, sortOrder: newOrder, readStatus, fileExt, tag: filterTag };
-    persistAndReset(preset);
-  }, [readStatus, fileExt, filterTag, persistAndReset]);
-
-  const handleSortOrderToggle = useCallback(() => {
-    const newOrder = toggleSortOrder(sortOrder);
-    setSortOrder(newOrder);
-    const preset: FilterPreset = { sortBy, sortOrder: newOrder, readStatus, fileExt, tag: filterTag };
-    persistAndReset(preset);
-  }, [sortBy, sortOrder, readStatus, fileExt, filterTag, persistAndReset]);
-
-  const handleReadStatusChange = useCallback((status: QueryOptions['readStatus'] | undefined) => {
-    setReadStatus(status);
-    const preset: FilterPreset = { sortBy, sortOrder, readStatus: status, fileExt, tag: filterTag };
-    persistAndReset(preset);
-  }, [sortBy, sortOrder, fileExt, filterTag, persistAndReset]);
-
-  const handleFileExtChange = useCallback((ext: string | undefined) => {
-    setFileExt(ext);
-    const preset: FilterPreset = { sortBy, sortOrder, readStatus, fileExt: ext, tag: filterTag };
-    persistAndReset(preset);
-  }, [sortBy, sortOrder, readStatus, filterTag, persistAndReset]);
-
-  const handleTagChange = useCallback((tag: string | undefined) => {
-    setFilterTag(tag);
-    const preset: FilterPreset = { sortBy, sortOrder, readStatus, fileExt, tag };
-    persistAndReset(preset);
-  }, [sortBy, sortOrder, readStatus, fileExt, persistAndReset]);
-
   const handleOpenFolder = (folder: FolderEntry) => {
     setContextMenu(null);
     setFolderContextMenu(null);
     setActiveFolder({ id: folder.id, name: folder.name });
     onSelectionChange(new Set());
-    lastClickedIndex.current = null;
     scrollRef.current?.scrollTo({ top: 0 });
   };
 
@@ -401,7 +330,6 @@ export const LibraryView: React.FC<Props> = ({
   const handleBackFromFolder = () => {
     setActiveFolder(null);
     onSelectionChange(new Set());
-    lastClickedIndex.current = null;
     scrollRef.current?.scrollTo({ top: 0 });
   };
 
@@ -437,8 +365,8 @@ export const LibraryView: React.FC<Props> = ({
         const records = await Promise.all(supportedFiles.map((filePath) => getComicByPath(filePath)));
         const matchingIds = records.flatMap((record) => {
           if (!record) return [];
-          const expectedMediaType = activeView === 'books' ? 'book' : 'comic';
-          return record.mediaType === expectedMediaType ? [record.id] : [];
+          const expectedMediaType = activeView === 'all' ? null : (activeView === 'books' ? 'book' : 'comic');
+          return expectedMediaType === null || record.mediaType === expectedMediaType ? [record.id] : [];
         });
         if (matchingIds.length > 0) {
           await addComicsToLibrary(activeLibraryId, Array.from(new Set(matchingIds)));
@@ -450,57 +378,13 @@ export const LibraryView: React.FC<Props> = ({
     finally { setAdding(false); }
   };
 
-  const handleComicClick = useCallback((e: React.MouseEvent, index: number) => {
-    const currentComics = comicsRef.current;
-    const currentSelectedIds = selectedIdsRef.current;
-    const comic = currentComics[index];
-    if (!comic) return;
-
-    if (e.shiftKey && lastClickedIndex.current !== null) {
-      const start = Math.min(lastClickedIndex.current, index);
-      const end = Math.max(lastClickedIndex.current, index);
-      const next = new Set(currentSelectedIds);
-      for (let i = start; i <= end; i++) next.add(currentComics[i].id);
-      onSelectionChange(next);
-    } else if (e.ctrlKey || e.metaKey) {
-      const next = new Set(currentSelectedIds);
-      if (next.has(comic.id)) next.delete(comic.id); else next.add(comic.id);
-      onSelectionChange(next);
-      lastClickedIndex.current = index;
-    } else {
-      if (currentSelectedIds.size === 1 && currentSelectedIds.has(comic.id)) {
-        onSelectionChange(new Set()); lastClickedIndex.current = null;
-      } else {
-        onSelectionChange(new Set([comic.id])); lastClickedIndex.current = index;
-      }
-    }
-  }, [onSelectionChange]);
-
-  const handleCheckboxClick = useCallback((e: React.MouseEvent, comicId: number) => {
-    e.stopPropagation();
-    const next = new Set(selectedIdsRef.current);
-    if (next.has(comicId)) next.delete(comicId); else next.add(comicId);
-    onSelectionChange(next);
-  }, [onSelectionChange]);
-
-  const handleComicDragStart = useCallback((e: React.DragEvent, comicId: number) => {
-    let ids = selectedIdsRef.current;
-    if (!ids.has(comicId)) { ids = new Set([comicId]); onSelectionChange(ids); }
-    e.dataTransfer.setData('application/comic-ids', JSON.stringify(Array.from(ids)));
-    e.dataTransfer.effectAllowed = 'link';
-  }, [onSelectionChange]);
-
   const handleComicContextMenu = useCallback(async (e: React.MouseEvent, comic: ComicEntry) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const currentSelectedIds = selectedIdsRef.current;
-    const currentComics = comicsRef.current;
-    const currentActiveFolder = activeFolderRef.current;
-    const comicIds = currentSelectedIds.has(comic.id) ? Array.from(currentSelectedIds) : [comic.id];
-    if (!currentSelectedIds.has(comic.id)) {
+    const comicIds = selectedIds.has(comic.id) ? Array.from(selectedIds) : [comic.id];
+    if (!selectedIds.has(comic.id)) {
       onSelectionChange(new Set([comic.id]));
-      lastClickedIndex.current = currentComics.findIndex((entry) => entry.id === comic.id);
     }
 
     setContextCreateMode(null);
@@ -519,6 +403,7 @@ export const LibraryView: React.FC<Props> = ({
     });
 
     try {
+      const currentActiveFolder = activeFolderRef.current;
       const [libraries, folderSummaries] = await Promise.all([getLibraries(activeView === 'books' ? 'book' : 'comic'), getFolders()]);
       setContextMenu((current) => {
         if (!current || current.comic.id !== comic.id) return current;
@@ -540,7 +425,7 @@ export const LibraryView: React.FC<Props> = ({
       console.error('Failed to load context menu data:', err);
       setContextMenu((current) => current ? { ...current, loading: false } : current);
     }
-  }, [activeView, onSelectionChange]);
+  }, [activeView, onSelectionChange, selectedIds]);
 
   const closeContextMenu = () => {
     setContextMenu(null);
@@ -581,7 +466,7 @@ export const LibraryView: React.FC<Props> = ({
   const handleDeleteFolder = async () => {
     if (!folderContextMenu) return;
     const { folder } = folderContextMenu;
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Delete virtual folder "${folder.name}"?\n\nThis only removes the folder grouping. Comics and image files stay in the library.`
     );
     if (!confirmed) return;
@@ -636,7 +521,6 @@ export const LibraryView: React.FC<Props> = ({
     await addComicsToFolder(folderId, contextMenu.comicIds);
     closeContextMenu();
     onSelectionChange(new Set());
-    lastClickedIndex.current = null;
     await loadInitial(searchQuery);
   };
 
@@ -659,7 +543,6 @@ export const LibraryView: React.FC<Props> = ({
       }
       closeContextMenu();
       onSelectionChange(new Set());
-      lastClickedIndex.current = null;
       await loadInitial(searchQuery);
     } catch (err) {
       console.error('Failed to create folder:', err);
@@ -675,18 +558,16 @@ export const LibraryView: React.FC<Props> = ({
       await removeComicsFromLibrary(activeLibraryId, contextMenu.comicIds);
       closeContextMenu();
       onSelectionChange(new Set());
-      lastClickedIndex.current = null;
       await loadInitial(searchQuery);
       onComicsChanged();
       return;
     }
 
-    const confirmed = window.confirm(`Delete ${count} comic${count !== 1 ? 's' : ''} from the database?\n\nFiles stay on disk, but future scans will skip these paths.`);
+    const confirmed = await confirm(`Delete ${count} comic${count !== 1 ? 's' : ''} from the database?\n\nFiles stay on disk, but future scans will skip these paths.`);
     if (!confirmed) return;
     await removeComics(contextMenu.comicIds);
     closeContextMenu();
     onSelectionChange(new Set());
-    lastClickedIndex.current = null;
     await loadInitial(searchQuery);
     onComicsChanged();
   };
@@ -747,7 +628,6 @@ export const LibraryView: React.FC<Props> = ({
       if (!Array.isArray(comicIds) || comicIds.length === 0) return;
       await addComicsToFolder(folder.id, comicIds);
       onSelectionChange(new Set());
-      lastClickedIndex.current = null;
       await loadInitial(searchQuery);
     } catch (err) {
       console.error(`Failed to add comics to folder "${folder.name}":`, err);
@@ -786,7 +666,7 @@ export const LibraryView: React.FC<Props> = ({
           <span style={{ fontSize: 24, color: '#5b9aff', fontWeight: 'bold' }}>Drop CBZ/CBR files to add</span>
         </div>
       )}
-      {adding && <div style={{ padding: '4px 16px', backgroundColor: '#1e3a5f', fontSize: 12, flexShrink: 0 }}>Adding {isBooks ? 'books' : 'comics'}...</div>}
+      {adding && <div style={{ padding: '4px 16px', backgroundColor: '#1e3a5f', fontSize: 12, flexShrink: 0 }}>Adding {mediaLabel}...</div>}
 
       <div style={{ padding: '8px 12px', backgroundColor: '#252525', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, borderBottom: '1px solid #333' }}>
         <form onSubmit={handleSearch} style={{ display: 'flex', gap: 6, flex: 1 }}>
@@ -853,21 +733,25 @@ export const LibraryView: React.FC<Props> = ({
       )}
 
       {scanning && scanProgress && (
-        <div style={{ padding: '4px 16px', backgroundColor: '#1e3a5f', fontSize: 12, flexShrink: 0 }}>
-          Scanning: {scanProgress.processed} / {scanProgress.discovered} processed
+        <div style={{ padding: '4px 16px', backgroundColor: '#1e3a5f', fontSize: 12, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span>Scanning: {scanProgress.processed} / {scanProgress.discovered} processed</span>
+          <button
+            onClick={cancelScan}
+            style={{ padding: '1px 8px', fontSize: 11, cursor: 'pointer', background: '#7f1d1d', border: 'none', color: '#fca5a5', borderRadius: 3 }}
+          >Cancel</button>
         </div>
       )}
 
       {!activeFolder && activeLibraryId == null && (
-        <ContinueReadingShelf mediaType={isBooks ? 'book' : 'comic'} onOpenFile={onOpenFile} refreshKey={refreshKey ?? 0} />
+        <ContinueReadingShelf mediaType={isAll ? undefined : (isBooks ? 'book' : 'comic')} onOpenFile={onOpenFile} refreshKey={refreshKey ?? 0} />
       )}
 
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: 12 }}
-        onClick={() => { onSelectionChange(new Set()); lastClickedIndex.current = null; }}>
+        onClick={() => { onSelectionChange(new Set()); }}>
         {visibleItemCount === 0 && !scanning ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16, color: '#666' }}>
-            <p style={{ fontSize: 18 }}>{activeFolder ? `No ${isBooks ? 'books' : 'comics'} in this folder` : activeLibraryId != null ? `No ${isBooks ? 'books' : 'comics'} in this library` : isBooks ? 'No books' : 'No comics'}</p>
-            {!activeFolder && <p style={{ fontSize: 14 }}>Drag &amp; drop {isBooks ? 'PDF, EPUB, or MOBI' : 'CBZ/CBR'} files here, or use &quot;Scan Directory&quot;.</p>}
+            <p style={{ fontSize: 18 }}>{activeFolder ? `No ${mediaLabel} in this folder` : activeLibraryId != null ? `No ${mediaLabel} in this library` : `No ${mediaLabel}`}</p>
+            {!activeFolder && <p style={{ fontSize: 14 }}>Drag &amp; drop {isAll ? 'comic or book' : isBooks ? 'PDF, EPUB, or MOBI' : 'CBZ/CBR'} files here, or use &quot;Scan Directory&quot;.</p>}
           </div>
         ) : (
           <div style={{ height: rowVirtualizer.getTotalSize(), width: '100%', position: 'relative' }}>
@@ -972,6 +856,7 @@ export const LibraryView: React.FC<Props> = ({
           onClose={() => setDetailsComic(null)}
         />
       )}
+      {confirmModal}
     </div>
   );
 };

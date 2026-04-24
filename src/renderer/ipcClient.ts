@@ -59,6 +59,10 @@ export function onScanProgress(callback: (progress: ScanProgress) => void): () =
   return api.on('library:scan-progress', callback);
 }
 
+export function cancelScan(): void {
+  api.send('library:scan-cancel');
+}
+
 export async function addTag(comicId: number, tag: string): Promise<void> {
   await api.invoke('library:add-tag', comicId, tag);
 }

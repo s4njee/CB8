@@ -6,7 +6,8 @@ import { getCachedOrResize, invalidateCacheForComic } from '../../imageResizer';
 import { searchMetadata } from '../../metadataScraper';
 import { sendJson, sendError, readBody, parseQueryOptions } from '../middleware';
 import { toWebRecord, overlayUserState } from '../mapping';
-import { getArchiveHandle, evictFromCache } from '../archiveCache';
+import { withArchive, evictFromCache } from '../archiveCache';
+import { safeFetchBuffer, SafeFetchError } from '../safeFetch';
 import { requireAdmin, type RouteHandler } from '../context';
 import type { QueryOptions } from '../../../shared/types';
 
@@ -106,43 +107,44 @@ export const handle: RouteHandler = async (ctx) => {
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     if (record.mediaType !== 'comic') { sendError(res, 400, 'Not a comic archive'); return true; }
     try {
-      const handle = await getArchiveHandle(comicId, record.filePath);
-      if (pageIndex < 0 || pageIndex >= handle.pageCount) {
-        sendError(res, 400, `Page ${pageIndex} out of range`);
-        return true;
-      }
-      const ext = handle.entries[pageIndex]?.filename.split('.').pop()?.toLowerCase() ?? '';
-      const mime = PAGE_MIME[ext] ?? 'image/png';
-
-      const widthParam = query.width ? parseInt(query.width, 10) : NaN;
-      if (Number.isFinite(widthParam) && widthParam > 0) {
-        try {
-          const out = await getCachedOrResize(comicId, pageIndex, widthParam, async () => {
-            const buf = await ArchiveLoader.getPage(handle, pageIndex);
-            return { buffer: buf, ext };
-          });
-          res.writeHead(200, {
-            'Content-Type': `image/${out.ext}`,
-            'Cache-Control': 'public, max-age=86400',
-            'Content-Length': String(out.buffer.length),
-          });
-          res.end(out.buffer);
-          return true;
-        } catch (err) {
-          console.warn('[webServer] Page resize failed, falling back:', err);
+      await withArchive(comicId, record.filePath, async (handle) => {
+        if (pageIndex < 0 || pageIndex >= handle.pageCount) {
+          sendError(res, 400, `Page ${pageIndex} out of range`);
+          return;
         }
-      }
+        const ext = handle.entries[pageIndex]?.filename.split('.').pop()?.toLowerCase() ?? '';
+        const mime = PAGE_MIME[ext] ?? 'image/png';
 
-      const buf = await ArchiveLoader.getPage(handle, pageIndex);
-      res.writeHead(200, {
-        'Content-Type': mime,
-        'Cache-Control': 'public, max-age=86400',
-        'Content-Length': String(buf.length),
+        const widthParam = query.width ? parseInt(query.width, 10) : NaN;
+        if (Number.isFinite(widthParam) && widthParam > 0) {
+          try {
+            const out = await getCachedOrResize(comicId, pageIndex, widthParam, async () => {
+              const buf = await ArchiveLoader.getPage(handle, pageIndex);
+              return { buffer: buf, ext };
+            });
+            res.writeHead(200, {
+              'Content-Type': `image/${out.ext}`,
+              'Cache-Control': 'public, max-age=86400',
+              'Content-Length': String(out.buffer.length),
+            });
+            res.end(out.buffer);
+            return;
+          } catch (err) {
+            console.warn('[webServer] Page resize failed, falling back:', err);
+          }
+        }
+
+        const buf = await ArchiveLoader.getPage(handle, pageIndex);
+        res.writeHead(200, {
+          'Content-Type': mime,
+          'Cache-Control': 'public, max-age=86400',
+          'Content-Length': String(buf.length),
+        });
+        res.end(buf);
       });
-      res.end(buf);
     } catch (err) {
       console.error(`[webServer] Page read error comic=${comicId} page=${pageIndex}:`, err);
-      sendError(res, 500, 'Failed to read page');
+      if (!res.headersSent) sendError(res, 500, 'Failed to read page');
     }
     return true;
   }
@@ -240,15 +242,18 @@ export const handle: RouteHandler = async (ctx) => {
     });
     if (typeof parsed.coverUrl === 'string' && parsed.coverUrl) {
       try {
-        const resp = await fetch(parsed.coverUrl);
-        if (resp.ok) {
-          const buf = Buffer.from(await resp.arrayBuffer());
-          const thumb = generateThumbnail(buf);
-          const record = db.getComic(id);
-          if (record && thumb) db.updateCoverThumbnailByPath(record.filePath, thumb);
-          invalidateCacheForComic(id);
+        const buf = await safeFetchBuffer(parsed.coverUrl);
+        const thumb = generateThumbnail(buf);
+        const record = db.getComic(id);
+        if (record && thumb) db.updateCoverThumbnailByPath(record.filePath, thumb);
+        invalidateCacheForComic(id);
+      } catch (err) {
+        if (err instanceof SafeFetchError) {
+          console.warn(`[webServer] Cover fetch refused for comic=${id}: ${err.message}`);
+        } else {
+          console.warn(`[webServer] Cover fetch failed for comic=${id}:`, err);
         }
-      } catch { /* ignore cover fetch failure */ }
+      }
     }
     sendJson(res, 200, { ok: true });
     return true;

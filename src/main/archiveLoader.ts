@@ -173,12 +173,17 @@ export async function close(handle: ArchiveHandle): Promise<void> {
 
 // --- CBR (RAR) support ---
 
-import * as fs from 'fs';
-import { createExtractorFromData } from 'node-unrar-js';
+import * as fsp from 'node:fs/promises';
+import { createExtractorFromData, type Extractor } from 'node-unrar-js';
 
 interface CbrHandle extends ArchiveHandle {
   format: 'cbr';
-  _extractedFiles: Map<number, Buffer>;
+  /**
+   * Extractor kept for the life of the handle so pages can be extracted
+   * lazily on demand without re-reading the archive from disk. We store
+   * filenames in sorted order; page N maps to the entry at entries[N].
+   */
+  _extractor: Extractor<Uint8Array>;
 }
 
 function isCbrHandle(handle: ArchiveHandle): handle is CbrHandle {
@@ -186,19 +191,20 @@ function isCbrHandle(handle: ArchiveHandle): handle is CbrHandle {
 }
 
 /**
- * Open a CBR (RAR) archive. Extracts all image files into memory,
- * filters by image extension, and sorts by natural sort order.
+ * Open a CBR (RAR) archive. Reads the file asynchronously, enumerates image
+ * entries, and keeps the extractor around so pages can be decoded on demand
+ * rather than holding every decompressed page in memory up front.
  */
 export async function openCbr(filePath: string): Promise<ArchiveHandle> {
   let fileData: Buffer;
   try {
-    fileData = fs.readFileSync(filePath);
+    fileData = await fsp.readFile(filePath);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to open archive: ${msg}`);
   }
 
-  let extractor;
+  let extractor: Extractor<Uint8Array>;
   try {
     const archiveData = fileData.buffer.slice(
       fileData.byteOffset,
@@ -210,37 +216,23 @@ export async function openCbr(filePath: string): Promise<ArchiveHandle> {
     throw new Error(`Failed to open archive: ${msg}`);
   }
 
-  const extracted = extractor.extract({
-    files: (fileHeader) => !fileHeader.flags.directory && isImageFile(fileHeader.name),
-  });
-
-  const imageFiles: { filename: string; data: Buffer }[] = [];
-  for (const file of extracted.files) {
-    if (file.extraction) {
-      imageFiles.push({
-        filename: file.fileHeader.name,
-        data: Buffer.from(file.extraction),
-      });
+  const fileList = extractor.getFileList();
+  const imageNames: string[] = [];
+  for (const header of fileList.fileHeaders) {
+    if (!header.flags.directory && isImageFile(header.name)) {
+      imageNames.push(header.name);
     }
   }
+  imageNames.sort((a, b) => naturalCompare(a, b));
 
-  // Sort by filename using natural sort
-  imageFiles.sort((a, b) => naturalCompare(a.filename, b.filename));
-
-  const entries: ArchiveEntry[] = imageFiles.map((f, i) => ({
-    filename: f.filename,
-    index: i,
-  }));
-
-  const extractedMap = new Map<number, Buffer>();
-  imageFiles.forEach((f, i) => extractedMap.set(i, f.data));
+  const entries: ArchiveEntry[] = imageNames.map((filename, index) => ({ filename, index }));
 
   const handle: CbrHandle = {
     filePath,
     format: 'cbr',
     entries,
     pageCount: entries.length,
-    _extractedFiles: extractedMap,
+    _extractor: extractor,
   };
 
   return handle;
@@ -250,9 +242,16 @@ function getCbrPage(handle: CbrHandle, pageIndex: number): Promise<Buffer> {
   if (pageIndex < 0 || pageIndex >= handle.pageCount) {
     return Promise.reject(new Error(`Page index ${pageIndex} out of range (0-${handle.pageCount - 1})`));
   }
-  const data = handle._extractedFiles.get(pageIndex);
-  if (!data) {
-    return Promise.reject(new Error(`Failed to read page ${pageIndex}: data not found`));
+  const targetName = handle.entries[pageIndex].filename;
+  try {
+    const extracted = handle._extractor.extract({ files: [targetName] });
+    for (const file of extracted.files) {
+      if (file.fileHeader.name === targetName && file.extraction) {
+        return Promise.resolve(Buffer.from(file.extraction));
+      }
+    }
+    return Promise.reject(new Error(`Failed to read page ${pageIndex}: entry not found`));
+  } catch (err) {
+    return Promise.reject(new Error(`Failed to read page ${pageIndex}: ${err instanceof Error ? err.message : String(err)}`));
   }
-  return Promise.resolve(data);
 }

@@ -6,6 +6,7 @@
  * modules import (showToast, getState, mediaType/filter setters,
  * isAuthenticated). The hash-routing contract is:
  *   #/                 → all comics/books
+ *   #/continue         → continue reading (in-progress only)
  *   #/recent           → recently read
  *   #/library/:id      → library collection
  *   #/folder/:id       → folder
@@ -29,6 +30,9 @@ export function setMediaType(next) {
   document.querySelectorAll('.media-btn').forEach((b) => {
     b.classList.toggle('active', (b.dataset.type || '') === state.mediaType);
   });
+  // Re-render the sidebar so folder filtering (comic vs book) follows the
+  // media-type toggle.
+  populateSidebar();
   navigate();
 }
 export function setFileExt(next) {

@@ -16,12 +16,15 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as url from 'node:url';
 import { app } from 'electron';
+import { toNodeHandler, fromNodeHeaders } from 'better-auth/node';
 import { LibraryDatabase } from './libraryDatabase';
 import {
-  setSessionsFilePath, loadSessions,
-  resolveUser, isGuestAccessEnabled,
+  isGuestAccessEnabled,
   sendError, ensureInitialAdmin,
+  BodyTooLargeError,
 } from './webServer/middleware';
+import { createAuth, getAuth } from './webServer/auth';
+import type { ResolvedUser } from './webServer/middleware';
 import type { RequestContext, RouteHandler } from './webServer/context';
 import * as authRoutes from './webServer/routes/auth';
 import * as userRoutes from './webServer/routes/users';
@@ -32,8 +35,47 @@ import * as progressRoutes from './webServer/routes/progress';
 import * as comicRoutes from './webServer/routes/comics';
 import * as uploadRoutes from './webServer/routes/upload';
 import { serveStatic } from './webServer/routes/staticFiles';
+import { loginLimiter, forgotPasswordLimiter } from './webServer/rateLimit';
 
 export { closeAllHandles } from './webServer/archiveCache';
+
+// Our own custom auth endpoints — handled by authRoutes rather than forwarded
+// to better-auth's built-in handler.
+const OWN_AUTH_ENDPOINTS = new Set([
+  '/api/auth/session',
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/auth/register',
+  '/api/admin/session',
+  '/api/admin/login',
+  '/api/admin/logout',
+]);
+
+let betterAuthHandler: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> = async () => {
+  // Replaced by startWebServer once the auth instance is built.
+  throw new Error('better-auth handler not initialized');
+};
+
+async function resolveCurrentUser(
+  req: http.IncomingMessage,
+): Promise<ResolvedUser | null> {
+  try {
+    const session = await getAuth().api.getSession({ headers: fromNodeHeaders(req.headers) });
+    if (session?.user) {
+      const id = typeof session.user.id === 'number' ? session.user.id : parseInt(String(session.user.id), 10);
+      if (Number.isFinite(id)) {
+        return {
+          id,
+          username: session.user.username ?? session.user.email,
+          isAdmin: session.user.isAdmin === true,
+        };
+      }
+    }
+  } catch {
+    // No valid better-auth session.
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Static file root resolution
@@ -94,8 +136,28 @@ async function handleRequest(
     return;
   }
 
+  // Rate-limit sensitive auth endpoints before any processing.
+  if (method === 'POST') {
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    if (pathname === '/api/auth/login' || pathname === '/api/admin/login') {
+      if (!loginLimiter.check(`${ip}:login`)) {
+        return sendError(res, 429, 'Too many login attempts. Try again later.');
+      }
+    } else if (pathname === '/api/auth/forget-password' || pathname === '/api/auth/forgot-password') {
+      if (!forgotPasswordLimiter.check(`${ip}:forgot`)) {
+        return sendError(res, 429, 'Too many password reset requests. Try again later.');
+      }
+    }
+  }
+
+  // Delegate /api/auth/* traffic not handled by our own routes to better-auth.
+  if (pathname.startsWith('/api/auth/') && !OWN_AUTH_ENDPOINTS.has(pathname)) {
+    await betterAuthHandler(req, res);
+    return;
+  }
+
   if (pathname.startsWith('/api/')) {
-    const currentUser = resolveUser(req, db);
+    const currentUser = await resolveCurrentUser(req);
     const guestEnabled = isGuestAccessEnabled(db);
 
     // Guest-access gate: unauthenticated requests are limited to GETs on a
@@ -149,17 +211,26 @@ export interface WebServerHandle {
  * @param port  TCP port to listen on. Default 8008.
  */
 export function startWebServer(db: LibraryDatabase, port = 8008): WebServerHandle {
-  setSessionsFilePath(path.join(app.getPath('userData'), 'cb8-sessions.json'));
-  loadSessions();
-
   ensureInitialAdmin(db).catch((err) => {
     console.error('[CB8] Failed to create initial admin user:', err);
   });
+
+  // Initialize better-auth against the raw sqlite handle and wrap it as a
+  // Node-style http handler so we can dispatch on URL prefix.
+  const auth = createAuth(db.raw);
+  betterAuthHandler = toNodeHandler(auth);
 
   const staticRoot = resolveStaticRoot();
 
   const server = http.createServer((req, res) => {
     handleRequest(req, res, db, staticRoot).catch((err) => {
+      if (err instanceof BodyTooLargeError) {
+        try {
+          if (!res.headersSent) sendError(res, 413, err.message);
+          else res.destroy();
+        } catch { /* ignore */ }
+        return;
+      }
       console.error('[webServer] Unhandled error:', err);
       try {
         if (!res.headersSent) {

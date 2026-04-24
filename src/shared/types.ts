@@ -15,7 +15,7 @@ export interface ArchiveHandle {
   pageCount: number;
 }
 
-export interface ComicRecord {
+export interface MediaRecord {
   id: number;
   filePath: string;
   title: string;
@@ -29,6 +29,9 @@ export interface ComicRecord {
   lastRead: string | null;
   mediaType: 'comic' | 'book';
 }
+
+/** @deprecated Use MediaRecord instead. Kept for backward compatibility. */
+export type ComicRecord = MediaRecord;
 
 export interface QueryOptions {
   search?: string;
@@ -52,7 +55,7 @@ export interface FilterPreset {
 }
 
 export interface QueryResult {
-  records: ComicRecord[];
+  records: MediaRecord[];
   totalCount: number;
 }
 

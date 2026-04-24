@@ -282,11 +282,79 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   color: var(--text-muted);
 }
 
+.library-header-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.library-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background var(--trans), border-color var(--trans), color var(--trans);
+}
+.library-header-btn:hover {
+  color: var(--text);
+  border-color: var(--border2);
+}
+.library-header-btn-danger:hover {
+  color: #ff6b81;
+  border-color: #ff6b81;
+}
+
 .comics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--card-w), 1fr));
   gap: 14px;
   padding: 0 20px 20px;
+}
+
+/* --- Continue-reading shelf --------------------------------------------- */
+.continue-shelf {
+  padding: 0 20px 16px;
+}
+.continue-shelf-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.continue-shelf-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+}
+.continue-shelf-seeall {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.continue-shelf-seeall:hover { color: var(--text); }
+.continue-shelf-track {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  padding-bottom: 6px;
+  -webkit-overflow-scrolling: touch;
+}
+.continue-shelf-card {
+  flex: 0 0 var(--card-w);
+  scroll-snap-align: start;
+}
+@media (max-width: 700px) {
+  .continue-shelf { padding: 0 10px 12px; }
+  .continue-shelf-track { gap: 12px; }
 }
 
 /* --- Comic card ---------------------------------------------------------- */
@@ -1146,6 +1214,20 @@ body:not(.admin-authenticated) .admin-add-button { display: none; }
   color: var(--text-muted);
 }
 .admin-btn-secondary:hover { color: var(--text); border-color: var(--border2); }
+
+.admin-alt-link {
+  margin-top: 12px;
+  text-align: center;
+}
+.admin-link-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px 8px;
+}
+.admin-link-btn:hover { color: var(--text); text-decoration: underline; }
 
 /* Radio pill group (used in collection-type picker etc.) */
 .radio-row { display: flex; gap: 8px; }

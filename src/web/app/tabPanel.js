@@ -36,6 +36,8 @@ export function updateSidebarActive(route) {
   if (!route) return;
   if (route.type === 'all') {
     document.getElementById('link-all')?.classList.add('active');
+  } else if (route.type === 'continue') {
+    document.getElementById('link-continue')?.classList.add('active');
   } else if (route.type === 'recent') {
     document.getElementById('link-recent')?.classList.add('active');
   } else if (route.type === 'library') {

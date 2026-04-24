@@ -6,6 +6,7 @@ import type {
   IpcInvokeArgs,
   IpcInvokeChannel,
   IpcInvokeResult,
+  IpcSendChannel,
 } from '../shared/ipcTypes';
 
 interface ElectronAPI {
@@ -17,6 +18,7 @@ interface ElectronAPI {
     channel: C,
     callback: (...args: IpcEventArgs<C>) => void
   ) => () => void;
+  send: (channel: IpcSendChannel) => void;
   getPathForFile: (file: File) => string;
 }
 

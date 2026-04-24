@@ -3,8 +3,7 @@
  * Accepts CBZ, CBR comic archives and PDF, EPUB, MOBI book files.
  */
 
-const COMIC_EXTENSIONS = new Set(['cbz', 'cbr']);
-const BOOK_EXTENSIONS = new Set(['pdf', 'epub', 'mobi']);
+import { COMIC_EXTENSIONS, BOOK_EXTENSIONS, isSupportedFile as _isSupportedFile } from './mediaTypes';
 
 /**
  * Check if a filename is a valid comic archive file.
@@ -28,5 +27,5 @@ export function isBookFile(filename: string): boolean {
  * Check if a filename is any supported media file (comic or book).
  */
 export function isSupportedFile(filename: string): boolean {
-  return isComicArchive(filename) || isBookFile(filename);
+  return _isSupportedFile(filename);
 }

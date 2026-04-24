@@ -2,12 +2,14 @@
  * views/library.js — Library grid view
  *
  * Renders a paginated, infinitely-scrolling grid of comic/book cards.
- * Supports all routes: all, recent, library, folder, tag.
+ * Supports all routes: all, continue, recent, library, folder, tag.
  */
 
 import * as api from '../api.js';
 import { getState, setMediaType, setFileExt, setReadStatus, setFavoritesOnly } from '../app.js';
 import { isAuthenticated, isAdmin, bulkDeleteComics, onAdminChange } from '../admin.js';
+import { sidebarCache } from '../app/state.js';
+import { showToast } from '../app/toast.js';
 
 const PAGE_SIZE = 48;
 
@@ -116,12 +118,33 @@ export async function renderLibrary(el, route, options) {
 
   header.appendChild(titleEl);
   header.appendChild(countEl);
+
+  // Admin affordance: a visible Delete button when viewing a specific
+  // collection or folder. Same confirm + navigation flow as the sidebar
+  // context menu; added here because the context menu isn't discoverable.
+  if (isAuthenticated() && (route.type === 'library' || route.type === 'folder')) {
+    header.appendChild(buildCollectionActions(route));
+  }
+
   el.appendChild(header);
 
   el.appendChild(buildMediaStrip());
   el.appendChild(buildFileTypeStrip());
   if (isAuthenticated()) {
     el.appendChild(buildReadStatusStrip());
+  }
+
+  // Continue-reading shelf — only on the main "all" view, only when signed in.
+  // Separate element so we can update/remove it without re-rendering the header.
+  if (route.type === 'all' && isAuthenticated()) {
+    const shelfHost = document.createElement('div');
+    shelfHost.id = 'continue-shelf-host';
+    el.appendChild(shelfHost);
+    // Fire-and-forget: don't block grid render on shelf fetch.
+    renderContinueShelf(shelfHost, options).catch((err) => {
+      console.error('[CB8] continue shelf load failed:', err);
+      shelfHost.remove();
+    });
   }
 
   grid = document.createElement('div');
@@ -289,6 +312,48 @@ function buildReadStatusStrip() {
 }
 
 // ---------------------------------------------------------------------------
+// Continue-reading shelf (inline, on #/ only)
+// ---------------------------------------------------------------------------
+
+const SHELF_LIMIT = 20;
+
+async function renderContinueShelf(host, options) {
+  const records = await api.fetchContinueReading(SHELF_LIMIT, options.mediaType || undefined);
+  if (!records || records.length === 0) {
+    host.remove();
+    return;
+  }
+
+  const shelf = document.createElement('section');
+  shelf.className = 'continue-shelf';
+  shelf.setAttribute('aria-label', 'Continue reading');
+
+  const header = document.createElement('div');
+  header.className = 'continue-shelf-header';
+  const title = document.createElement('h2');
+  title.className = 'continue-shelf-title';
+  title.textContent = 'Continue Reading';
+  const seeAll = document.createElement('a');
+  seeAll.className = 'continue-shelf-seeall';
+  seeAll.href = '#/continue';
+  seeAll.textContent = 'See all';
+  header.appendChild(title);
+  header.appendChild(seeAll);
+
+  const track = document.createElement('div');
+  track.className = 'continue-shelf-track';
+  for (const record of records) {
+    const card = createCard(record);
+    card.classList.add('continue-shelf-card');
+    track.appendChild(card);
+  }
+
+  shelf.appendChild(header);
+  shelf.appendChild(track);
+  host.appendChild(shelf);
+}
+
+// ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
 
@@ -312,6 +377,9 @@ async function loadNextPage() {
 
     if (currentRoute.type === 'recent') {
       const records = await api.fetchRecentlyRead(PAGE_SIZE + offset, currentOptions.mediaType || undefined);
+      result = { records: records.slice(offset, offset + PAGE_SIZE), totalCount: records.length };
+    } else if (currentRoute.type === 'continue') {
+      const records = await api.fetchContinueReading(PAGE_SIZE + offset, currentOptions.mediaType || undefined);
       result = { records: records.slice(offset, offset + PAGE_SIZE), totalCount: records.length };
     } else if (currentRoute.type === 'library') {
       result = await api.fetchLibraryComics(currentRoute.id, opts);
@@ -361,6 +429,7 @@ function emptyReasonForRoute() {
   );
   if (hasFilter) return 'no-results';
   if (currentRoute && currentRoute.type === 'recent') return 'no-recent';
+  if (currentRoute && currentRoute.type === 'continue') return 'no-continue';
   return 'empty';
 }
 
@@ -379,8 +448,9 @@ function formatBadgeFor(record) {
 }
 
 function progressLabelFor(record) {
+  // lastPage is 0-indexed, so pages-read = lastPage + 1.
   if (record.pageCount > 0 && record.lastPage != null && record.lastPage > 0) {
-    const pct = Math.max(1, Math.min(100, Math.round((record.lastPage / record.pageCount) * 100)));
+    const pct = Math.max(1, Math.min(100, Math.round(((record.lastPage + 1) / record.pageCount) * 100)));
     return `${pct}%`;
   }
   if (record.lastLocation) return 'In progress';
@@ -452,7 +522,7 @@ function createCard(record) {
 
   // Progress bar (existing)
   if (record.lastPage && record.pageCount > 0) {
-    const pct = Math.min(100, Math.round((record.lastPage / record.pageCount) * 100));
+    const pct = Math.min(100, Math.round(((record.lastPage + 1) / record.pageCount) * 100));
     const bar = document.createElement('div');
     bar.className = 'progress-bar';
     bar.style.width = `${pct}%`;
@@ -695,6 +765,13 @@ function emptyStateMarkup(reason) {
         </svg>
         <p>Nothing read yet. Open a book or comic to get started.</p>
       `;
+    case 'no-continue':
+      return `
+        <svg ${svgAttrs}>
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+        <p>Nothing in progress. Start a book to see it here.</p>
+      `;
     case 'empty':
     default:
       return `
@@ -714,10 +791,60 @@ function emptyStateMarkup(reason) {
 function routeTitle(route) {
   switch (route.type) {
     case 'all':     return 'All Items';
+    case 'continue': return 'Continue Reading';
     case 'recent':  return 'Recently Read';
-    case 'library': return 'Collection';
-    case 'folder':  return 'Folder';
+    case 'library': {
+      const lib = sidebarCache.libraries.find((l) => l.id === route.id);
+      return lib?.name ?? 'Collection';
+    }
+    case 'folder': {
+      const folder = sidebarCache.folders.find((f) => f.id === route.id);
+      return folder?.name ?? 'Folder';
+    }
     case 'tag':     return `Tag: ${route.tag}`;
     default:        return 'Library';
   }
+}
+
+/**
+ * Header action bar shown when viewing a specific library or folder —
+ * currently just a Delete button. Mirrors the sidebar context menu so the
+ * action is discoverable for users who don't know about right-click.
+ */
+function buildCollectionActions(route) {
+  const wrap = document.createElement('div');
+  wrap.className = 'library-header-actions';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'library-header-btn library-header-btn-danger';
+  btn.title = route.type === 'library' ? 'Delete collection' : 'Delete folder';
+  btn.innerHTML = `
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 6h18"/>
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+      <path d="M6 6v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6"/>
+      <path d="M10 11v6"/><path d="M14 11v6"/>
+    </svg>
+    <span>Delete</span>
+  `;
+
+  btn.addEventListener('click', async () => {
+    const isLibrary = route.type === 'library';
+    const kind = isLibrary ? 'collection' : 'folder';
+    const name = routeTitle(route);
+    if (!window.confirm(`Delete ${kind} "${name}"? Comics and files are not removed.`)) return;
+    try {
+      if (isLibrary) await api.deleteLibrary(route.id);
+      else await api.deleteFolder(route.id);
+      showToast(`Deleted "${name}"`);
+      window.location.hash = '#/';
+      window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+    } catch (err) {
+      showToast(err.message || `Could not delete ${kind}`);
+    }
+  });
+
+  wrap.appendChild(btn);
+  return wrap;
 }

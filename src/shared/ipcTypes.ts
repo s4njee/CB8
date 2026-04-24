@@ -12,7 +12,7 @@ export type ArchiveOpenResponse =
   | { error: string };
 
 export type ArchivePageResponse =
-  | { dataUrl: string }
+  | { bytes: Uint8Array; mime: string }
   | { error: string };
 
 export interface AddFilesResponse {
@@ -145,3 +145,10 @@ export const IPC_EVENT_CHANNELS = [
   'file-opened',
   'open-settings',
 ] as const satisfies readonly IpcEventChannel[];
+
+// One-way fire-and-forget channels (renderer → main, no response).
+export type IpcSendChannel = 'library:scan-cancel';
+
+export const IPC_SEND_CHANNELS = [
+  'library:scan-cancel',
+] as const satisfies readonly IpcSendChannel[];

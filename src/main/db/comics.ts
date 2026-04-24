@@ -164,9 +164,18 @@ export function queryComics(db: Database.Database, options: QueryOptions = {}): 
 }
 
 export function updateReadingProgress(db: Database.Database, comicId: number, pageIndex: number): void {
+  // Auto-flip completed when we hit the final page (pages are 0-indexed, so
+  // last page = page_count - 1). Never downgrades completed → 0.
   db.prepare(
-    `UPDATE comics SET last_page = ?, last_read = datetime('now') WHERE id = ?`
-  ).run(pageIndex, comicId);
+    `UPDATE comics
+     SET last_page = ?,
+         last_read = datetime('now'),
+         completed = CASE
+           WHEN page_count > 0 AND ? >= page_count - 1 THEN 1
+           ELSE completed
+         END
+     WHERE id = ?`
+  ).run(pageIndex, pageIndex, comicId);
 }
 
 export function updateReadingLocation(db: Database.Database, comicId: number, location: string): void {
@@ -189,6 +198,25 @@ export function getRecentlyRead(
     : db.prepare(
         `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
          FROM comics WHERE last_read IS NOT NULL
+         ORDER BY last_read DESC LIMIT ?`
+      ).all(limit) as ComicRow[];
+  return rows.map((r) => rowToRecord(db, r));
+}
+
+export function getContinueReading(
+  db: Database.Database,
+  limit: number = 10,
+  mediaType?: 'comic' | 'book',
+): ComicRecord[] {
+  const rows = mediaType
+    ? db.prepare(
+        `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
+         FROM comics WHERE last_read IS NOT NULL AND completed = 0 AND media_type = ?
+         ORDER BY last_read DESC LIMIT ?`
+      ).all(mediaType, limit) as ComicRow[]
+    : db.prepare(
+        `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
+         FROM comics WHERE last_read IS NOT NULL AND completed = 0
          ORDER BY last_read DESC LIMIT ?`
       ).all(limit) as ComicRow[];
   return rows.map((r) => rowToRecord(db, r));

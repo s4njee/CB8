@@ -111,6 +111,14 @@ export async function fetchRecentlyRead(limit = 20, mediaType) {
   return res.json();
 }
 
+export async function fetchContinueReading(limit = 20, mediaType) {
+  const params = new URLSearchParams({ limit });
+  if (mediaType) params.set('mediaType', mediaType);
+  const res = await fetch(`${API}/api/continue-reading?${params}`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
 export async function updateProgress(id, page) {
   await fetch(`${API}/api/comics/${id}/progress`, {
     method: 'PUT',
@@ -378,34 +386,111 @@ export async function getSession() {
   return res.json();
 }
 
-export async function login(username, password) {
-  const res = await fetch(`${API}/api/auth/login`, {
+/**
+ * Sign in. `identifier` can be either a username or an email — we sniff on
+ * '@' and route to better-auth's matching endpoint. Errors from better-auth
+ * come back as `{ message }`; legacy shape uses `{ error }`.
+ */
+export async function login(identifier, password) {
+  const isEmail = identifier.includes('@');
+  const path = isEmail ? '/api/auth/sign-in/email' : '/api/auth/sign-in/username';
+  const body = isEmail ? { email: identifier, password } : { username: identifier, password };
+  const res = await fetch(`${API}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify(body),
+    credentials: 'same-origin',
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Login failed (${res.status})`);
+    const body = await res.json().catch(() => ({}));
+    const e = new Error(body.message || body.error || `Login failed (${res.status})`);
+    e.code = body.code || null;
+    e.status = res.status;
+    throw e;
   }
   return res.json();
 }
 
 export async function logout() {
-  await fetch(`${API}/api/auth/logout`, { method: 'POST' });
+  await fetch(`${API}/api/auth/sign-out`, { method: 'POST', credentials: 'same-origin' });
 }
 
-export async function register(username, password, isAdmin = false) {
-  const res = await fetch(`${API}/api/auth/register`, {
+/**
+ * Create a new account. Email is required; username is optional but
+ * recommended (enables username-based login via the better-auth username
+ * plugin).
+ */
+export async function signup({ email, password, username, name }) {
+  const res = await fetch(`${API}/api/auth/sign-up/email`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, isAdmin }),
+    body: JSON.stringify({
+      email,
+      password,
+      username,
+      name: name ?? username ?? email,
+      // Where the server should send the user after they click the
+      // verification link in their email.
+      callbackURL: `${window.location.origin}/#/verified`,
+    }),
+    credentials: 'same-origin',
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Register failed (${res.status})`);
+    throw new Error(err.message || err.error || `Sign-up failed (${res.status})`);
   }
   return res.json();
+}
+
+// Kept as a compatibility shim for older callers — will be removed once the
+// admin-side user management UI is wired to `signup`.
+export async function register(username, password) {
+  return signup({ email: `${username}@local`, password, username });
+}
+
+/** Ask the server to email a password-reset link for the given address. */
+export async function requestPasswordReset(email) {
+  const res = await fetch(`${API}/api/auth/forget-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+    credentials: 'same-origin',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || `Reset failed (${res.status})`);
+  }
+  return res.json().catch(() => ({ ok: true }));
+}
+
+/** Complete a password reset using the token from the emailed link. */
+export async function resetPassword(newPassword, token) {
+  const res = await fetch(`${API}/api/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ newPassword, token }),
+    credentials: 'same-origin',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || `Reset failed (${res.status})`);
+  }
+  return res.json().catch(() => ({ ok: true }));
+}
+
+/** Re-send the verification email. Used when a user tries to sign in but isn't verified yet. */
+export async function sendVerificationEmail(email) {
+  const res = await fetch(`${API}/api/auth/send-verification-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+    credentials: 'same-origin',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || `Could not send verification email (${res.status})`);
+  }
+  return res.json().catch(() => ({ ok: true }));
 }
 
 // --- Users (admin only) ---

@@ -1,65 +1,60 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
-import * as ArchiveLoader from './archiveLoader';
 import { extractEpubCover } from './epubCoverExtractor';
 import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
 import { generateThumbnail } from './thumbnailGenerator';
 import type { ScanProgress } from '../shared/types';
+import { COMIC_EXTENSIONS as COMIC_EXTS_BASE, BOOK_EXTENSIONS as BOOK_EXTS_BASE } from '../shared/mediaTypes';
+import { IngestService } from './ingestService';
+import { withTimeout } from './utils/timeout';
 
-const COMIC_EXTENSIONS = new Set(['.cbz', '.cbr']);
-const BOOK_EXTENSIONS = new Set(['.pdf', '.epub', '.mobi']);
+const COMIC_EXTENSIONS = new Set([...COMIC_EXTS_BASE].map(e => `.${e}`));
+const BOOK_EXTENSIONS = new Set([...BOOK_EXTS_BASE].map(e => `.${e}`));
 const COVER_EXTRACTION_TIMEOUT_MS = 5000;
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
 
 export interface FileScanner {
   scan(
     directoryPath: string,
-    onProgress: (progress: ScanProgress) => void
+    onProgress: (progress: ScanProgress) => void,
+    signal?: AbortSignal,
   ): Promise<number>;
   scanBooks(
     directoryPath: string,
-    onProgress: (progress: ScanProgress) => void
+    onProgress: (progress: ScanProgress) => void,
+    signal?: AbortSignal,
   ): Promise<number>;
 }
 
 export class FileScannerImpl implements FileScanner {
-  constructor(private db: LibraryDatabase) {}
+  private ingestService: IngestService;
+
+  constructor(private db: LibraryDatabase) {
+    this.ingestService = new IngestService(db);
+  }
 
   async scan(
     directoryPath: string,
-    onProgress: (progress: ScanProgress) => void
+    onProgress: (progress: ScanProgress) => void,
+    signal?: AbortSignal,
   ): Promise<number> {
-    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress);
+    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress, signal);
   }
 
   async scanBooks(
     directoryPath: string,
-    onProgress: (progress: ScanProgress) => void
+    onProgress: (progress: ScanProgress) => void,
+    signal?: AbortSignal,
   ): Promise<number> {
-    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress);
+    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress, signal);
   }
 
   private async scanFiles(
     directoryPath: string,
     extensions: Set<string>,
     mediaType: 'comic' | 'book',
-    onProgress: (progress: ScanProgress) => void
+    onProgress: (progress: ScanProgress) => void,
+    signal?: AbortSignal,
   ): Promise<number> {
     const progress: ScanProgress = {
       discovered: 0,
@@ -71,10 +66,12 @@ export class FileScannerImpl implements FileScanner {
     const filesToProcess: string[] = [];
 
     await this.discoverFiles(directoryPath, filesToProcess, extensions);
+    if (signal?.aborted) return newCount;
     progress.discovered = filesToProcess.length;
     onProgress({ ...progress });
 
     for (const filePath of filesToProcess) {
+      if (signal?.aborted) break;
       progress.currentFile = filePath;
       onProgress({ ...progress });
 
@@ -86,12 +83,9 @@ export class FileScannerImpl implements FileScanner {
             await this.refreshBookMetadata(filePath);
           }
         } else {
-          if (mediaType === 'comic') {
-            await this.processComicFile(filePath);
-          } else {
-            await this.processBookFile(filePath);
-          }
-          newCount++;
+          const result = await this.ingestService.addFile(filePath);
+          if (result.added) newCount++;
+          else if (result.error) console.error(`Failed to process ${mediaType} at ${filePath}:`, result.error);
         }
       } catch (err) {
         console.error(`Failed to process ${mediaType} at ${filePath}:`, err);
@@ -124,59 +118,7 @@ export class FileScannerImpl implements FileScanner {
     }
   }
 
-  private async processComicFile(filePath: string): Promise<void> {
-    const stats = await fs.stat(filePath);
-    const handle = await ArchiveLoader.open(filePath);
-    try {
-      let coverImage: Buffer | null = null;
-      try {
-        coverImage = await ArchiveLoader.getCoverImage(handle);
-      } catch (err) {
-        console.warn(`Failed to extract cover from ${filePath}; using placeholder thumbnail.`, err);
-      }
-      const coverThumbnail = generateThumbnail(coverImage);
-      const title = path.basename(filePath, path.extname(filePath));
-
-      this.db.addComic({
-        filePath,
-        title,
-        pageCount: handle.pageCount,
-        fileSize: stats.size,
-        coverThumbnail,
-        tags: [],
-        mediaType: 'comic',
-        lastPage: null,
-        lastLocation: null,
-        lastRead: null,
-      });
-    } finally {
-      await ArchiveLoader.close(handle);
-    }
-  }
-
-  private async processBookFile(filePath: string): Promise<void> {
-    const stats = await fs.stat(filePath);
-    const title = path.basename(filePath, path.extname(filePath));
-
-    const pageCount = await this.getBookPageCount(filePath);
-
-    this.db.addComic({
-      filePath,
-      title,
-      pageCount,
-      fileSize: stats.size,
-      coverThumbnail: null,
-      tags: [],
-      mediaType: 'book',
-      lastPage: null,
-      lastLocation: null,
-      lastRead: null,
-    });
-
-    await this.refreshBookMetadata(filePath);
-  }
-
-  private async refreshBookMetadata(filePath: string): Promise<void> {
+  async refreshBookMetadata(filePath: string): Promise<void> {
     const pageCount = await this.getBookPageCount(filePath);
     if (pageCount > 0) {
       this.db.updatePageCountByPath(filePath, pageCount);

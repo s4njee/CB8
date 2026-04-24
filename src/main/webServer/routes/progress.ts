@@ -21,6 +21,14 @@ export const handle: RouteHandler = async (ctx) => {
       sendError(res, 400, 'Provide "page", "location", or "completed"');
       return true;
     }
+    // Auto-complete on final page (0-indexed), unless the client explicitly
+    // said otherwise.
+    if (typeof opts.page === 'number' && opts.completed === undefined) {
+      const comic = db.getComic(id);
+      if (comic && comic.pageCount > 0 && opts.page >= comic.pageCount - 1) {
+        opts.completed = true;
+      }
+    }
     db.upsertUserProgress(currentUser.id, id, opts);
     if (typeof parsed.page === 'number') db.updateReadingProgress(id, parsed.page);
     else if (typeof parsed.location === 'string') db.updateReadingLocation(id, parsed.location);
@@ -132,6 +140,17 @@ export const handle: RouteHandler = async (ctx) => {
     const records = currentUser
       ? db.getRecentlyReadByUser(currentUser.id, limit, mediaType)
       : db.getRecentlyRead(limit, mediaType);
+    sendJson(res, 200, records.map(toWebRecord));
+    return true;
+  }
+
+  // Continue reading — recently read, filtered to in-progress only.
+  if (method === 'GET' && pathname === '/api/continue-reading') {
+    const limit = query.limit ? parseInt(query.limit, 10) : 20;
+    const mediaType = query.mediaType as 'comic' | 'book' | undefined;
+    const records = currentUser
+      ? db.getContinueReadingByUser(currentUser.id, limit, mediaType)
+      : db.getContinueReading(limit, mediaType);
     sendJson(res, 200, records.map(toWebRecord));
     return true;
   }

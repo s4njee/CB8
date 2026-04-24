@@ -3,6 +3,10 @@
  *
  * Results are cached on disk under <userData>/image-cache/ keyed by
  * (comicId, page, width). Uses the `sharp` library for efficient resizing.
+ *
+ * The on-disk cache is bounded: when the total size exceeds CACHE_BUDGET,
+ * oldest files (by mtime) are evicted until the cache is back under the
+ * soft-water mark. This runs lazily, on writes that push us over budget.
  */
 
 import * as fs from 'node:fs';
@@ -24,6 +28,11 @@ function getSharp(): typeof import('sharp') {
 export const MIN_WIDTH = 200;
 export const MAX_WIDTH = 4000;
 
+const CACHE_BUDGET_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB hard cap
+const CACHE_EVICT_TARGET = 1.6 * 1024 * 1024 * 1024; // evict down to 1.6 GiB
+let trackedBytes = -1; // -1 until first scan populates it
+let evictionInFlight = false;
+
 export function clampWidth(w: number): number {
   if (!Number.isFinite(w)) return MIN_WIDTH;
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.floor(w)));
@@ -35,6 +44,52 @@ function cacheRoot(): string {
   } catch {
     // Fallback during tests when app is unavailable
     return path.join(require('node:os').tmpdir(), 'cb8-image-cache');
+  }
+}
+
+interface CachedFile {
+  absPath: string;
+  size: number;
+  mtimeMs: number;
+}
+
+async function scanCache(root: string): Promise<CachedFile[]> {
+  const out: CachedFile[] = [];
+  let topLevel: string[];
+  try { topLevel = await fsp.readdir(root); } catch { return out; }
+  for (const sub of topLevel) {
+    const subPath = path.join(root, sub);
+    let files: string[];
+    try { files = await fsp.readdir(subPath); } catch { continue; }
+    for (const name of files) {
+      const abs = path.join(subPath, name);
+      try {
+        const st = await fsp.stat(abs);
+        if (st.isFile()) out.push({ absPath: abs, size: st.size, mtimeMs: st.mtimeMs });
+      } catch { /* file removed mid-scan */ }
+    }
+  }
+  return out;
+}
+
+async function evictIfOverBudget(root: string): Promise<void> {
+  if (evictionInFlight) return;
+  if (trackedBytes >= 0 && trackedBytes <= CACHE_BUDGET_BYTES) return;
+  evictionInFlight = true;
+  try {
+    const files = await scanCache(root);
+    const actual = files.reduce((acc, f) => acc + f.size, 0);
+    trackedBytes = actual;
+    if (actual <= CACHE_BUDGET_BYTES) return;
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    let running = actual;
+    for (const f of files) {
+      if (running <= CACHE_EVICT_TARGET) break;
+      try { await fsp.unlink(f.absPath); running -= f.size; } catch { /* ignore */ }
+    }
+    trackedBytes = running;
+  } finally {
+    evictionInFlight = false;
   }
 }
 
@@ -78,6 +133,16 @@ export async function getCachedOrResize(
     // We used resize without setting format, so use webp explicitly.
     const webpBuf = await getSharp()(orig.buffer).resize({ width: w, withoutEnlargement: true }).webp({ quality: 82 }).toBuffer();
     await fsp.writeFile(outPath, webpBuf);
+    // Track size and evict in the background if we're over budget. Errors in
+    // eviction are non-fatal — the cache is best-effort.
+    if (trackedBytes < 0) {
+      // Lazy init — the first write in this process triggers a full scan so
+      // we pick up files carried over from prior sessions.
+      void evictIfOverBudget(cacheRoot());
+    } else {
+      trackedBytes += webpBuf.length;
+      if (trackedBytes > CACHE_BUDGET_BYTES) void evictIfOverBudget(cacheRoot());
+    }
     return { buffer: webpBuf, ext: 'webp' };
   } catch {
     // If caching failed, still return the resized buffer
@@ -88,4 +153,6 @@ export async function getCachedOrResize(
 export function invalidateCacheForComic(comicId: number): void {
   const dir = path.join(cacheRoot(), String(comicId));
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  // Re-scan on next write — the delete removes bytes we were tracking.
+  trackedBytes = -1;
 }

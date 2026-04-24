@@ -30,16 +30,26 @@ export const ReaderView: React.FC<ReaderViewProps> = ({ filePath, pageCount }) =
     return () => { document.title = DEFAULT_TITLE; };
   }, [filePath]);
 
-  // Fetch page image
+  // Fetch page image. Wraps the raw bytes from main in a Blob URL and
+  // revokes the previous URL when the page changes so we don't leak blobs.
   useEffect(() => {
     if (pageCount <= 0) { setImageUrl(null); return; }
-    let revoked = false;
+    let cancelled = false;
+    let createdUrl: string | null = null;
     archivePage(nav.currentPage).then((res) => {
-      if (revoked) return;
+      if (cancelled) return;
       if ('error' in res) { setImageUrl(null); return; }
-      setImageUrl(res.dataUrl);
+      const blob = new Blob([res.bytes as BlobPart], { type: res.mime });
+      createdUrl = URL.createObjectURL(blob);
+      setImageUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return createdUrl;
+      });
     });
-    return () => { revoked = true; };
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
   }, [nav.currentPage, pageCount]);
 
   // Resize listener

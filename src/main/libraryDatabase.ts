@@ -30,6 +30,9 @@ export class LibraryDatabase {
     // Schema already created in constructor; this is a no-op hook for callers.
   }
 
+  /** Raw better-sqlite3 handle — used by the better-auth adapter. */
+  get raw(): Database.Database { return this.db; }
+
   // --- app_meta ---
   getAppMeta(key: string): string | null { return appMeta.getAppMeta(this.db, key); }
   setAppMeta(key: string, value: string): void { appMeta.setAppMeta(this.db, key, value); }
@@ -56,6 +59,9 @@ export class LibraryDatabase {
   }
   getRecentlyRead(limit: number = 10, mediaType?: 'comic' | 'book'): ComicRecord[] {
     return comics.getRecentlyRead(this.db, limit, mediaType);
+  }
+  getContinueReading(limit: number = 10, mediaType?: 'comic' | 'book'): ComicRecord[] {
+    return comics.getContinueReading(this.db, limit, mediaType);
   }
   setComicSeries(comicId: number, seriesName: string | null, volumeNumber: number | null, chapterNumber: number | null): void {
     comics.setComicSeries(this.db, comicId, seriesName, volumeNumber, chapterNumber);
@@ -134,6 +140,9 @@ export class LibraryDatabase {
   countUsers(): number { return users.countUsers(this.db); }
   deleteUser(id: number): void { users.deleteUser(this.db, id); }
   setUserAdmin(id: number, isAdmin: boolean): void { users.setUserAdmin(this.db, id, isAdmin); }
+  upsertCredentialAccount(userId: number, accountId: string, passwordHash: string): void {
+    users.upsertCredentialAccount(this.db, userId, accountId, passwordHash);
+  }
 
   // --- per-user progress ---
   upsertUserProgress(
@@ -149,6 +158,9 @@ export class LibraryDatabase {
   }
   getRecentlyReadByUser(userId: number, limit: number, mediaType?: 'comic' | 'book'): ComicRecord[] {
     return progress.getRecentlyReadByUser(this.db, userId, limit, mediaType);
+  }
+  getContinueReadingByUser(userId: number, limit: number, mediaType?: 'comic' | 'book'): ComicRecord[] {
+    return progress.getContinueReadingByUser(this.db, userId, limit, mediaType);
   }
 
   // --- bookmarks ---

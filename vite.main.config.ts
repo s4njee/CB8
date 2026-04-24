@@ -1,8 +1,7 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
-const externals = [
-  'electron',
-  'electron/main',
+// Modules to leave as runtime `require()` instead of bundling.
+const extraExternals = [
   'better-sqlite3',
   '@napi-rs/canvas',
   'node-unrar-js',
@@ -12,22 +11,33 @@ const externals = [
   '@tanstack/virtual-core',
   'react',
   'react-dom',
-  'react-dom/client',
-  'react/jsx-runtime',
   'scheduler',
   'electron-squirrel-startup',
+  'pdfjs-dist',
+  'bindings',
+  'bcryptjs',
 ];
 
-export default defineConfig({
-  build: {
-    rollupOptions: {
-      external: externals,
+/**
+ * Rollup plugin that intercepts module resolution and marks our externals.
+ * This bypasses Vite's mergeConfig entirely — Rollup calls resolveId for
+ * every import, and returning `{ id, external: true }` prevents bundling.
+ */
+function externalResolverPlugin(): Plugin {
+  return {
+    name: 'cb8-external-resolver',
+    enforce: 'pre',
+    resolveId(source) {
+      for (const p of extraExternals) {
+        if (source === p || source.startsWith(p + '/')) {
+          return { id: source, external: true };
+        }
+      }
+      return null;
     },
-  },
-  ssr: {
-    external: externals,
-  },
-  optimizeDeps: {
-    exclude: externals,
-  },
+  };
+}
+
+export default defineConfig({
+  plugins: [externalResolverPlugin()],
 });

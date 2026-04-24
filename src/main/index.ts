@@ -5,6 +5,7 @@ import { LibraryDatabase } from './libraryDatabase';
 import { registerIpcHandlers } from './ipcHandlers';
 import { closeAllHandles, startWebServer } from './webServer';
 import type { WebServerHandle } from './webServer';
+import { DbStartupError } from './db/schema';
 
 const isHeadless =
   process.argv.includes('--headless') ||
@@ -69,6 +70,54 @@ function buildRecentMenuItems(): MenuItemConstructorOptions[] {
   }));
 }
 
+/**
+ * Close the DB, unlink the sqlite file + its WAL/SHM sidecars, then relaunch
+ * Electron so the app starts against a fresh schema. Destructive; requires
+ * explicit confirmation from the user.
+ */
+async function clearDatabaseAndRelaunch(win: BrowserWindow): Promise<void> {
+  const userDataPath = app.getPath('userData');
+  const dbPath = path.join(userDataPath, 'library.db');
+  const result = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Cancel', 'Clear database'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Clear database',
+    message: 'Delete the entire CB8 library database?',
+    detail:
+      `This will remove all libraries, folders, tags, reading progress, and user accounts.\n\n` +
+      `Comic and book files on disk are NOT removed. CB8 will restart with an empty database.\n\n` +
+      `Database: ${dbPath}`,
+  });
+  if (result.response !== 1) return;
+
+  // Close handles so SQLite releases the file.
+  try { await closeAllHandles(); } catch { /* ignore */ }
+  if (webServerRef.handle) {
+    try { webServerRef.handle.server.close(); } catch { /* ignore */ }
+    webServerRef.handle = null;
+  }
+  try {
+    if (db) {
+      db.raw.close();
+    }
+  } catch (err) {
+    console.warn('[CB8] Failed to close DB before clear:', err);
+  }
+  db = null;
+
+  for (const suffix of ['', '-wal', '-shm']) {
+    const target = dbPath + suffix;
+    try { fs.unlinkSync(target); } catch { /* may not exist */ }
+  }
+
+  if (app.isPackaged) {
+    app.relaunch();
+  }
+  app.quit();
+}
+
 function buildApplicationMenu(win: BrowserWindow): Menu {
   return Menu.buildFromTemplate([
     {
@@ -116,6 +165,15 @@ function buildApplicationMenu(win: BrowserWindow): Menu {
             }
           },
         },
+        { type: 'separator' },
+        {
+          label: 'Clear Database…',
+          click: () => {
+            clearDatabaseAndRelaunch(win).catch((err) => {
+              console.error('[CB8] Clear database failed:', err);
+            });
+          },
+        },
       ],
     },
   ]);
@@ -126,15 +184,27 @@ const createWindow = (): void => {
     app.dock?.setIcon(path.join(__dirname, '../../book.png'));
   }
 
-  // Initialize database inside ready handler
+  // Open the database and register IPC handlers. Keep these independent so a
+  // DB-init failure doesn't leave the renderer without any handlers — it
+  // still gets real "db unavailable"-style errors from the channels instead
+  // of "No handler registered".
+  const userDataPath = app.getPath('userData');
+  const dbPath = path.join(userDataPath, 'library.db');
   try {
-    const userDataPath = app.getPath('userData');
-    const dbPath = path.join(userDataPath, 'library.db');
     db = new LibraryDatabase(dbPath);
     db.initialize();
+  } catch (err) {
+    if (err instanceof DbStartupError) {
+      console.error(`[CB8] DB startup failed (${err.category}): ${err.detail}`, err.cause);
+    } else {
+      console.error(`[CB8] Failed to open database at ${dbPath}:`, err);
+    }
+    db = null;
+  }
+  try {
     registerIpcHandlers(db, webServerRef, refreshRecentMenu);
   } catch (err) {
-    console.error('Failed to initialize database or IPC:', err);
+    console.error('[CB8] Failed to register IPC handlers:', err);
   }
 
   mainWindow = new BrowserWindow({
@@ -227,12 +297,23 @@ app.on('open-file', (event, filePath) => {
   openFileInWindow(filePath);
 });
 
-app.on('before-quit', async () => {
-  await closeAllHandles();
-  if (webServerRef.handle) {
-    webServerRef.handle.server.close();
-    webServerRef.handle = null;
-  }
+let isQuitting = false;
+app.on('before-quit', (event) => {
+  if (isQuitting) return;
+  event.preventDefault();
+  isQuitting = true;
+  (async () => {
+    try { await closeAllHandles(); } catch { /* ignore */ }
+    if (webServerRef.handle) {
+      try { webServerRef.handle.server.close(); } catch { /* ignore */ }
+      webServerRef.handle = null;
+    }
+    try {
+      if (db) db.raw.close();
+    } catch { /* ignore */ }
+    db = null;
+    app.quit();
+  })();
 });
 
 app.on('activate', () => {

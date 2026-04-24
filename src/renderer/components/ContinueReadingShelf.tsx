@@ -3,7 +3,7 @@ import type { ComicRecord } from '../../shared/types';
 import { getRecentlyRead } from '../ipcClient';
 
 interface Props {
-  mediaType: 'comic' | 'book';
+  mediaType?: 'comic' | 'book';
   onOpenFile: (filePath: string) => void;
   refreshKey: number;
 }

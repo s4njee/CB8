@@ -49,3 +49,29 @@ export function deleteUser(db: Database.Database, id: number): void {
 export function setUserAdmin(db: Database.Database, id: number, isAdmin: boolean): void {
   db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, id);
 }
+
+/**
+ * Ensure a credential-provider `account` row exists for the given user. This
+ * is the table better-auth reads when verifying a password; keeping it in
+ * sync with `users.password_hash` lets legacy and better-auth paths agree.
+ */
+export function upsertCredentialAccount(
+  db: Database.Database,
+  userId: number,
+  accountId: string,
+  passwordHash: string,
+): void {
+  const existing = db.prepare(
+    `SELECT id FROM account WHERE user_id = ? AND provider_id = 'credential'`
+  ).get(userId) as { id: number } | undefined;
+  if (existing) {
+    db.prepare(
+      `UPDATE account SET password = ?, account_id = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(passwordHash, accountId, existing.id);
+  } else {
+    db.prepare(
+      `INSERT INTO account (user_id, account_id, provider_id, password, created_at, updated_at)
+       VALUES (?, ?, 'credential', ?, datetime('now'), datetime('now'))`
+    ).run(userId, accountId, passwordHash);
+  }
+}

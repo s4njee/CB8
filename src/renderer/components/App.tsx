@@ -15,6 +15,8 @@ import { PdfReaderView } from './PdfReaderView';
 import { LibraryView } from './LibraryView';
 import { LibrarySidebar } from './LibrarySidebar';
 import { SettingsDialog } from './SettingsDialog';
+import { ErrorBoundary } from './ErrorBoundary';
+import { useConfirm } from './useConfirm';
 
 type View = 'library' | 'reader' | 'epub-reader' | 'pdf-reader';
 
@@ -22,9 +24,11 @@ const PAGE_CACHE_MAX = 10;
 const PREFETCH_AHEAD = 3;
 
 export const App: React.FC = () => {
+  const { alert, modal: confirmModal } = useConfirm();
   const [view, setView] = useState<View>('library');
   const [activeLibraryId, setActiveLibraryId] = useState<number | null>(null);
-  const [activeView, setActiveView] = useState<'comics' | 'books'>('books');
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
+  const [activeView, setActiveView] = useState<'all' | 'comics' | 'books'>('all');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [pageCount, setPageCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
@@ -47,7 +51,8 @@ export const App: React.FC = () => {
   const [, forceUpdate] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // LRU page cache: Map preserves insertion order, most recent at end
+  // LRU page cache: stores blob URLs. Order-preserving Map + explicit
+  // URL.revokeObjectURL on eviction so we don't leak blobs across page flips.
   const pageCache = useRef<Map<number, string>>(new Map());
   const prefetchInFlight = useRef<Set<number>>(new Set());
 
@@ -62,18 +67,23 @@ export const App: React.FC = () => {
     return val;
   }, []);
 
-  const cacheSet = useCallback((index: number, dataUrl: string) => {
+  const cacheSet = useCallback((index: number, blobUrl: string) => {
     const cache = pageCache.current;
+    const prev = cache.get(index);
+    if (prev !== undefined && prev !== blobUrl) URL.revokeObjectURL(prev);
     cache.delete(index); // remove if exists to re-insert at end
-    cache.set(index, dataUrl);
-    // Evict oldest if over limit
+    cache.set(index, blobUrl);
     while (cache.size > PAGE_CACHE_MAX) {
       const oldest = cache.keys().next().value;
-      if (oldest !== undefined) cache.delete(oldest);
+      if (oldest === undefined) break;
+      const oldUrl = cache.get(oldest);
+      cache.delete(oldest);
+      if (oldUrl !== undefined) URL.revokeObjectURL(oldUrl);
     }
   }, []);
 
   const clearCache = useCallback(() => {
+    for (const url of pageCache.current.values()) URL.revokeObjectURL(url);
     pageCache.current.clear();
     prefetchInFlight.current.clear();
   }, []);
@@ -84,8 +94,10 @@ export const App: React.FC = () => {
     try {
       const result = await archivePage(pageIndex);
       if ('error' in result) return null;
-      cacheSet(pageIndex, result.dataUrl);
-      return result.dataUrl;
+      const blob = new Blob([result.bytes as BlobPart], { type: result.mime });
+      const blobUrl = URL.createObjectURL(blob);
+      cacheSet(pageIndex, blobUrl);
+      return blobUrl;
     } catch {
       return null;
     }
@@ -115,9 +127,9 @@ export const App: React.FC = () => {
     }
     setLoading(true);
     try {
-      const dataUrl = await fetchPageData(pageIndex);
-      if (!dataUrl) { console.error('Failed to load page:', pageIndex); return; }
-      setImageSrc(dataUrl);
+      const url = await fetchPageData(pageIndex);
+      if (!url) { console.error('Failed to load page:', pageIndex); return; }
+      setImageSrc(url);
       setCurrentPage(pageIndex);
       prefetch(pageIndex, pageCount);
       if (currentComicIdRef.current != null) {
@@ -162,7 +174,7 @@ export const App: React.FC = () => {
           setView('epub-reader');
           return;
         }
-        window.alert(`Unsupported book format for in-app reader: ${filePath}`);
+        await alert(`Unsupported book format for in-app reader: ${filePath}`);
         return;
       }
 
@@ -267,60 +279,72 @@ export const App: React.FC = () => {
   return (
     <>
       <div style={{ display: view === 'library' ? 'flex' : 'none', width: '100vw', height: '100vh', overflow: 'hidden' }}>
-        <LibraryView
-          activeLibraryId={activeLibraryId}
-          activeView={activeView}
-          onOpenFile={openFile}
-          onComicsChanged={handleLibrariesChanged}
-          selectedIds={selectedIds}
-          onSelectionChange={setSelectedIds}
-          refreshKey={libraryRefreshKey}
-        />
+        <ErrorBoundary name="LibraryView">
+          <LibraryView
+            activeLibraryId={activeLibraryId}
+            activeFolderId={activeFolderId}
+            activeView={activeView}
+            onOpenFile={openFile}
+            onComicsChanged={handleLibrariesChanged}
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
+            refreshKey={libraryRefreshKey}
+          />
+        </ErrorBoundary>
         <LibrarySidebar
           key={sidebarRefreshKey.current}
           activeLibraryId={activeLibraryId}
+          activeFolderId={activeFolderId}
           activeView={activeView}
           onSelectLibrary={setActiveLibraryId}
+          onSelectFolder={setActiveFolderId}
           onSelectView={setActiveView}
           onLibrariesChanged={handleLibrariesChanged}
         />
       </div>
 
       {view === 'epub-reader' && bookReader?.kind === 'epub-reader' && (
-        <EpubReaderView
-          filePath={bookReader.filePath}
-          comicId={bookReader.comicId}
-          initialLocation={bookReader.initialLocation}
-          onBack={backToLibrary}
-        />
+        <ErrorBoundary name="EpubReaderView">
+          <EpubReaderView
+            filePath={bookReader.filePath}
+            comicId={bookReader.comicId}
+            initialLocation={bookReader.initialLocation}
+            onBack={backToLibrary}
+          />
+        </ErrorBoundary>
       )}
 
       {view === 'pdf-reader' && bookReader?.kind === 'pdf-reader' && (
-        <PdfReaderView
-          filePath={bookReader.filePath}
-          comicId={bookReader.comicId}
-          initialPage={bookReader.initialPage}
-          onBack={backToLibrary}
-        />
+        <ErrorBoundary name="PdfReaderView">
+          <PdfReaderView
+            filePath={bookReader.filePath}
+            comicId={bookReader.comicId}
+            initialPage={bookReader.initialPage}
+            onBack={backToLibrary}
+          />
+        </ErrorBoundary>
       )}
 
       {view === 'reader' && (
-        <div style={{ backgroundColor: '#000', width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div onClick={handleReaderClick} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'default' }}>
-            {imageSrc && <img ref={readerImageRef} src={imageSrc} alt={`Page ${currentPage + 1}`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />}
-            {loading && <div style={{ position: 'absolute', color: '#fff' }}>Loading...</div>}
+        <ErrorBoundary name="ReaderView">
+          <div style={{ backgroundColor: '#000', width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div onClick={handleReaderClick} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'default' }}>
+              {imageSrc && <img ref={readerImageRef} src={imageSrc} alt={`Page ${currentPage + 1}`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />}
+              {loading && <div style={{ position: 'absolute', color: '#fff' }}>Loading...</div>}
+            </div>
+            <div style={{ height: 28, backgroundColor: '#222', color: '#ccc', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, flexShrink: 0, padding: '0 12px' }}>
+              <button onClick={backToLibrary} style={{ background: 'none', border: 'none', color: '#88f', cursor: 'pointer', fontSize: 13, padding: 0 }}>← Library</button>
+              <span>
+                {filename && <span style={{ marginRight: 16 }}>{filename}</span>}
+                {formatStatusBar(currentPage, pageCount)}
+              </span>
+            </div>
           </div>
-          <div style={{ height: 28, backgroundColor: '#222', color: '#ccc', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, flexShrink: 0, padding: '0 12px' }}>
-            <button onClick={backToLibrary} style={{ background: 'none', border: 'none', color: '#88f', cursor: 'pointer', fontSize: 13, padding: 0 }}>← Library</button>
-            <span>
-              {filename && <span style={{ marginRight: 16 }}>{filename}</span>}
-              {formatStatusBar(currentPage, pageCount)}
-            </span>
-          </div>
-        </div>
+        </ErrorBoundary>
       )}
 
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {confirmModal}
     </>
   );
 };

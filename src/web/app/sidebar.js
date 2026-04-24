@@ -88,7 +88,16 @@ export async function populateSidebar() {
 
     const folderList = document.getElementById('folder-list');
     folderList.innerHTML = '';
-    for (const folder of folders) {
+    // Hide empty folders; when the top media toggle is on a specific type,
+    // hide folders whose contents don't match. Mixed folders always show.
+    const mediaFilter = state.mediaType || '';
+    const visibleFolders = folders.filter((f) => {
+      if (f.mediaType === 'empty') return false;
+      if (mediaFilter === 'comic') return f.mediaType === 'comic' || f.mediaType === 'mixed';
+      if (mediaFilter === 'book')  return f.mediaType === 'book'  || f.mediaType === 'mixed';
+      return true;
+    });
+    for (const folder of visibleFolders) {
       const li = document.createElement('li');
       const a = document.createElement('a');
       a.href = `#/folder/${folder.id}`;
@@ -97,7 +106,7 @@ export async function populateSidebar() {
       li.appendChild(a);
       folderList.appendChild(li);
     }
-    document.getElementById('section-folders').hidden = folders.length === 0;
+    document.getElementById('section-folders').hidden = visibleFolders.length === 0;
 
     const tagList = document.getElementById('tag-list');
     tagList.innerHTML = '';

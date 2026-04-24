@@ -62,3 +62,25 @@ export function getRecentlyReadByUser(
   ).all(...params) as ComicRow[];
   return rows.map((r) => rowToRecord(db, r));
 }
+
+export function getContinueReadingByUser(
+  db: Database.Database,
+  userId: number,
+  limit: number,
+  mediaType?: 'comic' | 'book',
+): ComicRecord[] {
+  const where = mediaType ? 'AND c.media_type = ?' : '';
+  const params: SqlParam[] = [userId];
+  if (mediaType) params.push(mediaType);
+  params.push(limit);
+  const rows = db.prepare(
+    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added,
+            up.last_page, up.last_location, up.last_read, c.media_type
+     FROM user_progress up
+     JOIN comics c ON up.comic_id = c.id
+     WHERE up.user_id = ? AND up.completed = 0 ${where}
+     ORDER BY up.last_read DESC
+     LIMIT ?`
+  ).all(...params) as ComicRow[];
+  return rows.map((r) => rowToRecord(db, r));
+}

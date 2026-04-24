@@ -13,6 +13,7 @@ export const handle: RouteHandler = async (ctx) => {
       id: f.id,
       name: f.name,
       comicCount: f.comicCount,
+      mediaType: f.mediaType,
       thumbnailUrl: f.coverThumbnail ? `/api/folders/${f.id}/thumbnail` : null,
     }));
     sendJson(res, 200, safe);

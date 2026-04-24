@@ -21,7 +21,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'POST' && pathname === '/api/admin/pick-path') {
     if (!requireAdmin(ctx)) return true;
     if (!isHostConnection(req)) { sendError(res, 403, 'Host-only operation'); return true; }
-    const body = await readBody(req);
+    const body = await readBody(req, 64 * 1024); // admin JSON: 64 KiB is plenty
     let parsed: { kind?: 'file' | 'directory' };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     const kind = parsed.kind === 'directory' ? 'directory' : 'file';
@@ -173,7 +173,7 @@ export const handle: RouteHandler = async (ctx) => {
   // Admin: add path (streaming NDJSON)
   if (method === 'POST' && pathname === '/api/admin/add-path') {
     if (!requireAdmin(ctx)) return true;
-    const body = await readBody(req);
+    const body = await readBody(req, 64 * 1024); // admin JSON: 64 KiB is plenty
     let parsed: { path?: string };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.path !== 'string' || !parsed.path.trim()) {

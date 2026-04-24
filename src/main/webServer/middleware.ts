@@ -1,59 +1,11 @@
 import * as http from 'node:http';
-import * as fs from 'node:fs';
-import * as crypto from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import type { LibraryDatabase } from '../libraryDatabase';
 import type { QueryOptions } from '../../shared/types';
 
 /** Legacy hardcoded admin password, migrated to the first users row on startup. */
 const LEGACY_ADMIN_PASSWORD = 'gentrification';
-export const SESSION_COOKIE = 'cb8_admin';
-export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 export const GUEST_ACCESS_KEY = 'guest_access';
-
-interface SessionData {
-  userId: number;
-  expiresAt: number;
-}
-
-const sessions = new Map<string, SessionData>();
-
-// Path is set once the Electron app is ready (userData is available).
-let sessionsFilePath = '';
-
-export function setSessionsFilePath(p: string): void {
-  sessionsFilePath = p;
-}
-
-export function loadSessions(): void {
-  if (!sessionsFilePath) return;
-  try {
-    const raw = fs.readFileSync(sessionsFilePath, 'utf8');
-    const parsed: Record<string, SessionData> = JSON.parse(raw);
-    const now = Date.now();
-    for (const [token, data] of Object.entries(parsed)) {
-      if (data.expiresAt > now && typeof data.userId === 'number') {
-        sessions.set(token, data);
-      }
-    }
-  } catch {
-    // File doesn't exist yet or is corrupt — start fresh.
-  }
-}
-
-export function persistSessions(): void {
-  if (!sessionsFilePath) return;
-  const now = Date.now();
-  const out: Record<string, SessionData> = {};
-  for (const [token, data] of sessions) {
-    if (data.expiresAt > now) out[token] = data;
-  }
-  try {
-    fs.writeFileSync(sessionsFilePath, JSON.stringify(out), 'utf8');
-  } catch (err) {
-    console.error('[CB8] Failed to persist sessions:', err);
-  }
-}
 
 /**
  * "Superadmin" = authenticated admin whose connection originates from the
@@ -84,62 +36,21 @@ export interface ResolvedUser {
   isAdmin: boolean;
 }
 
-export function resolveUser(req: http.IncomingMessage, db: LibraryDatabase): ResolvedUser | null {
-  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-  if (!token) return null;
-  const session = sessions.get(token);
-  if (!session) return null;
-  if (session.expiresAt < Date.now()) {
-    sessions.delete(token);
-    return null;
-  }
-  const user = db.getUserById(session.userId);
-  if (!user) {
-    sessions.delete(token);
-    return null;
-  }
-  return { id: user.id, username: user.username, isAdmin: user.isAdmin };
-}
-
-export function isAuthenticated(req: http.IncomingMessage, db: LibraryDatabase): boolean {
-  return resolveUser(req, db) !== null;
-}
-
-export function isAdmin(req: http.IncomingMessage, db: LibraryDatabase): boolean {
-  return resolveUser(req, db)?.isAdmin === true;
-}
-
 export function isGuestAccessEnabled(db: LibraryDatabase): boolean {
   // Default: guests can read. Only disabled if an admin explicitly sets 'false'.
   const v = db.getAppMeta(GUEST_ACCESS_KEY);
   return v !== 'false';
 }
 
-export function setSessionCookie(res: http.ServerResponse, token: string): void {
-  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
-}
-
-export function clearSessionCookie(res: http.ServerResponse): void {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
-}
-
-export function createSession(userId: number): string {
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { userId, expiresAt: Date.now() + SESSION_TTL_MS });
-  persistSessions();
-  return token;
-}
-
-export function deleteSession(token: string): void {
-  sessions.delete(token);
-  persistSessions();
-}
-
 export async function ensureInitialAdmin(db: LibraryDatabase): Promise<void> {
   if (db.countUsers() > 0) return;
   const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
-  db.createUser('admin', hash, true);
+  const user = db.createUser('admin', hash, true);
+  // Mirror the password into the `account` table so better-auth's credential
+  // provider can verify it. The backfill migration handles pre-existing rows;
+  // this covers the first-boot case where the migration runs against an empty
+  // table and then we immediately insert the admin.
+  db.upsertCredentialAccount(user.id, 'admin', hash);
   console.log('[CB8] Created initial admin user (username=admin, default password).');
 }
 
@@ -170,11 +81,30 @@ export function parseQueryOptions(query: Record<string, string>): QueryOptions {
   return options;
 }
 
-export async function readBody(req: http.IncomingMessage): Promise<string> {
+const DEFAULT_BODY_LIMIT = 1_048_576; // 1 MiB
+
+export class BodyTooLargeError extends Error {
+  readonly statusCode = 413;
+  constructor(limit: number) {
+    super(`Request body exceeds ${limit} bytes`);
+    this.name = 'BodyTooLargeError';
+  }
+}
+
+export async function readBody(req: http.IncomingMessage, maxBytes = DEFAULT_BODY_LIMIT): Promise<string> {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-    req.on('end', () => resolve(body));
+    const chunks: Buffer[] = [];
+    let received = 0;
+    req.on('data', (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > maxBytes) {
+        req.destroy();
+        reject(new BodyTooLargeError(maxBytes));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
 }
