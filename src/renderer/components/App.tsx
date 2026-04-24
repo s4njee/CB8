@@ -94,7 +94,7 @@ export const App: React.FC = () => {
     try {
       const result = await archivePage(pageIndex);
       if ('error' in result) return null;
-      const blob = new Blob([result.bytes as BlobPart], { type: result.mime });
+      const blob = new Blob([result.buffer], { type: result.mime });
       const blobUrl = URL.createObjectURL(blob);
       cacheSet(pageIndex, blobUrl);
       return blobUrl;

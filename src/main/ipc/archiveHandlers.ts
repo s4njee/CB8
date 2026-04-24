@@ -27,11 +27,13 @@ export function registerArchiveHandlers(): void {
         avif: 'image/avif', jxl: 'image/png', // JXL decoded to PNG
       };
       const mime = mimeMap[ext] ?? 'image/png';
-      // Return the raw bytes; the renderer wraps them in a Blob URL. This
-      // avoids the 33% base64 bloat on every page flip (pages can be several
-      // MB) and the JSON-encoding cost on top of it.
-      const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-      return { bytes, mime };
+      // Return a standalone ArrayBuffer (sliced out of the Node Buffer's
+      // pooled backing store). The renderer wraps it in a Blob URL. This
+      // avoids the 33% base64 bloat on every page flip. ArrayBuffer is used
+      // rather than Uint8Array because contextBridge proxies TypedArrays
+      // across worlds in a way that the Blob constructor doesn't accept.
+      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+      return { buffer: ab, mime };
     } catch (err: unknown) {
       return { error: err instanceof Error ? err.message : String(err) };
     }

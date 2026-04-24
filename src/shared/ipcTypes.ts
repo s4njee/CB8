@@ -12,7 +12,7 @@ export type ArchiveOpenResponse =
   | { error: string };
 
 export type ArchivePageResponse =
-  | { bytes: Uint8Array; mime: string }
+  | { buffer: ArrayBuffer; mime: string }
   | { error: string };
 
 export interface AddFilesResponse {

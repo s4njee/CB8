@@ -39,7 +39,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({ filePath, pageCount }) =
     archivePage(nav.currentPage).then((res) => {
       if (cancelled) return;
       if ('error' in res) { setImageUrl(null); return; }
-      const blob = new Blob([res.bytes as BlobPart], { type: res.mime });
+      const blob = new Blob([res.buffer], { type: res.mime });
       createdUrl = URL.createObjectURL(blob);
       setImageUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
