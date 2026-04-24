@@ -152,7 +152,18 @@ async function handleRequest(
 
   // Delegate /api/auth/* traffic not handled by our own routes to better-auth.
   if (pathname.startsWith('/api/auth/') && !OWN_AUTH_ENDPOINTS.has(pathname)) {
-    await betterAuthHandler(req, res);
+    try {
+      await betterAuthHandler(req, res);
+    } catch (err) {
+      // Log the underlying error so the 500 isn't opaque; better-auth's
+      // node adapter sometimes throws instead of writing a response body.
+      console.error(`[webServer] better-auth handler error at ${pathname}:`, err);
+      if (!res.headersSent) {
+        sendError(res, 500, err instanceof Error ? err.message : String(err));
+      } else {
+        res.destroy();
+      }
+    }
     return;
   }
 
@@ -234,8 +245,14 @@ export function startWebServer(db: LibraryDatabase, port = 8008): WebServerHandl
       console.error('[webServer] Unhandled error:', err);
       try {
         if (!res.headersSent) {
+          // In development it's more useful to see the real error than
+          // the sanitised "Internal server error" string. The embedded
+          // web server is local-network only, so exposing the message
+          // is acceptable — the entire app is trusted.
+          const message = err instanceof Error ? err.message : String(err);
+          const stack = err instanceof Error ? err.stack : undefined;
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Internal server error' }));
+          res.end(JSON.stringify({ error: message, stack }));
         }
       } catch { /* ignore */ }
     });

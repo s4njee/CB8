@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ePub, { type Book, type Location, type NavItem, type Rendition } from 'epubjs';
+import ePub, { type Book, type Contents, type Location, type NavItem, type Rendition } from 'epubjs';
 import { generateWindowTitle } from '../../shared/windowTitle';
 import { readBookFile, updateReadingLocation } from '../ipcClient';
 
@@ -65,6 +65,32 @@ function toEpubFontSizePercent(fontSize: number): string {
   return `${Math.round(fontSize * EPUB_BASE_FONT_SCALE)}%`;
 }
 
+/**
+ * Force theme colors onto every element in a rendered section, using inline
+ * style with !important. This is the only way to beat epub author stylesheets
+ * that declare color with a class-scoped !important rule — those outrank our
+ * theme stylesheet on specificity, but inline !important beats any stylesheet.
+ *
+ * Runs in the section iframe's document, invoked from epubjs's `rendered` hook.
+ */
+function forceThemeOnContent(contents: Contents, mode: ThemeMode): void {
+  const colors = getThemeColors(mode);
+  const doc = contents?.document;
+  if (!doc) return;
+  const body = doc.body;
+  if (body) body.style.setProperty('background-color', colors.background, 'important');
+  doc.documentElement?.style.setProperty('background-color', colors.background, 'important');
+  const all = doc.querySelectorAll<HTMLElement>('*');
+  for (const el of all) {
+    const tag = el.tagName;
+    if (tag === 'IMG' || tag === 'SVG' || tag === 'PICTURE' || tag === 'VIDEO') continue;
+    el.style.setProperty('color', colors.text, 'important');
+    // Wipe any author-set background on individual elements so the page
+    // background shows through consistently.
+    el.style.setProperty('background-color', 'transparent', 'important');
+  }
+}
+
 interface Props {
   filePath: string;
   comicId: number | null;
@@ -99,6 +125,10 @@ export const EpubReaderView: React.FC<Props> = ({ filePath, comicId, initialLoca
   const [fontFamily, setFontFamily] = useState<string>(FONT_FAMILIES[0].value);
   const [fontSize, setFontSize] = useState<number>(100);
   const [themeMode, setThemeMode] = useState<ThemeMode>('black');
+  // Keep the latest theme mode in a ref so the 'rendered' hook (registered
+  // once during setup) always reads the current value without re-registering.
+  const themeModeRef = useRef<ThemeMode>(themeMode);
+  themeModeRef.current = themeMode;
 
   const filename = useMemo(() => filePath.split('/').pop()?.split('\\').pop() ?? filePath, [filePath]);
 
@@ -150,8 +180,12 @@ export const EpubReaderView: React.FC<Props> = ({ filePath, comicId, initialLoca
         rendition.on('relocated', (location: Location) => {
           handleRelocated(location.start?.href ?? '', location.start?.percentage ?? 0);
         });
-        rendition.on('rendered', () => {
+        rendition.on('rendered', (_section: unknown, view: { contents?: Contents }) => {
           if (renditionRef.current === rendition) setLoading(false);
+          if (view?.contents) {
+            try { forceThemeOnContent(view.contents, themeModeRef.current); }
+            catch (err) { console.warn('[CB8] forceTheme (rendered) failed:', err); }
+          }
         });
 
         await rendition.display(initialLocation ?? undefined);
@@ -182,13 +216,33 @@ export const EpubReaderView: React.FC<Props> = ({ filePath, comicId, initialLoca
   useEffect(() => {
     const rendition = renditionRef.current;
     if (!rendition) return;
-    const colors = getThemeColors(themeMode);
-    rendition.themes.default(buildEpubTheme(themeMode, fontFamily));
-    rendition.themes.font(fontFamily);
-    rendition.themes.fontSize(toEpubFontSizePercent(fontSize));
-    rendition.themes.override('background', colors.background, true);
-    rendition.themes.override('background-color', colors.background, true);
-    rendition.themes.override('color', colors.text, true);
+    // Re-register the stylesheet theme and typography. The color / background
+    // overrides are intentionally omitted — epubjs's `override()` calls
+    // `content.css()` on every current Contents, which crashes with "cannot
+    // read properties of null" when a Contents's iframe document is mid-swap.
+    // `forceThemeOnContent` below applies colors inline with !important,
+    // which is both safer and higher-specificity.
+    //
+    // Each call is wrapped individually so a transient null-doc crash in one
+    // (typical during theme toggle) doesn't skip the others.
+    try { rendition.themes.default(buildEpubTheme(themeMode, fontFamily)); }
+    catch (err) { console.warn('[CB8] themes.default failed:', err); }
+    try { rendition.themes.font(fontFamily); }
+    catch (err) { console.warn('[CB8] themes.font failed:', err); }
+    try { rendition.themes.fontSize(toEpubFontSizePercent(fontSize)); }
+    catch (err) { console.warn('[CB8] themes.fontSize failed:', err); }
+    // Walk each currently-rendered section and force theme colors as inline
+    // !important styles. Author stylesheets with class-scoped !important rules
+    // outrank our stylesheet, but inline !important beats any stylesheet.
+    try {
+      const contentsList = (rendition as unknown as { getContents?: () => Contents[] }).getContents?.() ?? [];
+      for (const c of contentsList) {
+        try { forceThemeOnContent(c, themeMode); }
+        catch (err) { console.warn('[CB8] forceTheme failed on view:', err); }
+      }
+    } catch (err) {
+      console.warn('[CB8] getContents failed (non-fatal):', err);
+    }
   }, [fontFamily, fontSize, themeMode]);
 
   const navigate = useCallback(async (direction: 'next' | 'prev') => {

@@ -1,15 +1,140 @@
 /**
  * views/reader/epubReader.js — EPUB rendering via epub.js (loaded from CDN).
+ *
+ * Controls mirror the Electron EpubReaderView: font family dropdown, font
+ * size dropdown (70–130%), and black/white theme toggle. Colors are applied
+ * as inline !important styles on every element in the section iframe so
+ * author stylesheets with class-scoped !important rules can't outrank them.
  */
 
 import * as api from '../../api.js';
 import { showToast } from '../../app.js';
 import { state } from './state.js';
-import { epubPrefs } from './prefs.js';
+import { epubPrefs, saveEpubPrefs } from './prefs.js';
 import { buildToolbar, loadScript } from './utils.js';
 
 const JSZIP_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
 const EPUBJS_CDN = 'https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js';
+
+const FONT_FAMILIES = [
+  { label: 'System', value: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
+  { label: 'Serif', value: 'Georgia, "Times New Roman", serif' },
+  { label: 'Sans', value: 'Arial, Helvetica, sans-serif' },
+  { label: 'Mono', value: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' },
+];
+const FONT_SIZES = [70, 80, 90, 100, 110, 120, 130];
+const EPUB_BASE_FONT_SCALE = 0.85;
+
+function getThemeColors(mode) {
+  return mode === 'black'
+    ? { background: '#000000', text: '#f3f4f6', link: '#93c5fd' }
+    : { background: '#ffffff', text: '#111827', link: '#1d4ed8' };
+}
+
+function buildEpubTheme(mode, fontFamily) {
+  const colors = getThemeColors(mode);
+  const textRule = {
+    color: `${colors.text} !important`,
+    'background-color': 'transparent !important',
+  };
+  return {
+    html: {
+      background: `${colors.background} !important`,
+      'background-color': `${colors.background} !important`,
+    },
+    body: {
+      background: `${colors.background} !important`,
+      'background-color': `${colors.background} !important`,
+      color: `${colors.text} !important`,
+      'font-family': fontFamily,
+      'line-height': '1.6',
+      margin: '0',
+      padding: '2rem 2.75rem',
+      'box-sizing': 'border-box',
+    },
+    'body *': textRule,
+    'p, div, span, section, article, aside, li, blockquote, h1, h2, h3, h4, h5, h6': textRule,
+    a: { color: `${colors.link} !important`, 'background-color': 'transparent !important' },
+    img: { 'max-width': '100%', 'max-height': '100%' },
+    p: { 'margin-top': '0', 'margin-bottom': '1em' },
+  };
+}
+
+function toEpubFontSizePercent(fontSize) {
+  return `${Math.round(fontSize * EPUB_BASE_FONT_SCALE)}%`;
+}
+
+/**
+ * Walk the section iframe and stamp colors + font inline with !important.
+ * Author stylesheets with class-scoped !important rules outrank our theme
+ * stylesheet, but inline !important beats any stylesheet.
+ */
+function forceThemeOnContent(contents, mode, fontFamily) {
+  const colors = getThemeColors(mode);
+  const doc = contents?.document;
+  if (!doc) return;
+  if (doc.body) {
+    doc.body.style.setProperty('background-color', colors.background, 'important');
+    if (fontFamily) doc.body.style.setProperty('font-family', fontFamily, 'important');
+  }
+  doc.documentElement?.style.setProperty('background-color', colors.background, 'important');
+  for (const el of doc.querySelectorAll('*')) {
+    const tag = el.tagName;
+    if (tag === 'IMG' || tag === 'SVG' || tag === 'PICTURE' || tag === 'VIDEO') continue;
+    el.style.setProperty('color', colors.text, 'important');
+    el.style.setProperty('background-color', 'transparent', 'important');
+    if (fontFamily) el.style.setProperty('font-family', fontFamily, 'important');
+  }
+}
+
+function reapplyTheme() {
+  const rendition = state.epubRendition;
+  if (!rendition) return;
+  try { rendition.themes.default(buildEpubTheme(epubPrefs.themeMode, epubPrefs.fontFamily)); }
+  catch (err) { console.warn('[CB8] themes.default failed:', err); }
+  try { rendition.themes.font(epubPrefs.fontFamily); }
+  catch (err) { console.warn('[CB8] themes.font failed:', err); }
+  try { rendition.themes.fontSize(toEpubFontSizePercent(epubPrefs.fontSize)); }
+  catch (err) { console.warn('[CB8] themes.fontSize failed:', err); }
+  try {
+    const contentsList = rendition.getContents?.() ?? [];
+    for (const c of contentsList) {
+      try { forceThemeOnContent(c, epubPrefs.themeMode, epubPrefs.fontFamily); }
+      catch (err) { console.warn('[CB8] forceTheme failed on view:', err); }
+    }
+  } catch (err) { console.warn('[CB8] getContents failed (non-fatal):', err); }
+}
+
+function makeSelect(options, value, onChange) {
+  const select = document.createElement('select');
+  select.style.cssText = 'padding:2px 6px;border:1px solid #333;border-radius:4px;color:#ddd;background:#1a1a1a;cursor:pointer;font-size:12px;';
+  for (const opt of options) {
+    const o = document.createElement('option');
+    o.value = String(opt.value);
+    o.textContent = opt.label;
+    if (String(opt.value) === String(value)) o.selected = true;
+    select.appendChild(o);
+  }
+  select.addEventListener('change', (e) => onChange(e.target.value));
+  return select;
+}
+
+function makeToggleButton(label, isActive, onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = label;
+  const apply = (active) => {
+    btn.style.cssText =
+      `padding:2px 10px;border-radius:4px;cursor:pointer;font-size:12px;` +
+      (active
+        ? 'background:#2563eb;color:#fff;border:1px solid #3b82f6;'
+        : 'background:transparent;color:#aaa;border:1px solid #6b7280;');
+  };
+  apply(isActive);
+  btn._setActive = apply;
+  btn.addEventListener('click', onClick);
+  return btn;
+}
 
 export async function renderEpubReader(el, record, onBack) {
   const toolbar = buildToolbar(record.title, onBack);
@@ -31,76 +156,115 @@ export async function renderEpubReader(el, record, onBack) {
   statusPct.textContent = 'Loading…';
 
   const controlsRow = document.createElement('div');
-  controlsRow.style.display = 'flex';
-  controlsRow.style.alignItems = 'center';
-  controlsRow.style.gap = '14px';
+  controlsRow.style.cssText = 'display:flex;align-items:center;gap:14px;';
 
-  // Font Size
-  const fontRow = document.createElement('div');
-  fontRow.style.display = 'flex';
-  fontRow.style.alignItems = 'center';
-  fontRow.style.gap = '4px';
+  // Font family dropdown
+  const fontFamilyLabel = document.createElement('label');
+  fontFamilyLabel.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  const fontFamilySpan = document.createElement('span'); fontFamilySpan.textContent = 'Font';
+  const fontFamilySelect = makeSelect(
+    FONT_FAMILIES.map((f) => ({ label: f.label, value: f.value })),
+    epubPrefs.fontFamily,
+    (value) => {
+      epubPrefs.fontFamily = value;
+      saveEpubPrefs();
+      reapplyTheme();
+    },
+  );
+  fontFamilyLabel.append(fontFamilySpan, fontFamilySelect);
 
-  const btnMinus = document.createElement('button');
-  btnMinus.style.cssText = 'padding:2px 8px;border:1px solid #333;border-radius:4px;color:#aaa;background:#1a1a1a;cursor:pointer;';
-  btnMinus.textContent = 'A-';
-  btnMinus.addEventListener('click', () => {
-    epubPrefs.fontSize = Math.max(50, epubPrefs.fontSize - 10);
-    if (state.epubRendition) state.epubRendition.themes.fontSize(`${epubPrefs.fontSize}%`);
+  // Font size dropdown (70–130%)
+  const fontSizeLabel = document.createElement('label');
+  fontSizeLabel.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  const fontSizeSpan = document.createElement('span'); fontSizeSpan.textContent = 'Size';
+  const fontSizeSelect = makeSelect(
+    FONT_SIZES.map((s) => ({ label: `${s}%`, value: s })),
+    epubPrefs.fontSize,
+    (value) => {
+      epubPrefs.fontSize = Number(value);
+      saveEpubPrefs();
+      reapplyTheme();
+    },
+  );
+  fontSizeLabel.append(fontSizeSpan, fontSizeSelect);
+
+  // Theme toggle (Black / White)
+  const themeRow = document.createElement('div');
+  themeRow.style.cssText = 'display:flex;align-items:center;gap:4px;';
+  const blackBtn = makeToggleButton('Black', epubPrefs.themeMode === 'black', () => {
+    if (epubPrefs.themeMode === 'black') return;
+    epubPrefs.themeMode = 'black'; saveEpubPrefs();
+    blackBtn._setActive(true); whiteBtn._setActive(false);
+    reapplyTheme();
   });
-
-  const btnPlus = document.createElement('button');
-  btnPlus.style.cssText = 'padding:2px 8px;border:1px solid #333;border-radius:4px;color:#aaa;background:#1a1a1a;cursor:pointer;';
-  btnPlus.textContent = 'A+';
-  btnPlus.addEventListener('click', () => {
-    epubPrefs.fontSize = Math.min(150, epubPrefs.fontSize + 10);
-    if (state.epubRendition) state.epubRendition.themes.fontSize(`${epubPrefs.fontSize}%`);
+  const whiteBtn = makeToggleButton('White', epubPrefs.themeMode === 'white', () => {
+    if (epubPrefs.themeMode === 'white') return;
+    epubPrefs.themeMode = 'white'; saveEpubPrefs();
+    whiteBtn._setActive(true); blackBtn._setActive(false);
+    reapplyTheme();
   });
+  themeRow.append(blackBtn, whiteBtn);
 
-  fontRow.appendChild(btnMinus);
-  fontRow.appendChild(btnPlus);
-
-  // Spread Radios
+  // Spread radios (existing behavior preserved)
   const spreadForm = document.createElement('form');
-  spreadForm.style.display = 'flex';
-  spreadForm.style.gap = '10px';
-
+  spreadForm.style.cssText = 'display:flex;gap:10px;';
   const r1 = document.createElement('label');
-  r1.style.display = 'flex'; r1.style.gap = '4px'; r1.style.cursor = 'pointer'; r1.style.alignItems = 'center';
+  r1.style.cssText = 'display:flex;gap:4px;cursor:pointer;align-items:center;';
   const i1 = document.createElement('input');
-  i1.type = 'radio'; i1.name = 'spread'; i1.value = 'none';
-  i1.checked = !epubPrefs.spread;
+  i1.type = 'radio'; i1.name = 'spread'; i1.value = 'none'; i1.checked = !epubPrefs.spread;
   r1.append(i1, ' 1-Page');
-
   const r2 = document.createElement('label');
-  r2.style.display = 'flex'; r2.style.gap = '4px'; r2.style.cursor = 'pointer'; r2.style.alignItems = 'center';
+  r2.style.cssText = 'display:flex;gap:4px;cursor:pointer;align-items:center;';
   const i2 = document.createElement('input');
-  i2.type = 'radio'; i2.name = 'spread'; i2.value = 'auto';
-  i2.checked = epubPrefs.spread;
+  i2.type = 'radio'; i2.name = 'spread'; i2.value = 'auto'; i2.checked = epubPrefs.spread;
   r2.append(i2, ' 2-Page');
-
   spreadForm.append(r1, r2);
-
   spreadForm.addEventListener('change', (e) => {
     epubPrefs.spread = (e.target.value === 'auto');
+    saveEpubPrefs();
     if (state.epubRendition) state.epubRendition.spread(epubPrefs.spread ? 'auto' : 'none');
   });
 
-  controlsRow.append(fontRow, spreadForm);
+  controlsRow.append(fontFamilyLabel, fontSizeLabel, themeRow, spreadForm);
   statusBar.append(statusPct, controlsRow);
 
   bookContainer.appendChild(epubContainer);
   bookContainer.style.paddingBottom = '44px';
   bookContainer.style.paddingTop = '62px';
+  // Background of every wrapper up to the reader overlay tracks the theme so
+  // the stylesheet-defined .epub-container {#1a1a1a} doesn't bleed through in
+  // white mode. Set via setProperty with 'important' to win over the CSS file.
+  const applyContainerBg = () => {
+    const colors = getThemeColors(epubPrefs.themeMode);
+    bookContainer.style.setProperty('background-color', colors.background, 'important');
+    epubContainer.style.setProperty('background-color', colors.background, 'important');
+    // Re-paint each already-rendered iframe element + content so switching
+    // to white mode on an already-open book immediately takes effect.
+    const rendition = state.epubRendition;
+    if (rendition) {
+      try {
+        const contentsList = rendition.getContents?.() ?? [];
+        for (const c of contentsList) {
+          try { forceThemeOnContent(c, epubPrefs.themeMode, epubPrefs.fontFamily); } catch {}
+        }
+      } catch {}
+      try {
+        const manager = rendition.manager;
+        const views = manager?.views?._views ?? [];
+        for (const v of views) {
+          try { v.iframe?.style.setProperty('background-color', colors.background, 'important'); } catch {}
+        }
+      } catch {}
+    }
+  };
+  applyContainerBg();
 
   el.appendChild(toolbar);
   el.appendChild(bookContainer);
   el.appendChild(statusBar);
 
   try {
-    if (!window.JSZip) {
-      await loadScript(JSZIP_CDN);
-    }
+    if (!window.JSZip) await loadScript(JSZIP_CDN);
     await loadScript(EPUBJS_CDN);
   } catch (loadErr) {
     console.error('[CB8] CDN failed:', loadErr);
@@ -127,23 +291,64 @@ export async function renderEpubReader(el, record, onBack) {
       flow: 'paginated',
     });
 
-    const textRule = { color: '#d8d8d8 !important', 'background-color': 'transparent !important' };
-    state.epubRendition.themes.register('dark', {
-      'html': { background: '#1a1a1a !important', 'background-color': '#1a1a1a !important' },
-      'body': {
-        background: '#1a1a1a !important',
-        'background-color': '#1a1a1a !important',
-        color: '#d8d8d8 !important',
-        'font-family': 'serif',
-        padding: '2rem 2% !important',
-      },
-      'body *': textRule,
-      'p, div, span, section, article, h1, h2, h3, h4, h5, h6, li, blockquote': textRule,
-      'a': { color: '#4a9eff !important', 'background-color': 'transparent !important' },
-      'img': { 'max-width': '100% !important', 'height': 'auto !important' }
+    try { state.epubRendition.themes.default(buildEpubTheme(epubPrefs.themeMode, epubPrefs.fontFamily)); }
+    catch (err) { console.warn('[CB8] themes.default (initial) failed:', err); }
+    try { state.epubRendition.themes.font(epubPrefs.fontFamily); } catch {}
+    try { state.epubRendition.themes.fontSize(toEpubFontSizePercent(epubPrefs.fontSize)); } catch {}
+
+    // Per-section: force theme colors inline, wire navigation keys (the
+    // iframe steals focus on click so document-level keys stop firing).
+    const onKey = (e) => {
+      if (!state.epubRendition) return;
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); state.epubRendition.next(); }
+      else if (e.key === 'ArrowLeft' || e.key === 'Backspace') { e.preventDefault(); state.epubRendition.prev(); }
+    };
+    state.epubRendition.on('rendered', (_section, view) => {
+      try {
+        if (view?.contents) forceThemeOnContent(view.contents, epubPrefs.themeMode, epubPrefs.fontFamily);
+        // Paint the iframe element itself so the padding epubjs adds around
+        // the page column doesn't show through the grey .epub-container bg.
+        try {
+          if (view?.iframe) {
+            view.iframe.style.setProperty('background-color', getThemeColors(epubPrefs.themeMode).background, 'important');
+          }
+        } catch {}
+      } catch (err) { console.warn('[CB8] forceTheme (rendered) failed:', err); }
+      // The section renders inside an iframe; keyboard + pointer events fired
+      // within it don't bubble up to the outer document/container. Attach
+      // navigation listeners directly to the iframe document so keys, taps,
+      // and swipes all work once the reader has focus.
+      try {
+        const iframeDoc = view?.document || view?.contents?.document;
+        if (!iframeDoc) return;
+        iframeDoc.addEventListener('keydown', onKey);
+
+        // Tap-on-thirds inside the iframe.
+        iframeDoc.addEventListener('click', (e) => {
+          if (!state.epubRendition) return;
+          const w = iframeDoc.documentElement?.clientWidth || iframeDoc.body?.clientWidth || 0;
+          if (!w) return;
+          const x = e.clientX;
+          const third = w / 3;
+          if (x < third) state.epubRendition.prev();
+          else if (x > third * 2) state.epubRendition.next();
+        });
+
+        // Swipe inside the iframe.
+        let sx = 0;
+        iframeDoc.addEventListener('touchstart', (e) => {
+          sx = e.touches[0].clientX;
+        }, { passive: true });
+        iframeDoc.addEventListener('touchend', (e) => {
+          if (!state.epubRendition) return;
+          const dx = e.changedTouches[0].clientX - sx;
+          if (Math.abs(dx) > 50) {
+            if (dx < 0) state.epubRendition.next();
+            else        state.epubRendition.prev();
+          }
+        }, { passive: true });
+      } catch {}
     });
-    state.epubRendition.themes.select('dark');
-    state.epubRendition.themes.fontSize(`${epubPrefs.fontSize}%`);
 
     const startCfi = record.lastLocation || undefined;
     try {
@@ -163,25 +368,51 @@ export async function renderEpubReader(el, record, onBack) {
       }
     });
 
-    const onKey = (e) => {
-      if (!state.epubRendition) return;
-      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); state.epubRendition.next(); }
-      else if (e.key === 'ArrowLeft' || e.key === 'Backspace') { e.preventDefault(); state.epubRendition.prev(); }
-    };
     document.addEventListener('keydown', onKey);
     state.readerEl._cleanupKey = () => document.removeEventListener('keydown', onKey);
 
-    epubContainer.addEventListener('touchstart', (e) => {
-      state.touchStartX = e.touches[0].clientX;
-    }, { passive: true });
-    epubContainer.addEventListener('touchend', (e) => {
-      const dx = e.changedTouches[0].clientX - state.touchStartX;
-      if (Math.abs(dx) > 50) {
-        if (dx < 0) state.epubRendition.next();
-        else         state.epubRendition.prev();
-      }
-    }, { passive: true });
+    // Transparent overlay with left/right tap zones. Touch events inside the
+    // section iframe don't bubble reliably on iPadOS Safari, so we intercept
+    // taps *above* the iframe. The middle third has pointer-events:none so
+    // users can still tap links / select text in the book content.
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:absolute;inset:0;display:flex;pointer-events:none;z-index:10;';
+    const leftZone = document.createElement('div');
+    leftZone.style.cssText = 'width:33.333%;pointer-events:auto;cursor:pointer;';
+    const midZone = document.createElement('div');
+    midZone.style.cssText = 'flex:1;pointer-events:none;';
+    const rightZone = document.createElement('div');
+    rightZone.style.cssText = 'width:33.333%;pointer-events:auto;cursor:pointer;';
+    leftZone.addEventListener('click', () => state.epubRendition?.prev());
+    rightZone.addEventListener('click', () => state.epubRendition?.next());
+    overlay.append(leftZone, midZone, rightZone);
+    // epubContainer needs to be positioned so the absolute overlay anchors.
+    if (getComputedStyle(epubContainer).position === 'static') {
+      epubContainer.style.position = 'relative';
+    }
+    epubContainer.appendChild(overlay);
 
+    // Horizontal swipe on the overlay zones (iPadOS: treats taps reliably).
+    const attachSwipe = (zone) => {
+      let sx = 0;
+      zone.addEventListener('touchstart', (e) => {
+        sx = e.touches[0].clientX;
+      }, { passive: true });
+      zone.addEventListener('touchend', (e) => {
+        if (!state.epubRendition) return;
+        const dx = e.changedTouches[0].clientX - sx;
+        if (Math.abs(dx) > 40) {
+          if (dx < 0) state.epubRendition.next();
+          else        state.epubRendition.prev();
+        }
+      }, { passive: true });
+    };
+    attachSwipe(leftZone);
+    attachSwipe(rightZone);
+
+    // Keep the outer container background in sync with the theme toggle.
+    blackBtn.addEventListener('click', applyContainerBg);
+    whiteBtn.addEventListener('click', applyContainerBg);
   } catch (err) {
     console.error('[CB8] EPUB render error:', err);
     epubContainer.innerHTML = `<div class="empty-state"><p>Failed to render EPUB: ${err?.message ?? err}</p></div>`;

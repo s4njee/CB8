@@ -6,6 +6,7 @@ import { registerIpcHandlers } from './ipcHandlers';
 import { closeAllHandles, startWebServer } from './webServer';
 import type { WebServerHandle } from './webServer';
 import { DbStartupError } from './db/schema';
+import { resetDefaultAdmin } from './adminReset';
 
 const isHeadless =
   process.argv.includes('--headless') ||
@@ -118,6 +119,52 @@ async function clearDatabaseAndRelaunch(win: BrowserWindow): Promise<void> {
   app.quit();
 }
 
+/**
+ * Reset the default admin account (`admin` / `gentrification`) in-place:
+ * useful when the operator can't log into the web UI. Keeps the rest of the
+ * library intact — this only touches the admin row and its credential row.
+ */
+async function resetAdminPassword(win: BrowserWindow): Promise<void> {
+  if (!db) {
+    await dialog.showMessageBox(win, {
+      type: 'error',
+      title: 'Database unavailable',
+      message: 'Cannot reset admin password: database is not open.',
+    });
+    return;
+  }
+  const confirm = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Cancel', 'Reset admin password'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Reset admin password',
+    message: 'Reset the admin account to the default password?',
+    detail:
+      'Sets the user named "admin" back to the default password ' +
+      '"gentrification" and creates the account if it does not exist.\n\n' +
+      'Library, users, and other accounts are left untouched.',
+  });
+  if (confirm.response !== 1) return;
+
+  try {
+    const result = await resetDefaultAdmin(db);
+    await dialog.showMessageBox(win, {
+      type: 'info',
+      title: result.created ? 'Admin created' : 'Admin password reset',
+      message: result.created ? 'Admin account created.' : 'Admin password reset.',
+      detail: `Username: ${result.username}\nPassword: ${result.password}\n\nChange it after signing in.`,
+    });
+  } catch (err) {
+    await dialog.showMessageBox(win, {
+      type: 'error',
+      title: 'Reset failed',
+      message: 'Failed to reset the admin password.',
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 function buildApplicationMenu(win: BrowserWindow): Menu {
   return Menu.buildFromTemplate([
     {
@@ -166,6 +213,14 @@ function buildApplicationMenu(win: BrowserWindow): Menu {
           },
         },
         { type: 'separator' },
+        {
+          label: 'Reset Admin Password…',
+          click: () => {
+            resetAdminPassword(win).catch((err) => {
+              console.error('[CB8] Reset admin password failed:', err);
+            });
+          },
+        },
         {
           label: 'Clear Database…',
           click: () => {

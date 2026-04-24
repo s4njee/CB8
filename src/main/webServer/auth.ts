@@ -65,6 +65,34 @@ function resolveBaseURL(): string {
   return process.env.BETTER_AUTH_URL || 'http://localhost:8008';
 }
 
+/**
+ * Origins better-auth will accept. Includes the configured BASE_URL plus
+ * common loopback aliases and, if the web server is listening on a port,
+ * the current LAN IP. Without this, users hitting 127.0.0.1 or their LAN
+ * address instead of `localhost` are rejected with a 500.
+ */
+function resolveTrustedOrigins(): string[] {
+  const base = resolveBaseURL();
+  const out = new Set<string>([base]);
+  try {
+    const u = new URL(base);
+    const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+    for (const host of ['localhost', '127.0.0.1', '0.0.0.0', '[::1]']) {
+      out.add(`${u.protocol}//${host}:${port}`);
+    }
+    // LAN IP — enumerated from the host network interfaces.
+    const os = require('node:os') as typeof import('node:os');
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const iface of list ?? []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          out.add(`${u.protocol}//${iface.address}:${port}`);
+        }
+      }
+    }
+  } catch { /* fall back to BASE_URL only */ }
+  return Array.from(out);
+}
+
 export function createAuth(db: Database.Database): AuthInstance {
   if (_auth) return _auth;
   _auth = buildAuth(db) as unknown as AuthInstance;
@@ -80,8 +108,21 @@ function buildAuth(db: Database.Database) {
       database: { generateId: false },
       cookiePrefix: 'cb8',
     },
+    // Our SQLite schema uses snake_case columns (user_id, expires_at, …)
+    // but better-auth's default adapter issues queries with camelCase field
+    // names verbatim. Without these mappings, every session / account
+    // insert errors with "no such column: userId" and the sign-in path
+    // returns a silent 500 from FAILED_TO_CREATE_SESSION.
     user: {
       modelName: 'users',
+      fields: {
+        emailVerified: 'email_verified',
+        createdAt: 'created_at',
+        updatedAt: 'updated_at',
+        // `displayUsername` is added by the username plugin; cast widens
+        // the record so TS doesn't complain about the plugin field.
+        displayUsername: 'display_username',
+      } as Record<string, string>,
       additionalFields: {
         isAdmin: {
           type: 'boolean',
@@ -90,6 +131,37 @@ function buildAuth(db: Database.Database) {
           input: false,
           fieldName: 'is_admin',
         },
+      },
+    },
+    session: {
+      fields: {
+        userId: 'user_id',
+        expiresAt: 'expires_at',
+        ipAddress: 'ip_address',
+        userAgent: 'user_agent',
+        createdAt: 'created_at',
+        updatedAt: 'updated_at',
+      },
+    },
+    account: {
+      fields: {
+        userId: 'user_id',
+        accountId: 'account_id',
+        providerId: 'provider_id',
+        accessToken: 'access_token',
+        refreshToken: 'refresh_token',
+        idToken: 'id_token',
+        accessTokenExpiresAt: 'access_token_expires_at',
+        refreshTokenExpiresAt: 'refresh_token_expires_at',
+        createdAt: 'created_at',
+        updatedAt: 'updated_at',
+      },
+    },
+    verification: {
+      fields: {
+        expiresAt: 'expires_at',
+        createdAt: 'created_at',
+        updatedAt: 'updated_at',
       },
     },
     emailAndPassword: {
@@ -130,7 +202,7 @@ function buildAuth(db: Database.Database) {
         maxUsernameLength: 30,
       }),
     ],
-    trustedOrigins: [resolveBaseURL()],
+    trustedOrigins: resolveTrustedOrigins(),
   });
 }
 

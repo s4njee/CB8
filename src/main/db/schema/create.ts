@@ -144,6 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_history_timestamp ON reading_history(timestamp);
 CREATE TABLE IF NOT EXISTS libraries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  media_type TEXT NOT NULL DEFAULT 'comic',
   date_created TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

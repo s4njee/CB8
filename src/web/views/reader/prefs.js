@@ -23,7 +23,25 @@ export function saveReaderPrefs(prefs) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
 }
 
-export const epubPrefs = {
+const EPUB_PREFS_KEY = 'cb8.epub.prefs.v1';
+
+const DEFAULT_EPUB_PREFS = {
   spread: true,
-  fontSize: 85,
+  fontSize: 100,
+  fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  themeMode: 'black', // 'black' | 'white'
 };
+
+function loadEpubPrefs() {
+  try {
+    const raw = localStorage.getItem(EPUB_PREFS_KEY);
+    if (!raw) return { ...DEFAULT_EPUB_PREFS };
+    return { ...DEFAULT_EPUB_PREFS, ...JSON.parse(raw) };
+  } catch { return { ...DEFAULT_EPUB_PREFS }; }
+}
+
+export function saveEpubPrefs() {
+  try { localStorage.setItem(EPUB_PREFS_KEY, JSON.stringify(epubPrefs)); } catch { /* ignore */ }
+}
+
+export const epubPrefs = loadEpubPrefs();

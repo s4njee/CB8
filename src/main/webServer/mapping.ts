@@ -20,6 +20,12 @@ export interface WebComicRecord {
 
 export function toWebRecord(record: ReturnType<LibraryDatabase['getComic']>): WebComicRecord | null {
   if (!record) return null;
+  // Version the thumbnail URL with a stable per-row value so the browser
+  // evicts its cache whenever the underlying record changes. Without this,
+  // wiping + re-scanning reuses the same /api/comics/1/thumbnail URL and the
+  // browser serves the previous comic's blob from its 1h cache.
+  const v = Date.parse(record.dateAdded);
+  const vParam = Number.isFinite(v) ? String(v) : encodeURIComponent(record.dateAdded);
   return {
     id: record.id,
     title: record.title,
@@ -31,7 +37,7 @@ export function toWebRecord(record: ReturnType<LibraryDatabase['getComic']>): We
     lastLocation: record.lastLocation ?? null,
     lastRead: record.lastRead,
     mediaType: record.mediaType,
-    thumbnailUrl: `/api/comics/${record.id}/thumbnail`,
+    thumbnailUrl: `/api/comics/${record.id}/thumbnail?v=${vParam}`,
     fileExt: path.extname(record.filePath).toLowerCase().replace(/^\./, ''),
   };
 }
