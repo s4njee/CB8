@@ -163,7 +163,7 @@ export async function adminLogout() {
 }
 
 /**
- * Pop the Electron native picker on the server host.
+ * Pop a native picker on the server host (501 if no host picker is wired).
  * Returns { path: string | null } (null when cancelled).
  */
 export async function adminPickPath(kind) {
@@ -387,18 +387,13 @@ export async function getSession() {
 }
 
 /**
- * Sign in. `identifier` can be either a username or an email — we sniff on
- * '@' and route to better-auth's matching endpoint. Errors from better-auth
- * come back as `{ message }`; legacy shape uses `{ error }`.
+ * Sign in with a username (or email used as a username) and password.
  */
 export async function login(identifier, password) {
-  const isEmail = identifier.includes('@');
-  const path = isEmail ? '/api/auth/sign-in/email' : '/api/auth/sign-in/username';
-  const body = isEmail ? { email: identifier, password } : { username: identifier, password };
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(`${API}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ username: identifier, password }),
     credentials: 'same-origin',
   });
   if (!res.ok) {
@@ -412,7 +407,7 @@ export async function login(identifier, password) {
 }
 
 export async function logout() {
-  await fetch(`${API}/api/auth/sign-out`, { method: 'POST', credentials: 'same-origin' });
+  await fetch(`${API}/api/auth/logout`, { method: 'POST', credentials: 'same-origin' });
 }
 
 /**

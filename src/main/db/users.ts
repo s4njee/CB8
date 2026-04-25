@@ -50,6 +50,10 @@ export function setUserAdmin(db: Database.Database, id: number, isAdmin: boolean
   db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, id);
 }
 
+export function setUserPasswordHash(db: Database.Database, id: number, passwordHash: string): void {
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
+}
+
 /**
  * Ensure a credential-provider `account` row exists for the given user. This
  * is the table better-auth reads when verifying a password; keeping it in

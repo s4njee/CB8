@@ -1,0 +1,21 @@
+services:
+  cb8:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: cb8-server:latest
+    container_name: cb8
+    restart: unless-stopped
+    ports:
+      - "8008:8008"
+    environment:
+      CB8_DATA_DIR: /data
+      CB8_PORT: "8008"
+      CB8_HOST: 0.0.0.0
+    volumes:
+      - cb8-data:/data
+      - ${CB8_EBOOKS_DIR:-./ebooks}:/ebooks
+      - ${CB8_COMICS_DIR:-./comics}:/comics
+
+volumes:
+  cb8-data:

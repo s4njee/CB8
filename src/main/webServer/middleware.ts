@@ -43,28 +43,21 @@ export function isGuestAccessEnabled(db: LibraryDatabase): boolean {
 }
 
 export async function ensureInitialAdmin(db: LibraryDatabase): Promise<void> {
-  if (db.countUsers() > 0) return;
-  const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
-  const user = db.createUser('admin', hash, true);
-  // better-auth's username plugin validates the returned user shape on
-  // sign-in and rejects rows where email / display_username / name are null.
-  // Populate them up front so /api/auth/sign-in/username succeeds without
-  // further surgery.
-  db.raw.prepare(
-    `UPDATE users
-        SET email = 'admin@localhost',
-            email_verified = 1,
-            display_username = 'admin',
-            name = 'admin',
-            updated_at = datetime('now')
-      WHERE id = ?`
-  ).run(user.id);
-  // Mirror the password into the `account` table so better-auth's credential
-  // provider can verify it. The backfill migration handles pre-existing rows;
-  // this covers the first-boot case where the migration runs against an empty
-  // table and then we immediately insert the admin.
-  db.upsertCredentialAccount(user.id, 'admin', hash);
-  console.log('[CB8] Created initial admin user (username=admin, default password).');
+  const existing = db.getUserByUsername('admin');
+  if (!existing && db.countUsers() === 0) {
+    const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
+    db.createUser('admin', hash, true);
+    console.log('[CB8] Created initial admin user (username=admin, default password).');
+    return;
+  }
+  // Repair: an admin row exists but has no usable password_hash (e.g. left
+  // over from a previous better-auth install where credentials lived in the
+  // `account` table). Reset it to the default so the operator can sign in.
+  if (existing && (!existing.passwordHash || existing.passwordHash.length === 0)) {
+    const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
+    db.setUserPasswordHash(existing.id, hash);
+    console.log('[CB8] Restored default password on existing admin account.');
+  }
 }
 
 export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {

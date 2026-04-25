@@ -11,11 +11,21 @@
 
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { app } from 'electron';
 
 let sharp: typeof import('sharp') | null = null;
+let cacheRootOverride: string | null = null;
+
+/**
+ * Bind the resize cache to `config.dataDir/image-cache`. Without this call
+ * the cache lands in the OS tmpdir — useful for tests but unsuitable for
+ * production.
+ */
+export function setImageCacheRoot(root: string): void {
+  cacheRootOverride = root;
+}
 function getSharp(): typeof import('sharp') {
   if (!sharp) {
     // Lazy require so the module doesn't explode at import time in envs
@@ -39,12 +49,8 @@ export function clampWidth(w: number): number {
 }
 
 function cacheRoot(): string {
-  try {
-    return path.join(app.getPath('userData'), 'image-cache');
-  } catch {
-    // Fallback during tests when app is unavailable
-    return path.join(require('node:os').tmpdir(), 'cb8-image-cache');
-  }
+  if (cacheRootOverride) return cacheRootOverride;
+  return path.join(os.tmpdir(), 'cb8-image-cache');
 }
 
 interface CachedFile {

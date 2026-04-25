@@ -1,8 +1,8 @@
 /**
  * views/reader/epubReader.js — EPUB rendering via epub.js (loaded from CDN).
  *
- * Controls mirror the Electron EpubReaderView: font family dropdown, font
- * size dropdown (70–130%), and black/white theme toggle. Colors are applied
+ * Controls: font family dropdown, font size dropdown (70–130%), and
+ * black/white theme toggle. Colors are applied
  * as inline !important styles on every element in the section iframe so
  * author stylesheets with class-scoped !important rules can't outrank them.
  */

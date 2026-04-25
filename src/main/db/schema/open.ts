@@ -15,7 +15,7 @@ export class DbStartupError extends Error {
   }
 }
 
-export function openOrRecreate(dbPath: string): Database.Database {
+export async function openOrRecreate(dbPath: string): Promise<Database.Database> {
   // Only the open+exec(SCHEMA) path is guarded by the wipe-and-recreate
   // fallback — migrateSchema failures must NOT destroy a working library DB.
   let db: Database.Database;
@@ -53,7 +53,7 @@ export function openOrRecreate(dbPath: string): Database.Database {
   }
 
   try {
-    runRepairs(db);
+    await runRepairs(db);
   } catch (err) {
     console.warn('[CB8] Non-fatal repair error during DB startup:', err);
   }

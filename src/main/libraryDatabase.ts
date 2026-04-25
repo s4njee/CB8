@@ -22,12 +22,22 @@ import * as comics from './db/comics';
 export class LibraryDatabase {
   private db: Database.Database;
 
-  constructor(dbPath: string) {
-    this.db = openOrRecreate(dbPath);
+  private constructor(db: Database.Database) {
+    this.db = db;
+  }
+
+  /**
+   * Open the database, run schema migrations, and execute one-shot repair
+   * jobs (some of which call into the async thumbnailer). Replaces the prior
+   * synchronous constructor.
+   */
+  static async open(dbPath: string): Promise<LibraryDatabase> {
+    const db = await openOrRecreate(dbPath);
+    return new LibraryDatabase(db);
   }
 
   initialize(): void {
-    // Schema already created in constructor; this is a no-op hook for callers.
+    // Schema already created in open(); this is a no-op hook for callers.
   }
 
   /** Raw better-sqlite3 handle — used by the better-auth adapter. */
@@ -140,6 +150,7 @@ export class LibraryDatabase {
   countUsers(): number { return users.countUsers(this.db); }
   deleteUser(id: number): void { users.deleteUser(this.db, id); }
   setUserAdmin(id: number, isAdmin: boolean): void { users.setUserAdmin(this.db, id, isAdmin); }
+  setUserPasswordHash(id: number, passwordHash: string): void { users.setUserPasswordHash(this.db, id, passwordHash); }
   upsertCredentialAccount(userId: number, accountId: string, passwordHash: string): void {
     users.upsertCredentialAccount(this.db, userId, accountId, passwordHash);
   }

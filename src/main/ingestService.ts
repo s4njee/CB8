@@ -49,7 +49,7 @@ export class IngestService {
         if (ext === '.epub' || ext === '.pdf') {
           try {
             const coverThumbnail = ext === '.epub'
-              ? generateThumbnail(await withTimeout(extractEpubCover(filePath), COVER_TIMEOUT_MS))
+              ? await generateThumbnail(await withTimeout(extractEpubCover(filePath), COVER_TIMEOUT_MS))
               : await withTimeout(renderPdfFirstPageCover(filePath), COVER_TIMEOUT_MS);
             if (coverThumbnail) this.db.updateCoverThumbnailByPath(record.filePath, coverThumbnail);
           } catch { /* placeholder thumbnail */ }
@@ -62,7 +62,7 @@ export class IngestService {
       try {
         let coverImage: Buffer | null = null;
         try { coverImage = await ArchiveLoader.getCoverImage(handle); } catch { /* placeholder */ }
-        const coverThumbnail = generateThumbnail(coverImage);
+        const coverThumbnail = await generateThumbnail(coverImage);
         const record = this.db.addComic({
           filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
           coverThumbnail, tags: [], mediaType: 'comic',
