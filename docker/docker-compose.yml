@@ -12,10 +12,35 @@ services:
       CB8_DATA_DIR: /data
       CB8_PORT: "8008"
       CB8_HOST: 0.0.0.0
+      CB8_INITIAL_ADMIN_PASSWORD: ${CB8_INITIAL_ADMIN_PASSWORD}
     volumes:
       - cb8-data:/data
       - ${CB8_EBOOKS_DIR:-./ebooks}:/ebooks
       - ${CB8_COMICS_DIR:-./comics}:/comics
 
+  # Vite dev server for the SvelteKit frontend in src/web-next.
+  # Browse: http://<host>:5173  (proxies /api to the cb8 service)
+  cb8-web:
+    image: node:22-bookworm-slim
+    container_name: cb8-web
+    working_dir: /app
+    depends_on:
+      - cb8
+    command: >
+      bash -lc "corepack enable
+      && pnpm install --frozen-lockfile
+      && (cd src/web-next && pnpm exec svelte-kit sync || true)
+      && pnpm web:dev"
+    environment:
+      CB8_API_TARGET: http://cb8:8008
+      CB8_WEB_HOST: 0.0.0.0
+      CB8_WEB_PORT: "5173"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ..:/app
+      - cb8-web-node-modules:/app/node_modules
+
 volumes:
   cb8-data:
+  cb8-web-node-modules:

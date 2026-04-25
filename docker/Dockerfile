@@ -18,7 +18,11 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.json vite.server.config.ts ./
 COPY src ./src
 
+# Build the Fastify server bundle.
 RUN pnpm run build
+
+# Build the SvelteKit frontend (outputs to src/web-next/build).
+RUN pnpm web:build
 
 # Prune to production deps for the runtime image.
 RUN pnpm install --frozen-lockfile --prod \
@@ -41,7 +45,8 @@ ENV NODE_ENV=production \
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/src/web ./src/web
+# Serve the SvelteKit build; resolveStaticRoot() finds src/web as a fallback.
+COPY --from=builder /app/src/web-next/build ./src/web
 COPY --from=builder /app/package.json ./package.json
 
 RUN mkdir -p /data /ebooks /comics
