@@ -27,58 +27,17 @@ CREATE TABLE IF NOT EXISTS comics (
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE COLLATE NOCASE,
-  display_username TEXT,
   password_hash TEXT,
   is_admin INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  email TEXT UNIQUE COLLATE NOCASE,
-  email_verified INTEGER NOT NULL DEFAULT 0,
-  name TEXT,
-  image TEXT,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- better-auth tables.
-CREATE TABLE IF NOT EXISTS session (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  token TEXT NOT NULL UNIQUE,
-  expires_at TEXT NOT NULL,
-  ip_address TEXT,
-  user_agent TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-CREATE TABLE IF NOT EXISTS account (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  account_id TEXT NOT NULL,
-  provider_id TEXT NOT NULL,
-  password TEXT,
-  access_token TEXT,
-  refresh_token TEXT,
-  id_token TEXT,
-  access_token_expires_at TEXT,
-  refresh_token_expires_at TEXT,
-  scope TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS verification (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  identifier TEXT NOT NULL,
-  value TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_verification_identifier ON verification(identifier);
-CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
-CREATE INDEX IF NOT EXISTS idx_session_token ON session(token);
-CREATE INDEX IF NOT EXISTS idx_account_user ON account(user_id);
-CREATE INDEX IF NOT EXISTS idx_account_provider ON account(provider_id, account_id);
 
 CREATE TABLE IF NOT EXISTS user_progress (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -136,6 +95,10 @@ CREATE INDEX IF NOT EXISTS idx_comics_title ON comics(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_comics_date_added ON comics(date_added);
 CREATE INDEX IF NOT EXISTS idx_comics_file_size ON comics(file_size);
 CREATE INDEX IF NOT EXISTS idx_comics_page_count ON comics(page_count);
+CREATE INDEX IF NOT EXISTS idx_comics_series ON comics(series_name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_comics_last_read ON comics(last_read);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_comic ON bookmarks(user_id, comic_id);
 CREATE INDEX IF NOT EXISTS idx_history_user ON reading_history(user_id);

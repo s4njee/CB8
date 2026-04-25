@@ -1,6 +1,5 @@
 /**
- * Simple session-based auth using bcrypt + cookie + in-memory session map.
- * Replaces better-auth with a minimal implementation.
+ * Simple session-based auth using bcrypt + cookie + SQLite-backed sessions.
  */
 import * as crypto from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
@@ -11,35 +10,35 @@ import type { LibraryDatabase } from '../main/libraryDatabase';
 const SESSION_COOKIE = 'cb8_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-interface Session {
-  userId: number;
-  expiresAt: number;
-}
-
-const sessions = new Map<string, Session>();
-
 let _db: LibraryDatabase | null = null;
 
 export function initAuth(db: import('better-sqlite3').Database): void {
-  // We receive the raw better-sqlite3 Database but we need the LibraryDatabase wrapper.
-  // Store nothing here — we'll pass db through route options instead.
+  void db;
 }
 
 export function initAuthWithDb(db: LibraryDatabase): void {
   _db = db;
+  pruneExpiredSessions();
 }
 
 export function createSession(userId: number): string {
+  if (!_db) throw new Error('Auth database not initialized');
   const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { userId, expiresAt: Date.now() + SESSION_TTL_MS });
+  const expiresAt = Date.now() + SESSION_TTL_MS;
+  pruneExpiredSessions();
+  _db.raw.prepare(
+    `INSERT INTO sessions (token, user_id, expires_at)
+     VALUES (?, ?, ?)`
+  ).run(token, userId, expiresAt);
   return token;
 }
 
 export function destroySession(token: string): void {
-  sessions.delete(token);
+  if (!_db) return;
+  _db.raw.prepare('DELETE FROM sessions WHERE token = ?').run(token);
 }
 
-function getSessionToken(req: FastifyRequest): string | null {
+export function getSessionToken(req: FastifyRequest): string | null {
   const cookieHeader = req.raw.headers.cookie;
   if (!cookieHeader) return null;
   for (const pair of cookieHeader.split(';')) {
@@ -60,19 +59,28 @@ export function clearSessionCookie(reply: FastifyReply): void {
   reply.header('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
 }
 
+function pruneExpiredSessions(): void {
+  if (!_db) return;
+  _db.raw.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now());
+}
+
 export async function resolveCurrentUser(req: FastifyRequest): Promise<ResolvedUser | null> {
   const token = getSessionToken(req);
   if (!token) return null;
-  const session = sessions.get(token);
+  if (!_db) return null;
+  const session = _db.raw.prepare(
+    `SELECT user_id, expires_at
+     FROM sessions
+     WHERE token = ?`
+  ).get(token) as { user_id: number; expires_at: number } | undefined;
   if (!session) return null;
-  if (session.expiresAt < Date.now()) {
-    sessions.delete(token);
+  if (session.expires_at < Date.now()) {
+    destroySession(token);
     return null;
   }
-  if (!_db) return null;
-  const user = _db.getUserById(session.userId);
+  const user = _db.getUserById(session.user_id);
   if (!user) {
-    sessions.delete(token);
+    destroySession(token);
     return null;
   }
   return { id: user.id, username: user.username, isAdmin: user.isAdmin };

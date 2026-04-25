@@ -151,9 +151,6 @@ export class LibraryDatabase {
   deleteUser(id: number): void { users.deleteUser(this.db, id); }
   setUserAdmin(id: number, isAdmin: boolean): void { users.setUserAdmin(this.db, id, isAdmin); }
   setUserPasswordHash(id: number, passwordHash: string): void { users.setUserPasswordHash(this.db, id, passwordHash); }
-  upsertCredentialAccount(userId: number, accountId: string, passwordHash: string): void {
-    users.upsertCredentialAccount(this.db, userId, accountId, passwordHash);
-  }
 
   // --- per-user progress ---
   upsertUserProgress(

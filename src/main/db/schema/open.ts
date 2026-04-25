@@ -1,7 +1,6 @@
 import Database from 'better-sqlite3';
 import * as fs from 'node:fs';
 import { SCHEMA } from './create';
-import { migrateSchema, initializeVersion } from './migrations';
 import { runRepairs } from './repairs';
 
 export class DbStartupError extends Error {
@@ -16,8 +15,6 @@ export class DbStartupError extends Error {
 }
 
 export async function openOrRecreate(dbPath: string): Promise<Database.Database> {
-  // Only the open+exec(SCHEMA) path is guarded by the wipe-and-recreate
-  // fallback — migrateSchema failures must NOT destroy a working library DB.
   let db: Database.Database;
   try {
     db = new Database(dbPath);
@@ -25,7 +22,6 @@ export async function openOrRecreate(dbPath: string): Promise<Database.Database>
     db.pragma('busy_timeout = 3000');
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA);
-    initializeVersion(db); // fresh install: skip all migrations
   } catch (err) {
     console.warn(
       `Database corrupted or unreadable at ${dbPath}, recreating.`,
@@ -40,16 +36,9 @@ export async function openOrRecreate(dbPath: string): Promise<Database.Database>
       db.pragma('busy_timeout = 3000');
       db.pragma('foreign_keys = ON');
       db.exec(SCHEMA);
-      initializeVersion(db);
     } catch (recreateErr) {
       throw new DbStartupError('corrupt', 'DB recreation failed after corrupt file detected', recreateErr);
     }
-  }
-
-  try {
-    migrateSchema(db);
-  } catch (err) {
-    throw new DbStartupError('migration', 'Schema migration failed', err);
   }
 
   try {

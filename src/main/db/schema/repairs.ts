@@ -64,30 +64,7 @@ export function backfillCompletedOnFinalPage(db: Database.Database): void {
   }
 }
 
-export function backfillAccountFromPasswordHash(db: Database.Database): void {
-  const repairKey = 'auth_account_backfill_v1';
-  const done = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(repairKey) as { value: string } | undefined;
-  if (done?.value === 'complete') return;
-  try {
-    db.prepare(
-      `INSERT INTO account (user_id, account_id, provider_id, password, created_at, updated_at)
-       SELECT u.id, u.username, 'credential', u.password_hash, u.created_at, u.created_at
-       FROM users u
-       WHERE u.password_hash IS NOT NULL
-         AND u.username IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM account a
-           WHERE a.user_id = u.id AND a.provider_id = 'credential'
-         )`
-    ).run();
-    db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(repairKey, 'complete');
-  } catch (err) {
-    console.warn('Failed to backfill account rows from password_hash; will retry on next startup.', err);
-  }
-}
-
 export async function runRepairs(db: Database.Database): Promise<void> {
   await repairExistingThumbnails(db);
   backfillCompletedOnFinalPage(db);
-  backfillAccountFromPasswordHash(db);
 }

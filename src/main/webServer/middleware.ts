@@ -2,10 +2,8 @@ import * as http from 'node:http';
 import * as bcrypt from 'bcryptjs';
 import type { LibraryDatabase } from '../libraryDatabase';
 import type { QueryOptions } from '../../shared/types';
-
-/** Legacy hardcoded admin password, migrated to the first users row on startup. */
-const LEGACY_ADMIN_PASSWORD = 'gentrification';
 export const GUEST_ACCESS_KEY = 'guest_access';
+const INITIAL_ADMIN_PASSWORD_ENV = 'CB8_INITIAL_ADMIN_PASSWORD';
 
 /**
  * "Superadmin" = authenticated admin whose connection originates from the
@@ -42,21 +40,27 @@ export function isGuestAccessEnabled(db: LibraryDatabase): boolean {
   return v !== 'false';
 }
 
+function getInitialAdminPassword(): string {
+  const password = process.env[INITIAL_ADMIN_PASSWORD_ENV]?.trim();
+  if (!password) {
+    throw new Error(`Missing ${INITIAL_ADMIN_PASSWORD_ENV} for admin bootstrap`);
+  }
+  return password;
+}
+
 export async function ensureInitialAdmin(db: LibraryDatabase): Promise<void> {
   const existing = db.getUserByUsername('admin');
   if (!existing && db.countUsers() === 0) {
-    const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
+    const hash = await bcrypt.hash(getInitialAdminPassword(), 10);
     db.createUser('admin', hash, true);
-    console.log('[CB8] Created initial admin user (username=admin, default password).');
+    console.log('[CB8] Created initial admin user from CB8_INITIAL_ADMIN_PASSWORD.');
     return;
   }
-  // Repair: an admin row exists but has no usable password_hash (e.g. left
-  // over from a previous better-auth install where credentials lived in the
-  // `account` table). Reset it to the default so the operator can sign in.
+  // Repair: ensure the built-in admin account always has a usable credential.
   if (existing && (!existing.passwordHash || existing.passwordHash.length === 0)) {
-    const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
+    const hash = await bcrypt.hash(getInitialAdminPassword(), 10);
     db.setUserPasswordHash(existing.id, hash);
-    console.log('[CB8] Restored default password on existing admin account.');
+    console.log('[CB8] Restored bootstrap password on existing admin account from CB8_INITIAL_ADMIN_PASSWORD.');
   }
 }
 

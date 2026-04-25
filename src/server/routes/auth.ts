@@ -6,6 +6,7 @@ import {
   verifyCredentials,
   createSession,
   destroySession,
+  getSessionToken,
   setSessionCookie,
   clearSessionCookie,
 } from '../auth-bridge';
@@ -73,19 +74,8 @@ const plugin: FastifyPluginAsync<Options> = async (app, opts) => {
   });
 
   const logoutHandler = async (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => {
-    // Extract session token from cookie and destroy it
-    const cookieHeader = req.raw.headers.cookie;
-    if (cookieHeader) {
-      for (const pair of cookieHeader.split(';')) {
-        const eq = pair.indexOf('=');
-        if (eq < 0) continue;
-        const k = pair.slice(0, eq).trim();
-        if (k === 'cb8_session') {
-          destroySession(decodeURIComponent(pair.slice(eq + 1).trim()));
-          break;
-        }
-      }
-    }
+    const token = getSessionToken(req);
+    if (token) destroySession(token);
     clearSessionCookie(reply);
     sendJson(reply, 200, { ok: true });
   };

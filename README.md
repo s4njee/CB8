@@ -40,6 +40,10 @@ Run the app in development:
 pnpm start
 ```
 
+Server configuration is environment-variable driven. The bootstrap admin
+password must be provided via `CB8_INITIAL_ADMIN_PASSWORD` when creating a new
+database or repairing the built-in `admin` account.
+
 Run TypeScript checks:
 
 ```sh
@@ -58,6 +62,13 @@ Package the app:
 pnpm run package
 ```
 
+## Environment
+
+- `CB8_HOST`: bind address, defaults to `0.0.0.0`
+- `CB8_PORT`: listen port, defaults to `8008`
+- `CB8_DATA_DIR`: data directory, defaults to `/data`
+- `CB8_INITIAL_ADMIN_PASSWORD`: required bootstrap password for the built-in `admin` account
+
 ## Project Layout
 
 - `src/main/`: Electron main process, archive loading, scanning, SQLite database, IPC handlers, and preload bridge.
@@ -69,4 +80,3 @@ pnpm run package
 ## Notes
 
 The root `CMakeLists.txt` is from an older Qt/C++ prototype and is not used by the current Electron implementation.
-

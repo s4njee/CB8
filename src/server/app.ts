@@ -65,9 +65,7 @@ export async function buildFastifyApp(options: BuildAppOptions): Promise<Fastify
     trustProxy: true,
   });
 
-  await ensureInitialAdmin(db).catch((err) => {
-    app.log.error({ err }, 'Failed to create initial admin user');
-  });
+  await ensureInitialAdmin(db);
 
   initAuthWithDb(db);
 
