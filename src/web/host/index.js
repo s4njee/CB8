@@ -40,6 +40,21 @@ export function onFileOpened(callback) {
 }
 
 /**
+ * Subscribe to "open comic by id" events. The main process resolves an
+ * OS-supplied file path to a library comic id (ingesting if necessary)
+ * and fires this so the SPA can navigate to the reader without having
+ * to do a path→id lookup itself.
+ *
+ * @param {(comicId: number) => void} callback
+ * @returns {() => void} unsubscribe
+ */
+export function onComicOpened(callback) {
+  const bridge = getBridge();
+  if (!bridge) return NOOP;
+  return bridge.on('comic-opened', (comicId) => callback(comicId));
+}
+
+/**
  * Subscribe to the app-menu "Open Settings" command.
  *
  * @param {() => void} callback

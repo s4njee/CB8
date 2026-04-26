@@ -6,6 +6,7 @@ import { closeAllHandles, startWebServer } from './webServer';
 import type { WebServerHandle } from './webServer';
 import { DbStartupError } from './db/schema';
 import { buildApplicationMenu, type MenuContext } from './menu';
+import { IngestService } from './ingestService';
 
 const isHeadless =
   process.argv.includes('--headless') ||
@@ -39,10 +40,39 @@ function openFileInWindow(filePath: string): void {
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('file-opened', filePath);
+    void resolveAndDispatchComic(filePath);
     return;
   }
 
   pendingOpenFiles.push(filePath);
+}
+
+/**
+ * Translate an OS-driven file path into a library comic id and notify the SPA
+ * so it can navigate to the reader. Falls back to ingesting the file if it is
+ * not yet in the library. Errors are logged but never thrown — the legacy
+ * `file-opened` event still reaches the React renderer for now.
+ */
+async function resolveAndDispatchComic(filePath: string): Promise<void> {
+  const win = mainWindow;
+  if (!win || win.isDestroyed() || !db) return;
+  try {
+    let record = db.getComicByPath(filePath);
+    if (!record) {
+      const ingest = new IngestService(db);
+      const result = await ingest.addFile(filePath);
+      if (!result.added && result.error) {
+        console.warn(`[CB8] Cannot open file '${filePath}': ${result.error}`);
+        return;
+      }
+      record = db.getComicByPath(filePath);
+    }
+    if (!record) return;
+    if (win.isDestroyed()) return;
+    win.webContents.send('comic-opened', record.id);
+  } catch (err) {
+    console.error(`[CB8] Failed to resolve file '${filePath}' to a comic id:`, err);
+  }
 }
 
 function refreshRecentMenu(filePath?: string): void {

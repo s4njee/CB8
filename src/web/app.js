@@ -22,6 +22,7 @@ import { populateSidebar } from './app/sidebar.js';
 import { openTabPanel, closeTabPanel, promptNewCollection, promptNewFolder } from './app/tabPanel.js';
 import { openSortSheet, closeSortSheet, updateSortLabel, applySort } from './app/sort.js';
 import { wireDrop } from './app/drop.js';
+import { onComicOpened, onOpenSettings } from './host/index.js';
 
 export { showToast, getState, isAuthenticated };
 
@@ -142,9 +143,26 @@ function wireControls() {
   });
 }
 
+function wireHostBridges() {
+  // OS-driven file open: main resolves the path to a library comic id and
+  // fires `comic-opened`. We just navigate to the reader. No-op outside
+  // Electron (the bridge returns a no-op unsubscribe).
+  onComicOpened((comicId) => {
+    if (Number.isFinite(comicId)) window.location.hash = `#/read/${comicId}`;
+  });
+
+  // App menu "Web Server…" / "Settings" — Phase 5 will replace this stop-gap
+  // with a real settings dialog ported into the SPA. For now opening the
+  // admin panel is the closest existing surface for a desktop user.
+  onOpenSettings(() => {
+    toggleAdminPanel();
+  });
+}
+
 async function init() {
   wireControls();
   wireDrop();
+  wireHostBridges();
   updateSortLabel();
   await refreshSession();
   await populateSidebar();

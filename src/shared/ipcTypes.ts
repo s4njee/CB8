@@ -95,6 +95,7 @@ export const IpcInvokeMap = {
 export const IpcEventMap = {
   'library:scan-progress': phantom as [progress: ScanProgress],
   'file-opened':           phantom as [filePath: string],
+  'comic-opened':          phantom as [comicId: number],
   'open-settings':         phantom as [],
 } as const;
 
