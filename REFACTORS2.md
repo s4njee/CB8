@@ -8,7 +8,13 @@ Items are ordered top-down by leverage, not by difficulty. "Leverage" here means
 
 ## Tier 1 — Cross-cutting structural wins
 
-### Single renderer for both Electron and the embedded web UI
+### Single renderer for both Electron and the embedded web UI — **in progress (PLAN10)**
+
+This is now being executed under `PLAN10.md`. The chosen direction is the
+**inverse** of the original recommendation below: keep `src/web/` as the
+unified SPA and retire `src/renderer/`, rather than rendering React in both
+contexts. New product work should land in `src/web/`. The original analysis
+is preserved below for context.
 
 `src/renderer/` (React) and `src/web/` (vanilla ES modules) are roughly parallel implementations of the same product. Each ships its own:
 

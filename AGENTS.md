@@ -15,6 +15,18 @@ Active feature inventory lives in `FEATURES.md` — every implemented feature th
 
 Large follow-up work that should not be mixed into small fixes is tracked in `REFACTOR.md`.
 
+## Frontend Direction (PLAN10, in progress)
+
+`src/web/` is the canonical frontend. New user-facing features land there.
+`src/renderer/` is being collapsed onto the same SPA — treat it as a
+compatibility shell during the migration, not as an evolving app. Do not
+add net-new product features to `src/renderer/`; only host-only Electron
+glue (file-open, menu commands, packaging) belongs there during cutover.
+
+`src/web-next/` (a SvelteKit scaffold) was abandoned and is **not** the
+target — it should not exist in the working tree on this branch. See
+`PLAN10.md` for the migration plan.
+
 ## Useful Commands
 
 Run these from the repo root:
