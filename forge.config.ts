@@ -97,12 +97,9 @@ const config: ForgeConfig = {
           target: 'preload',
         },
       ],
-      renderer: [
-        {
-          name: 'main_window',
-          config: 'vite.renderer.config.ts',
-        },
-      ],
+      // No renderer target: PLAN10 collapsed the desktop UI onto the SPA
+      // served by the embedded HTTP server (see hooks.packageAfterCopy).
+      renderer: [],
     }),
   ],
 };

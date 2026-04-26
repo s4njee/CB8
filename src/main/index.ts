@@ -39,7 +39,6 @@ function openFileInWindow(filePath: string): void {
   }
 
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('file-opened', filePath);
     void resolveAndDispatchComic(filePath);
     return;
   }
@@ -48,10 +47,9 @@ function openFileInWindow(filePath: string): void {
 }
 
 /**
- * Translate an OS-driven file path into a library comic id and notify the SPA
- * so it can navigate to the reader. Falls back to ingesting the file if it is
- * not yet in the library. Errors are logged but never thrown — the legacy
- * `file-opened` event still reaches the React renderer for now.
+ * Translate an OS-driven file path into a library comic id and notify the
+ * SPA so it can navigate to the reader. Falls back to ingesting the file
+ * if it is not yet in the library. Errors are logged but never thrown.
  */
 async function resolveAndDispatchComic(filePath: string): Promise<void> {
   const win = mainWindow;
@@ -72,15 +70,6 @@ async function resolveAndDispatchComic(filePath: string): Promise<void> {
     win.webContents.send('comic-opened', record.id);
   } catch (err) {
     console.error(`[CB8] Failed to resolve file '${filePath}' to a comic id:`, err);
-  }
-}
-
-function refreshRecentMenu(filePath?: string): void {
-  if (filePath && typeof app.addRecentDocument === 'function') {
-    app.addRecentDocument(filePath);
-  }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    Menu.setApplicationMenu(buildApplicationMenu(mainWindow, menuContext()));
   }
 }
 
@@ -119,7 +108,7 @@ const createWindow = (): void => {
     // 'desktop' mode keeps the embedded server alive at all times — the
     // BrowserWindow loads the SPA from it. The user-facing "enabled" toggle
     // controls LAN exposure (bind 0.0.0.0 vs 127.0.0.1), not server existence.
-    registerIpcHandlers(db, webServerRef, refreshRecentMenu, 'desktop');
+    registerIpcHandlers(db, webServerRef, 'desktop');
   } catch (err) {
     console.error('[CB8] Failed to register IPC handlers:', err);
   }
@@ -166,7 +155,7 @@ function startHeadless(): void {
     const dbPath = path.join(userDataPath, 'library.db');
     db = new LibraryDatabase(dbPath);
     db.initialize();
-    registerIpcHandlers(db, webServerRef, undefined, 'headless');
+    registerIpcHandlers(db, webServerRef, 'headless');
   } catch (err) {
     console.error('[CB8] Failed to initialize database or IPC:', err);
     process.exit(1);

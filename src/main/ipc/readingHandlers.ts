@@ -1,32 +1,13 @@
-import { app, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import type { LibraryDatabase } from '../libraryDatabase';
 
-export function registerReadingHandlers(
-  db: LibraryDatabase | null,
-  onRecentFilesChanged?: (filePath?: string) => void,
-): void {
-  ipcMain.handle('reading:update-progress', (_e, comicId: number, pageIndex: number) => {
-    db?.updateReadingProgress(comicId, pageIndex);
-    const record = db?.getComic(comicId);
-    if (record) {
-      app.addRecentDocument(record.filePath);
-      onRecentFilesChanged?.(record.filePath);
-    }
-  });
-
-  ipcMain.handle('reading:update-location', (_e, comicId: number, location: string) => {
-    db?.updateReadingLocation(comicId, location);
-    const record = db?.getComic(comicId);
-    if (record) {
-      app.addRecentDocument(record.filePath);
-      onRecentFilesChanged?.(record.filePath);
-    }
-  });
-
-  ipcMain.handle('reading:recently-read', (_e, limit?: number, mediaType?: 'comic' | 'book') => {
-    return db?.getRecentlyRead(limit ?? 10, mediaType) ?? [];
-  });
-
+/**
+ * Registers the single host-only reading channel: a path→record lookup
+ * used by main when an OS-driven file open needs to be turned into a
+ * library comic id before notifying the SPA. Reading progress and
+ * recently-read queries went to HTTP in PLAN10 Phase 6.
+ */
+export function registerReadingHandlers(db: LibraryDatabase | null): void {
   ipcMain.handle('reading:get-comic-by-path', (_e, filePath: string) => {
     return db?.getComicByPath(filePath) ?? null;
   });

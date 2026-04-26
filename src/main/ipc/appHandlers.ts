@@ -1,7 +1,13 @@
-import { ipcMain, BrowserWindow } from 'electron';
-import type { LibraryDatabase } from '../libraryDatabase';
+import { ipcMain, BrowserWindow, shell } from 'electron';
 
-export function registerAppHandlers(db: LibraryDatabase | null): void {
+/**
+ * Host-only window/shell IPC. Fullscreen toggling drives Electron's
+ * BrowserWindow chrome (the browser SPA uses the native Fullscreen API
+ * and never reaches this bridge). `shell:open-path` reveals a file in
+ * the OS file manager / default app and is invoked from the SPA via
+ * `host.openExternalPath`.
+ */
+export function registerAppHandlers(): void {
   ipcMain.handle('window:toggle-fullscreen', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) return;
@@ -22,11 +28,7 @@ export function registerAppHandlers(db: LibraryDatabase | null): void {
     }
   });
 
-  ipcMain.handle('app-meta:get', (_e, key: string) => {
-    return db?.getAppMeta(key) ?? null;
-  });
-
-  ipcMain.handle('app-meta:set', (_e, key: string, value: string) => {
-    db?.setAppMeta(key, value);
+  ipcMain.handle('shell:open-path', async (_e, filePath: string) => {
+    return shell.openPath(filePath);
   });
 }

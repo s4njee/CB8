@@ -2,7 +2,7 @@
   "name": "cb8",
   "productName": "CB8",
   "version": "1.0.0",
-  "description": "CB8 desktop comic book reader built with Electron, TypeScript, and React",
+  "description": "CB8 comic + book reader: Electron shell hosting an embedded HTTP server and a vanilla-JS SPA frontend",
   "main": ".vite/build/index.js",
   "scripts": {
     "prestart": "node scripts/brand-dev-electron.mjs",
@@ -30,10 +30,7 @@
     "@electron/rebuild": "^3.7.0",
     "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.12",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
     "@types/yauzl": "^2.10.3",
-    "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.0",
     "fast-check": "^3.23.1",
     "typescript": "^5.7.2",
@@ -54,17 +51,12 @@
   "dependencies": {
     "@jsquash/jxl": "^1.3.0",
     "@napi-rs/canvas": "^0.1.99",
-    "@tanstack/react-virtual": "^3.11.2",
-    "@tanstack/virtual-core": "^3.14.0",
     "bcryptjs": "^3.0.3",
     "better-auth": "^1.6.8",
     "better-sqlite3": "^11.7.0",
     "epubjs": "^0.3.93",
     "node-unrar-js": "^2.0.0",
     "pdfjs-dist": "^5.6.205",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "scheduler": "^0.27.0",
     "sharp": "^0.34.5",
     "yauzl": "^3.2.0"
   }
