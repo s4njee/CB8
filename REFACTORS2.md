@@ -8,30 +8,12 @@ Items are ordered top-down by leverage, not by difficulty. "Leverage" here means
 
 ## Tier 1 — Cross-cutting structural wins
 
-### Single renderer for both Electron and the embedded web UI — **in progress (PLAN10)**
+### ~~Single renderer for both Electron and the embedded web UI~~ ✓ (PLAN10)
 
-This is now being executed under `PLAN10.md`. The chosen direction is the
-**inverse** of the original recommendation below: keep `src/web/` as the
-unified SPA and retire `src/renderer/`, rather than rendering React in both
-contexts. New product work should land in `src/web/`. The original analysis
-is preserved below for context.
-
-`src/renderer/` (React) and `src/web/` (vanilla ES modules) are roughly parallel implementations of the same product. Each ships its own:
-
-- comic / EPUB / PDF readers (`EpubReaderView.tsx` ↔ `epubReader.js`, `PdfReaderView.tsx` ↔ `pdfReader.js`, `ReaderView.tsx` ↔ `comicReader.js`),
-- library grid + cards + sort/filter UI (`LibraryView.tsx` ↔ `views/library/*`),
-- sidebar + context menus,
-- auth flows (`SettingsDialog.tsx` is Electron-only, but the multi-user login/signup/forgot/reset is all on the web side).
-
-Every feature gets implemented twice and tends to drift — the EPUB theme-toggle bug, the iPadOS touch routing, the inline-style font enforcement were all bugs paid for once per side. The fix is to ship one SPA bundle:
-
-- Render React in both contexts: Electron loads the same Vite dev server URL in dev and the same packaged HTML in prod that the embedded HTTP server serves.
-- A tiny preload bridge keeps Electron-only affordances (file dialog, native menu, IPC) addressable from the SPA via feature-detection.
-- The `src/web/admin/*` and `src/web/views/*` modules become React components living under `src/renderer/`.
-
-**Files to retire eventually**: everything under `src/web/`. Replace with a `src/web-server/` that just serves the built renderer bundle plus the `/api/*` REST layer.
-
-This is the biggest single refactor available and would reclaim several thousand lines. Worth doing, but it's a multi-day effort — slot it as a focused project, not an incidental cleanup.
+Done. `src/renderer/` was deleted and Electron now loads `src/web/` via
+the embedded HTTP server. Roughly 5,700 lines of duplicated React UI
+came out and IPC was narrowed to host-only channels. See `PLAN10.md` for
+the migration history.
 
 ### Extract `buildBaseWhere(options)` from the two query builders
 
@@ -39,39 +21,19 @@ This is the biggest single refactor available and would reclaim several thousand
 
 Refactor: pull a `buildBaseWhere(options): { where: string[]; params: SqlParam[] }` helper. Both query functions append their own user-specific predicates afterwards. Saves ~60 lines and prevents the two branches from drifting again — last week it took two edits to land FTS in both.
 
-### Move the EPUB theme primitives into `src/shared/epubTheme.ts`
+### ~~Move the EPUB theme primitives into `src/shared/epubTheme.ts`~~ ✓ (obsoleted by PLAN10)
 
-Both `src/renderer/components/EpubReaderView.tsx` and `src/web/views/reader/epubReader.js` define their own copies of:
-
-- `FONT_FAMILIES`, `FONT_SIZES`, `EPUB_BASE_FONT_SCALE`,
-- `getThemeColors(mode)`, `buildEpubTheme(mode, fontFamily)`, `toEpubFontSizePercent(size)`,
-- `forceThemeOnContent(contents, mode, fontFamily)` — the inline-`!important` walker.
-
-These are pure functions of strings and DOM nodes; they don't need to be re-implemented per host. Hoist them to `src/shared/epubTheme.ts` and import from both sides. Pre-requisite for the bigger UI unification above; cheap to land independently.
+Only `src/web/views/reader/epubReader.js` defines these now; the React
+copy was deleted with the rest of `src/renderer/`. No duplication left
+to extract.
 
 ---
 
 ## Tier 2 — File-level shrinking
 
-### `LibraryView.tsx` (841 lines → 639 lines, partially done)
+### ~~`LibraryView.tsx` shrinking~~ ✓ (file deleted by PLAN10)
 
-The earlier hooks pass extracted query / filters / selection / folder-context-menu / details-modal. The remaining clusters:
-
-1. ~~**`useDragDropFiles`**~~ — extracted to `library/hooks/useDragDropFiles.ts`. ✓
-2. ~~**`useComicContextMenu`**~~ — extracted to `library/hooks/useComicContextMenu.ts`. ✓
-3. **JSX subcomponents** — `<LibraryHeader>` (search + scan + breadcrumbs), `<LibraryGrid>` (the virtualized renderer), `<LibraryDropOverlay>` (drag-over state). These each bring 30–80 lines out of the parent.
-
-Target after split: ~400 lines in `LibraryView.tsx`, with each new hook in `library/hooks/`.
-
-### `App.tsx` (350 lines → 270 lines, partially done)
-
-App.tsx is the comic-reader page-cache + the file-open dispatcher + the view-router + the keyboard handler in one component.
-
-- ~~**`useReaderPageCache(pageCount)`**~~ — extracted to `library/hooks/useReaderPageCache.ts`. ✓
-- **`prepareBookReaderState(filePath, comic)`** — the chunk inside `openFile` that sniffs ext + builds the `bookReader` object can move out as a pure helper.
-- **`useFileOpener({ ... })`** — bundles `openFile`, `backToLibrary`, `nextPage`, `previousPage`, the IPC subscriptions for `file-opened` and `open-settings`, and the keyboard binding.
-
-Target after split: ~150 lines in `App.tsx`, mostly JSX wiring.
+### ~~`App.tsx` shrinking~~ ✓ (file deleted by PLAN10)
 
 ### `comicReader.js` (363 lines)
 
@@ -114,13 +76,12 @@ Converted to `useReducer` — `idle | dirty | saving | error` state machine in p
 
 `state.readerEl`, `state.epubBook`, `state.epubRendition`, `state.comicState`, `state.touchStartX`, `state.pdfDoc`. Grab-bag globals shared across all reader entry points. Cleaner: each reader's `render(el, record)` returns a session object (`{ destroy(), …}`) that owns its own state. The shared file becomes just the wake-lock helpers.
 
-### `LibrarySidebar.tsx` — extract `useSidebarFolderContextMenu`
+### ~~`LibrarySidebar.tsx` hook split~~ ✓ (file deleted by PLAN10)
 
-The library context menu was already pulled out into `useSidebarLibraryContextMenu`. The folder-side has the same shape: rename in place, delete with confirm, drop-target highlighting. Mirror the hook for folders so the sidebar component stops being a state-bag for two parallel context menus.
+### ~~Single-source filter state~~ ✓ (obsoleted by PLAN10)
 
-### Single-source filter state
-
-`src/web/app/state.js` and `src/renderer/components/library/hooks/useLibraryFilters.ts` track the same fields (`mediaType`, `fileExt`, `readStatus`, `favoritesOnly`). When the unified-renderer refactor in Tier 1 happens this duplication goes away, but as an interim improvement, type the shape in `src/shared/filterState.ts` so both sides agree on the keys.
+Only `src/web/app/state.js` carries filter state now; the React hook that
+mirrored it is gone.
 
 ---
 
@@ -158,7 +119,6 @@ The hand-curated externals list drifts. Every new native dep + every CDN-loaded 
 
 Listed for completeness; revisit only if the surrounding code starts changing often.
 
-- **Group `ipcClient.ts` exports under namespaces** (`api.archive.open(…)`, `api.library.query(…)`). Helps discoverability slightly; flat is also fine.
 - **Declarative endpoint registry for `web/api.js`**. The `request()` helper already collapsed the boilerplate. A registry would be tidier but `pnpm tsc` doesn't catch web-side mistakes anyway, so the typing payoff is small.
 - **Inline `dropValidator.ts`** into `mediaTypes.ts`. The thin wrapper exists for backwards compat; not worth the churn.
 - **CMakeLists.txt removal**. Still mentioned in the original `REFACTOR.md` — can be deleted in passing.
@@ -167,12 +127,7 @@ Listed for completeness; revisit only if the surrounding code starts changing of
 
 ## Suggested order if executing as a campaign
 
-1. **Tier 1.3** (move EPUB theme to `src/shared/`) — small, no behavior risk, prerequisite for the bigger UI unification.
-2. **Tier 1.2** (extract `buildBaseWhere`) — clear win, isolated.
-3. **Tier 2.1** (`LibraryView.tsx` hooks) — daily-touched file, finite work.
-4. **Tier 2.2** (`App.tsx` page cache hook) — daily-touched, finite.
-5. **Tier 3.1** (one LRU primitive) — small file count, eliminates a recurring pattern.
-6. **Tier 3.2** (codegen IPC whitelist) — eliminates a recurring footgun.
-7. **Tier 3.4** (`SettingsDialog` reducer) — small, removes a state-bug class.
-8. **Tier 4** items — opportunistic.
-9. **Tier 1.1** (one renderer for both UIs) — only when a multi-day slot opens up. This is the largest single payoff in the document and the most disruptive.
+1. **Tier 1** `buildBaseWhere` extraction — clear win, isolated.
+2. **Tier 2** `comicReader.js` controls / `tabPanel.js` / `contextMenu.js` splits — finite, daily-touched.
+3. **Tier 3** `state.js` session-object refactor.
+4. **Tier 4** opportunistic server-side cleanups.

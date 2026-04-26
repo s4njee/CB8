@@ -4,7 +4,7 @@ Guidance for coding agents working in this repository.
 
 ## Project Shape
 
-This is an Electron + TypeScript + React comic reader. The active implementation is TypeScript under `src/`; the root `CMakeLists.txt` is stale Qt/C++ prototype configuration and should not be used for current work.
+This is an Electron + TypeScript comic reader. The frontend is a vanilla-JS SPA under `src/web/`, served by the embedded HTTP server and loaded by the Electron window; remote browser clients hit the same server. The active implementation is TypeScript under `src/`; the root `CMakeLists.txt` is stale Qt/C++ prototype configuration and should not be used for current work.
 
 Specs live in `.kiro/specs/comic-book-reader/`:
 - `requirements.md` is the product contract.
@@ -15,17 +15,14 @@ Active feature inventory lives in `FEATURES.md` — every implemented feature th
 
 Large follow-up work that should not be mixed into small fixes is tracked in `REFACTOR.md`.
 
-## Frontend Direction (PLAN10, in progress)
+## Frontend Direction
 
-`src/web/` is the canonical frontend. New user-facing features land there.
-`src/renderer/` is being collapsed onto the same SPA — treat it as a
-compatibility shell during the migration, not as an evolving app. Do not
-add net-new product features to `src/renderer/`; only host-only Electron
-glue (file-open, menu commands, packaging) belongs there during cutover.
+`src/web/` is the only frontend. PLAN10 collapsed the former
+`src/renderer/` React app onto this SPA; Electron now loads the SPA via
+the embedded HTTP server. New product features land in `src/web/`.
 
-`src/web-next/` (a SvelteKit scaffold) was abandoned and is **not** the
-target — it should not exist in the working tree on this branch. See
-`PLAN10.md` for the migration plan.
+`src/web-next/` (an abandoned SvelteKit scaffold) is **not** the target
+and should not exist in the working tree on this branch.
 
 ## Useful Commands
 
@@ -38,7 +35,7 @@ pnpm start
 pnpm run package
 ```
 
-Use `pnpm run typecheck` before trusting a renderer or IPC change. The test suite currently focuses on shared utilities, so TypeScript catches many integration mistakes that tests do not.
+Use `pnpm run typecheck` before trusting a main-process or IPC change. The test suite currently focuses on shared utilities, so TypeScript catches many integration mistakes that tests do not. (Note: `src/web/` is plain JS — typecheck does not cover it.)
 
 For DB-backed perf work, the search benchmark is:
 
@@ -52,34 +49,31 @@ ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron scripts/bench-search.mjs --r
 
 - `src/main/`: Electron main process, archive loading, SQLite library database, file scanning, IPC handlers, preload bridge.
   - `src/main/db/`: per-domain DB modules + `schema/` for DDL/migrations/repairs.
-  - `src/main/ipc/`: IPC handler modules, registered through `ipc/index.ts` (re-exported via `src/main/ipcHandlers.ts`).
+  - `src/main/ipc/`: IPC handler modules, registered through `ipc/index.ts` (re-exported via `src/main/ipcHandlers.ts`). Surface is now host-only — dialogs, fullscreen, shell-open, web server settings.
   - `src/main/webServer/`: embedded HTTP server, REST routes (`routes/`), middleware, auth, archive cache, rate limiter, SSRF-safe fetch.
-- `src/renderer/`: React UI and typed renderer IPC client.
-  - `src/renderer/components/`: top-level React components.
-  - `src/renderer/components/library/`: library grid + folder/comic cards + per-card hooks.
-  - `src/renderer/components/library/hooks/`: extracted state hooks (`useLibraryQuery`, `useLibraryFilters`, `useLibrarySelection`, `useFolderContextMenu`, `useDetailsModal`, `useSidebarLibraryContextMenu`, `useScanProgress`, `useThumbnail`).
-- `src/shared/`: code and types shared by main and renderer.
+- `src/shared/`: code and types shared by main and the SPA build.
   - `src/shared/ipcTypes.ts`: canonical IPC channel names, argument tuples, result types, event payloads, send-only channels.
   - `src/shared/mediaTypes.ts`: extension allowlist + media-type classification.
   - `src/shared/types.ts`: `MediaRecord`, `QueryOptions`, `FilterPreset`, `ScanProgress`, etc.
-- `src/web/`: canonical SPA — served by the embedded HTTP server for browser clients, and (per PLAN10) loaded by Electron once the cutover lands. Vanilla ES modules, no React.
+- `src/web/`: the only frontend. Vanilla ES modules, no React. Served by the embedded HTTP server for browser clients and loaded by Electron via `http://127.0.0.1:<port>`.
   - `src/web/views/library/`: card builders, strip filters, selection, empty states.
   - `src/web/views/reader/`: reader entry + per-format submodules + comic-reader gestures/keyboard.
-  - `src/web/admin/`: auth flows + admin UI (login, signup, forgot/reset password, upload, add-path, context menu, modal).
+  - `src/web/admin/`: auth flows + admin UI (login, signup, forgot/reset password, upload, add-path, context menu, modal, settings).
   - `src/web/app/`: routing, sidebar, toast, sort sheet, tab panel, drop, state.
-  - `src/web/host/`: desktop-host capability boundary (`isElectron`, `onFileOpened`, `onOpenSettings`, native pickers, `openExternalPath`). Browser callers degrade to no-ops. Domain operations belong on the HTTP API, not here.
+  - `src/web/host/`: desktop-host capability boundary (`isElectron`, `onComicOpened`, `onOpenSettings`, native pickers, web-server settings, `openExternalPath`). Browser callers degrade to no-ops. Domain operations belong on the HTTP API, not here.
 
 ## IPC Rules
 
+IPC is now host-only — domain operations (library / reader / admin) go over the HTTP API in `src/main/webServer/routes/`, not IPC. Add a new IPC channel only for genuine shell concerns (file dialogs, native menu plumbing, window chrome, web-server toggles).
+
 When adding or changing an IPC channel:
 
-1. Update `src/shared/ipcTypes.ts` (`IpcInvokeMap`, `IpcEventMap`, or `IPC_SEND_CHANNELS`).
-2. Register the handler in the matching `src/main/ipc/*Handlers.ts` module (archive / library / reading / webServer / app). The barrel `src/main/ipcHandlers.ts` re-exports `registerIpcHandlers`.
-3. Add or update a helper in `src/renderer/ipcClient.ts`.
-4. Use the helper from React components — do not call `window.electronAPI.invoke` directly.
-5. Run `pnpm run typecheck`.
+1. Update `src/shared/ipcTypes.ts` (`IpcInvokeMap`, `IpcEventMap`, or `IpcSendMap`).
+2. Register the handler in the matching `src/main/ipc/*Handlers.ts` module (library / reading / webServer / app). The barrel `src/main/ipcHandlers.ts` re-exports `registerIpcHandlers`.
+3. Expose a helper in `src/web/host/index.js` with a browser fallback (no-op or null) so non-Electron clients degrade cleanly.
+4. Run `pnpm run typecheck`.
 
-The preload bridge whitelists channels from `IPC_INVOKE_CHANNELS`, `IPC_EVENT_CHANNELS`, and `IPC_SEND_CHANNELS`. If a channel is missing from those arrays, renderer calls will fail at runtime.
+The preload bridge whitelists channels from `IPC_INVOKE_CHANNELS`, `IPC_EVENT_CHANNELS`, and `IPC_SEND_CHANNELS` (codegen'd from the type maps). If a channel is missing, calls fail at runtime.
 
 ## Testing Expectations
 
@@ -113,20 +107,7 @@ Use this when picking up a task in an unfamiliar area. Each row maps a feature s
 | Cover thumbnails | `src/main/{epubCoverExtractor,pdfCoverExtractor,thumbnailGenerator}.ts`, `src/shared/coverSelection.ts` |
 | Series parser | `src/main/seriesParser.ts` (+ `.test.ts`) |
 
-### Library UI (Electron)
-
-| Concern | Files |
-|---|---|
-| Top-level grid | `src/renderer/components/LibraryView.tsx` |
-| Sidebar | `src/renderer/components/LibrarySidebar.tsx` |
-| Cards / context menus / details | `src/renderer/components/library/{ComicCard,FolderCard,ComicContextMenu,FolderContextMenu,ContextMenuPrimitives,DetailsModal}.tsx` |
-| State hooks | `src/renderer/components/library/hooks/*` (`useLibraryQuery`, `useLibraryFilters`, `useLibrarySelection`, `useFolderContextMenu`, `useDetailsModal`, `useSidebarLibraryContextMenu`, `useScanProgress`, `useThumbnail`) |
-| Filter / sort UI | `src/renderer/components/{FilterBar,SortControl}.tsx` |
-| Continue-reading shelf | `src/renderer/components/ContinueReadingShelf.tsx` |
-| Confirm modal | `src/renderer/components/{ConfirmModal,useConfirm}.tsx` |
-| Error boundary | `src/renderer/components/ErrorBoundary.tsx` |
-
-### Library UI (Web)
+### Library UI
 
 | Concern | Files |
 |---|---|
@@ -137,17 +118,17 @@ Use this when picking up a task in an unfamiliar area. Each row maps a feature s
 | Empty state SVGs | `src/web/views/library/empty.js` |
 | Sidebar / routing / sort / tabs | `src/web/app/{sidebar,sideContextMenu,router,sort,tabPanel,state,toast,drop}.js` |
 | API client | `src/web/api.js` (single `request()` helper underneath) |
-| Admin flows | `src/web/admin/{login,signup,forgotPassword,resetPassword,session,menu,modal,upload,addPath,drop,bulkDelete,contextMenu}.js` |
+| Admin flows | `src/web/admin/{login,signup,forgotPassword,resetPassword,session,menu,modal,settings,upload,addPath,drop,bulkDelete,contextMenu}.js` |
 | Layout / styles | `src/web/style.css`, `src/web/index.html`, `src/web/manifest.json` |
 
 ### Readers
 
-| Format | Electron | Web |
-|---|---|---|
-| Comic (CBZ / CBR) | `src/renderer/components/{ReaderView,App}.tsx` | `src/web/views/reader/comicReader.js`, `src/web/views/reader/comicReader/{gestures,keyboard}.js` |
-| EPUB | `src/renderer/components/EpubReaderView.tsx` | `src/web/views/reader/epubReader.js` |
-| PDF | `src/renderer/components/PdfReaderView.tsx` | `src/web/views/reader/pdfReader.js` |
-| Shared | `src/web/views/reader/{state,prefs,utils}.js` (web), `src/shared/{scaleFit,statusFormat,windowTitle,naturalSort,imageFilter,coverSelection}.ts` |
+| Format | Files |
+|---|---|
+| Comic (CBZ / CBR) | `src/web/views/reader/comicReader.js`, `src/web/views/reader/comicReader/{gestures,keyboard}.js` |
+| EPUB | `src/web/views/reader/epubReader.js` |
+| PDF | `src/web/views/reader/pdfReader.js` |
+| Shared | `src/web/views/reader/{state,prefs,utils}.js`, `src/shared/{scaleFit,statusFormat,windowTitle,naturalSort,imageFilter,coverSelection}.ts` |
 
 ### Web server
 
@@ -172,7 +153,7 @@ Use this when picking up a task in an unfamiliar area. Each row maps a feature s
 | App lifecycle, window, headless mode | `src/main/index.ts` |
 | Application menu (incl. Reset Admin Password, Clear Database) | `src/main/menu.ts` |
 | Admin reset helper | `src/main/adminReset.ts` |
-| Settings dialog | `src/renderer/components/SettingsDialog.tsx` (+ `.styles.ts`) |
+| Settings dialog (web-server toggle / port) | `src/web/admin/settings.js` |
 | Preload bridge | `src/main/preload.ts` |
 
 ### Resource / perf primitives
@@ -184,14 +165,13 @@ Use this when picking up a task in an unfamiliar area. Each row maps a feature s
 | On-disk image-resize cache | `src/main/imageResizer.ts` |
 | Sharp-based thumbnail generation | `src/main/thumbnailGenerator.ts` |
 | `withTimeout` util | `src/main/utils/timeout.ts` |
-| ArrayBuffer page IPC (no base64) | `src/main/ipc/archiveHandlers.ts` + `src/renderer/components/{App,ReaderView}.tsx` |
 
 ### Build / tooling
 
 | Concern | Files |
 |---|---|
 | Electron Forge | `forge.config.ts` (+ Vite configs) |
-| Vite (main / preload / renderer) | `vite.main.config.ts`, `vite.preload.config.ts`, `vite.renderer.config.ts` |
+| Vite (main / preload only — no renderer target) | `vite.main.config.ts`, `vite.preload.config.ts` |
 | TypeScript | `tsconfig.json`, `tsconfig.web.json` |
 | Vitest | `vitest.config.ts` |
 | Dev branding script | `scripts/brand-dev-electron.mjs` |
@@ -204,7 +184,7 @@ Use this when picking up a task in an unfamiliar area. Each row maps a feature s
 - Cover selection logic is centralized in `src/shared/coverSelection.ts`.
 - Drag/drop archive validation is centralized in `src/shared/dropValidator.ts`.
 - JXL support is wired up via `@jsquash/jxl` (WASM) re-encoding to PNG with Sharp inside `src/main/imageDecoder.ts`. Both Electron and the web UI inherit it because `archiveLoader.getPage` always passes the raw bytes through `decode()`. `vite.main.config.ts` lists `@jsquash/jxl` in the externals so its wasm + native loader flow uses Node `require` at runtime.
-- Library grid is virtualized in the Electron renderer via `@tanstack/react-virtual` (see `LibraryView.tsx`). The web UI uses `IntersectionObserver` infinite scroll. The 100 K-record search target is met by the FTS5 index — see the bench script for proof.
+- Library grid uses `IntersectionObserver` infinite scroll (`src/web/views/library.js`). The 100 K-record search target is met by the FTS5 index — see the bench script for proof.
 - Web UI fetch wrappers route through a single `request()` helper in `src/web/api.js`. New endpoints should call that helper, not duplicate fetch boilerplate.
 - IPC handler registration is split per-domain under `src/main/ipc/`. The barrel `src/main/ipcHandlers.ts` exists only for backwards-compatible imports.
 - `src/main/webServer/archiveCache.ts` exposes `withArchive(comicId, path, fn)` rather than handing out raw handles. This is intentional — it ensures the refcount-aware close path runs even on exceptions.
@@ -213,7 +193,7 @@ Use this when picking up a task in an unfamiliar area. Each row maps a feature s
 
 Do not delete underlying comic files when removing library records. The requirements explicitly say library removal must only update the database.
 
-Do not introduce new raw `any` casts or direct component-level `window.electronAPI.invoke` calls unless there is a clear reason and the type map cannot express the case.
+Do not introduce new raw `any` casts. The SPA should call IPC through `src/web/host/index.js` helpers, not `window.electronAPI.invoke` directly — host helpers carry the browser-fallback behavior.
 
 Keep generated/build output out of commits: `node_modules/`, `dist/`, `.vite/`, and `out/` are ignored.
 

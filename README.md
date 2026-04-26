@@ -1,6 +1,6 @@
 # CB8
 
-CB8 is a desktop comic book reader for CBZ and CBR archives. It is built with Electron, TypeScript, and React, with a local SQLite library for organizing comics on your machine.
+CB8 is a desktop comic book reader for CBZ and CBR archives. It is built with Electron and TypeScript, with a vanilla-JS SPA frontend served by an embedded HTTP server and a local SQLite library for organizing comics on your machine. The same SPA is used by the desktop window and by remote browser clients.
 
 Non-Generated AI - I made this project for myself mainly. I've found it hard to use many of the manga readers that are out there, so I figured I'd make a simple one since its just extracting a zip file and showing you images. There may be bugs. File an issue or make a pull request. I'm only going to fix bugs that I run across.
 
@@ -60,9 +60,9 @@ pnpm run package
 
 ## Project Layout
 
-- `src/main/`: Electron main process, archive loading, scanning, SQLite database, IPC handlers, and preload bridge.
-- `src/renderer/`: React UI for the library and reader views.
-- `src/shared/`: shared types and utility logic used by both main and renderer processes.
+- `src/main/`: Electron main process, archive loading, scanning, SQLite database, embedded HTTP server, IPC handlers, and preload bridge.
+- `src/web/`: vanilla-JS SPA for the library and reader views, served by the embedded HTTP server and loaded by the Electron window.
+- `src/shared/`: shared types and utility logic used by main and the SPA build.
 - `.kiro/specs/comic-book-reader/`: product requirements and architecture notes.
 - `REFACTOR.md`: larger follow-up work that should stay separate from small fixes.
 

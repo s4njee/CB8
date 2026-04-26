@@ -1,12 +1,10 @@
 # PLAN10 — Collapse onto the web UI and retire the Electron-only UI
 
 ## Status
-- Proposed in this pass:
-  - a concrete migration plan to keep the web-style UI as the single product
-    surface
-  - Electron reduced to shell, native integration, and packaging
-- Not started:
-  - implementation
+- ✅ **Complete.** All seven phases shipped. `src/renderer/` is deleted,
+  Electron loads `src/web/` from the embedded HTTP server, IPC is
+  trimmed to host-only channels, and the docs (AGENTS.md, FEATURES.md,
+  README.md, REFACTORS2.md) describe one frontend.
 
 ## Goal
 Keep the web UI and remove the long-term `src/renderer/` vs `src/web/`
