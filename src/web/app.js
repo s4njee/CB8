@@ -23,6 +23,8 @@ import { openTabPanel, closeTabPanel, promptNewCollection, promptNewFolder } fro
 import { openSortSheet, closeSortSheet, updateSortLabel, applySort } from './app/sort.js';
 import { wireDrop } from './app/drop.js';
 import { onComicOpened, onOpenSettings } from './host/index.js';
+import { openModal } from './admin/modal.js';
+import { renderSettings } from './admin/settings.js';
 
 export { showToast, getState, isAuthenticated };
 
@@ -151,11 +153,10 @@ function wireHostBridges() {
     if (Number.isFinite(comicId)) window.location.hash = `#/read/${comicId}`;
   });
 
-  // App menu "Web Server…" / "Settings" — Phase 5 will replace this stop-gap
-  // with a real settings dialog ported into the SPA. For now opening the
-  // admin panel is the closest existing surface for a desktop user.
+  // App menu "Web Server…" — open the SPA settings dialog (renders an
+  // explanatory placeholder when the host bridge is unavailable).
   onOpenSettings(() => {
-    toggleAdminPanel();
+    openModal((b) => renderSettings(b));
   });
 }
 

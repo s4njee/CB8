@@ -104,3 +104,39 @@ export async function openExternalPath(filePath) {
   if (!bridge) return undefined;
   return bridge.invoke('shell:open-path', filePath);
 }
+
+/**
+ * @typedef {{
+ *   enabled: boolean;
+ *   port: number;
+ *   url: string | null;
+ *   lanUrl: string | null;
+ * }} WebServerSettings
+ */
+
+/**
+ * Read the current embedded-server config (LAN-exposure toggle, port,
+ * advertised URLs). Browser callers get null — the server is the host
+ * they're already connected to and they cannot reconfigure it.
+ *
+ * @returns {Promise<WebServerSettings | null>}
+ */
+export async function getWebServerSettings() {
+  const bridge = getBridge();
+  if (!bridge) return null;
+  return bridge.invoke('webserver:get-settings');
+}
+
+/**
+ * Update the embedded-server config. In desktop mode `enabled` controls
+ * LAN exposure (bind 0.0.0.0 vs 127.0.0.1) rather than server existence.
+ *
+ * @param {boolean} enabled
+ * @param {number} port
+ * @returns {Promise<WebServerSettings | null>}
+ */
+export async function setWebServerSettings(enabled, port) {
+  const bridge = getBridge();
+  if (!bridge) return null;
+  return bridge.invoke('webserver:set-settings', enabled, port);
+}
