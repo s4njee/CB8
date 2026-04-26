@@ -6,7 +6,8 @@ export interface ComicEntry {
   pageCount: number;
   fileSize: number;
   filePath: string;
-  thumbnailUrl: string | null;
+  hasThumbnail: boolean;
+  thumbnailVersion: number;
   mediaType: 'comic' | 'book';
 }
 

@@ -3,12 +3,10 @@ import { formatStatusBar } from '../../shared/statusFormat';
 import {
   archiveClose,
   archiveOpen,
-  archivePage,
   getComicByPath,
   onFileOpened,
   onOpenSettings,
   toggleFullscreen,
-  updateReadingProgress,
 } from '../ipcClient';
 import { EpubReaderView } from './EpubReaderView';
 import { PdfReaderView } from './PdfReaderView';
@@ -17,11 +15,9 @@ import { LibrarySidebar } from './LibrarySidebar';
 import { SettingsDialog } from './SettingsDialog';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useConfirm } from './useConfirm';
+import { useReaderPageCache } from './library/hooks/useReaderPageCache';
 
 type View = 'library' | 'reader' | 'epub-reader' | 'pdf-reader';
-
-const PAGE_CACHE_MAX = 10;
-const PREFETCH_AHEAD = 3;
 
 export const App: React.FC = () => {
   const { alert, modal: confirmModal } = useConfirm();
@@ -51,93 +47,17 @@ export const App: React.FC = () => {
   const [, forceUpdate] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // LRU page cache: stores blob URLs. Order-preserving Map + explicit
-  // URL.revokeObjectURL on eviction so we don't leak blobs across page flips.
-  const pageCache = useRef<Map<number, string>>(new Map());
-  const prefetchInFlight = useRef<Set<number>>(new Set());
-
-  const cacheGet = useCallback((index: number): string | undefined => {
-    const cache = pageCache.current;
-    const val = cache.get(index);
-    if (val !== undefined) {
-      // Move to end (most recently used)
-      cache.delete(index);
-      cache.set(index, val);
-    }
-    return val;
-  }, []);
-
-  const cacheSet = useCallback((index: number, blobUrl: string) => {
-    const cache = pageCache.current;
-    const prev = cache.get(index);
-    if (prev !== undefined && prev !== blobUrl) URL.revokeObjectURL(prev);
-    cache.delete(index); // remove if exists to re-insert at end
-    cache.set(index, blobUrl);
-    while (cache.size > PAGE_CACHE_MAX) {
-      const oldest = cache.keys().next().value;
-      if (oldest === undefined) break;
-      const oldUrl = cache.get(oldest);
-      cache.delete(oldest);
-      if (oldUrl !== undefined) URL.revokeObjectURL(oldUrl);
-    }
-  }, []);
-
-  const clearCache = useCallback(() => {
-    for (const url of pageCache.current.values()) URL.revokeObjectURL(url);
-    pageCache.current.clear();
-    prefetchInFlight.current.clear();
-  }, []);
-
-  const fetchPageData = useCallback(async (pageIndex: number): Promise<string | null> => {
-    const cached = cacheGet(pageIndex);
-    if (cached) return cached;
-    try {
-      const result = await archivePage(pageIndex);
-      if ('error' in result) return null;
-      const blob = new Blob([result.buffer], { type: result.mime });
-      const blobUrl = URL.createObjectURL(blob);
-      cacheSet(pageIndex, blobUrl);
-      return blobUrl;
-    } catch {
-      return null;
-    }
-  }, [cacheGet, cacheSet]);
-
-  const prefetch = useCallback((fromPage: number, total: number) => {
-    for (let i = 1; i <= PREFETCH_AHEAD; i++) {
-      const idx = fromPage + i;
-      if (idx >= total) break;
-      if (pageCache.current.has(idx) || prefetchInFlight.current.has(idx)) continue;
-      prefetchInFlight.current.add(idx);
-      fetchPageData(idx).finally(() => prefetchInFlight.current.delete(idx));
-    }
-  }, [fetchPageData]);
-
-  const loadPage = useCallback(async (pageIndex: number) => {
-    // Try cache first
-    const cached = cacheGet(pageIndex);
-    if (cached) {
-      setImageSrc(cached);
-      setCurrentPage(pageIndex);
-      prefetch(pageIndex, pageCount);
-      if (currentComicIdRef.current != null) {
-        updateReadingProgress(currentComicIdRef.current, pageIndex).catch(() => {});
-      }
-      return;
-    }
-    setLoading(true);
-    try {
-      const url = await fetchPageData(pageIndex);
-      if (!url) { console.error('Failed to load page:', pageIndex); return; }
-      setImageSrc(url);
-      setCurrentPage(pageIndex);
-      prefetch(pageIndex, pageCount);
-      if (currentComicIdRef.current != null) {
-        updateReadingProgress(currentComicIdRef.current, pageIndex).catch(() => {});
-      }
-    } catch (err) { console.error('Failed to load page:', err); }
-    finally { setLoading(false); }
-  }, [cacheGet, fetchPageData, prefetch, pageCount]);
+  // Page cache, prefetch, and loadPage orchestration live in the hook.
+  // We only feed it the current pageCount + comic-id ref + the display
+  // setters (since the loaded page sets imageSrc/currentPage/loading here).
+  const { loadPage: loadPageFromCache, clearCache } = useReaderPageCache({
+    pageCount,
+    currentComicIdRef,
+  });
+  const loadPage = useCallback((pageIndex: number) =>
+    loadPageFromCache(pageIndex, { setImageSrc, setCurrentPage, setLoading }),
+    [loadPageFromCache],
+  );
 
   const openFile = useCallback(async (filePath: string, resumePage?: number) => {
     try {

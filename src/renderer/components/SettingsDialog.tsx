@@ -5,38 +5,114 @@
  * (sent from the main process via Settings → Web Server… menu item).
  */
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useReducer, useCallback, useRef } from 'react';
 import {
   getWebServerSettings,
   setWebServerSettings,
   type WebServerSettings,
 } from '../ipcClient';
+import {
+  overlay, dialog, header, headerTitle, closeBtn,
+  body, rowLabel, rowText, rowName, rowDesc, divider,
+  toggle, toggleKnob, portField,
+  statusSection, statusRow, statusDot, statusText,
+  urlBlock, urlLabel, urlValue, urlBtn,
+  hintText, errorText,
+  footer, cancelBtnStyle, saveBtnStyle,
+} from './SettingsDialog.styles';
 
 interface Props {
   open: boolean;
   onClose: () => void;
 }
 
+/**
+ * The dialog has one logical state machine spanning loaded/applied settings,
+ * the user's pending edits, the in-flight save, and the transient
+ * "copied to clipboard" affordance. Modeling it as one reducer keeps the
+ * "ok to save" / "is dirty" derivations co-located with the data they read.
+ */
+interface State {
+  /** Latest server-confirmed settings; null until the first load resolves. */
+  settings: WebServerSettings | null;
+  /** User's pending edits — mirror of `settings` until they touch a control. */
+  pendingEnabled: boolean;
+  pendingPort: number;
+  portInput: string;
+  /** Whether a save is in flight. */
+  saving: boolean;
+  /** Last save error message (cleared on next save attempt or load). */
+  saveError: string | null;
+  /** Transient "✓ copied" indicator on URL copy buttons. */
+  copied: boolean;
+}
+
+type Action =
+  | { type: 'load-start' }
+  | { type: 'load-ok'; settings: WebServerSettings }
+  | { type: 'set-enabled'; enabled: boolean }
+  | { type: 'set-port-input'; value: string }
+  | { type: 'save-start' }
+  | { type: 'save-ok'; settings: WebServerSettings }
+  | { type: 'save-error'; message: string }
+  | { type: 'copied' }
+  | { type: 'copied-clear' };
+
+const INITIAL_STATE: State = {
+  settings: null,
+  pendingEnabled: false,
+  pendingPort: 8008,
+  portInput: '8008',
+  saving: false,
+  saveError: null,
+  copied: false,
+};
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'load-start':
+      return { ...state, saveError: null };
+    case 'load-ok':
+    case 'save-ok':
+      return {
+        ...state,
+        settings: action.settings,
+        pendingEnabled: action.settings.enabled,
+        pendingPort: action.settings.port,
+        portInput: String(action.settings.port),
+        saving: false,
+        saveError: null,
+      };
+    case 'set-enabled':
+      return { ...state, pendingEnabled: action.enabled };
+    case 'set-port-input': {
+      const n = parseInt(action.value, 10);
+      const validPort = !Number.isNaN(n) && n >= 1024 && n <= 65535;
+      return { ...state, portInput: action.value, pendingPort: validPort ? n : state.pendingPort };
+    }
+    case 'save-start':
+      return { ...state, saving: true, saveError: null };
+    case 'save-error':
+      return { ...state, saving: false, saveError: action.message };
+    case 'copied':
+      return { ...state, copied: true };
+    case 'copied-clear':
+      return { ...state, copied: false };
+  }
+}
+
 export const SettingsDialog: React.FC<Props> = ({ open, onClose }) => {
-  const [settings, setSettings] = useState<WebServerSettings | null>(null);
-  const [pendingEnabled, setPendingEnabled] = useState(false);
-  const [pendingPort, setPendingPort] = useState(8008);
-  const [portInput, setPortInput] = useState('8008');
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
+  const { settings, pendingEnabled, pendingPort, portInput, saving, saveError, copied } = state;
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Load current settings when the dialog opens
   useEffect(() => {
     if (!open) return;
-    setSaveError(null);
-    getWebServerSettings().then((s) => {
-      setSettings(s);
-      setPendingEnabled(s.enabled);
-      setPendingPort(s.port);
-      setPortInput(String(s.port));
-    }).catch(console.error);
+    dispatch({ type: 'load-start' });
+    getWebServerSettings()
+      .then((s) => dispatch({ type: 'load-ok', settings: s }))
+      .catch(console.error);
   }, [open]);
 
   // Close on Escape
@@ -54,39 +130,25 @@ export const SettingsDialog: React.FC<Props> = ({ open, onClose }) => {
     if (open) dialogRef.current?.focus();
   }, [open]);
 
-  const handlePortChange = (value: string) => {
-    setPortInput(value);
-    const n = parseInt(value, 10);
-    if (!isNaN(n) && n >= 1024 && n <= 65535) {
-      setPendingPort(n);
-    }
-  };
-
   const handleSave = useCallback(async () => {
     const port = parseInt(portInput, 10);
-    if (isNaN(port) || port < 1024 || port > 65535) {
-      setSaveError('Port must be a number between 1024 and 65535.');
+    if (Number.isNaN(port) || port < 1024 || port > 65535) {
+      dispatch({ type: 'save-error', message: 'Port must be a number between 1024 and 65535.' });
       return;
     }
-    setSaving(true);
-    setSaveError(null);
+    dispatch({ type: 'save-start' });
     try {
       const updated = await setWebServerSettings(pendingEnabled, port);
-      setSettings(updated);
-      setPendingEnabled(updated.enabled);
-      setPendingPort(updated.port);
-      setPortInput(String(updated.port));
+      dispatch({ type: 'save-ok', settings: updated });
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to apply settings.');
-    } finally {
-      setSaving(false);
+      dispatch({ type: 'save-error', message: err instanceof Error ? err.message : 'Failed to apply settings.' });
     }
   }, [pendingEnabled, portInput]);
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      dispatch({ type: 'copied' });
+      setTimeout(() => dispatch({ type: 'copied-clear' }), 1800);
     }).catch(console.error);
   };
 
@@ -123,8 +185,8 @@ export const SettingsDialog: React.FC<Props> = ({ open, onClose }) => {
               aria-checked={pendingEnabled}
               tabIndex={0}
               style={toggle(pendingEnabled)}
-              onClick={() => setPendingEnabled((v) => !v)}
-              onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setPendingEnabled((v) => !v); } }}
+              onClick={() => dispatch({ type: 'set-enabled', enabled: !pendingEnabled })}
+              onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); dispatch({ type: 'set-enabled', enabled: !pendingEnabled }); } }}
             >
               <div style={toggleKnob(pendingEnabled)} />
             </div>
@@ -145,7 +207,7 @@ export const SettingsDialog: React.FC<Props> = ({ open, onClose }) => {
               max={65535}
               step={1}
               value={portInput}
-              onChange={(e) => handlePortChange(e.target.value)}
+              onChange={(e) => dispatch({ type: 'set-port-input', value: e.target.value })}
               disabled={!pendingEnabled}
               style={portField(pendingEnabled)}
               aria-label="Web server port"
@@ -212,167 +274,3 @@ export const SettingsDialog: React.FC<Props> = ({ open, onClose }) => {
     </div>
   );
 };
-
-// ---------------------------------------------------------------------------
-// Inline styles
-// ---------------------------------------------------------------------------
-
-const overlay: React.CSSProperties = {
-  position: 'fixed', inset: 0, zIndex: 9999,
-  background: 'rgba(0,0,0,0.65)',
-  backdropFilter: 'blur(4px)',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-};
-
-const dialog: React.CSSProperties = {
-  background: '#1a1a1a',
-  border: '1px solid #2e2e2e',
-  borderRadius: 10,
-  width: 460,
-  maxWidth: '92vw',
-  boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
-  display: 'flex', flexDirection: 'column',
-  outline: 'none',
-  overflow: 'hidden',
-};
-
-const header: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  padding: '16px 20px 12px',
-  borderBottom: '1px solid #272727',
-};
-
-const headerTitle: React.CSSProperties = {
-  fontSize: 14, fontWeight: 600, color: '#e0e0e0', letterSpacing: '0.01em',
-};
-
-const closeBtn: React.CSSProperties = {
-  background: 'none', border: 'none', color: '#666',
-  cursor: 'pointer', fontSize: 16, padding: '2px 4px',
-  borderRadius: 4, lineHeight: 1,
-  transition: 'color 120ms',
-};
-
-const body: React.CSSProperties = {
-  padding: '16px 20px',
-  display: 'flex', flexDirection: 'column', gap: 4,
-};
-
-const rowLabel: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  gap: 16, padding: '10px 0',
-};
-
-const rowText: React.CSSProperties = {
-  display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0,
-};
-
-const rowName: React.CSSProperties = {
-  fontSize: 13, fontWeight: 500, color: '#d8d8d8',
-};
-
-const rowDesc: React.CSSProperties = {
-  fontSize: 12, color: '#666',
-};
-
-const divider: React.CSSProperties = {
-  height: 1, background: '#272727', margin: '2px 0',
-};
-
-const toggle = (on: boolean): React.CSSProperties => ({
-  width: 40, height: 22, borderRadius: 11, flexShrink: 0,
-  background: on ? '#4a9eff' : '#3a3a3a',
-  position: 'relative', cursor: 'pointer',
-  transition: 'background 180ms',
-  border: '1px solid ' + (on ? '#3080df' : '#444'),
-  outline: 'none',
-});
-
-const toggleKnob = (on: boolean): React.CSSProperties => ({
-  position: 'absolute', top: 2, left: on ? 18 : 2,
-  width: 16, height: 16, borderRadius: '50%',
-  background: '#fff',
-  transition: 'left 180ms',
-  boxShadow: '0 1px 4px rgba(0,0,0,0.4)',
-});
-
-const portField = (enabled: boolean): React.CSSProperties => ({
-  width: 90, padding: '5px 10px',
-  background: enabled ? '#111' : '#161616',
-  border: '1px solid ' + (enabled ? '#383838' : '#2a2a2a'),
-  borderRadius: 6,
-  color: enabled ? '#d8d8d8' : '#555',
-  fontSize: 13, textAlign: 'right',
-  transition: 'border-color 150ms, color 150ms',
-  MozAppearance: 'textfield',
-});
-
-const statusSection: React.CSSProperties = {
-  padding: '8px 0 4px', display: 'flex', flexDirection: 'column', gap: 8,
-};
-
-const statusRow: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 8,
-};
-
-const statusDot = (on: boolean): React.CSSProperties => ({
-  width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-  background: on ? '#4caf82' : '#555',
-  boxShadow: on ? '0 0 6px #4caf82' : 'none',
-});
-
-const statusText: React.CSSProperties = {
-  fontSize: 12, color: '#888',
-};
-
-const urlBlock: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 8,
-  background: '#111', borderRadius: 6, padding: '6px 10px',
-  border: '1px solid #272727',
-};
-
-const urlLabel: React.CSSProperties = {
-  fontSize: 11, color: '#555', width: 32, flexShrink: 0,
-  textTransform: 'uppercase', letterSpacing: '0.06em',
-};
-
-const urlValue: React.CSSProperties = {
-  flex: 1, fontSize: 12, color: '#4a9eff',
-  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-  fontFamily: 'monospace',
-};
-
-const urlBtn: React.CSSProperties = {
-  flexShrink: 0, padding: '3px 8px',
-  background: '#1e1e1e', border: '1px solid #333',
-  borderRadius: 4, color: '#aaa', fontSize: 11, cursor: 'pointer',
-};
-
-const hintText: React.CSSProperties = {
-  fontSize: 12, color: '#555', lineHeight: 1.5, margin: '4px 0',
-};
-
-const errorText: React.CSSProperties = {
-  fontSize: 12, color: '#e05252', marginTop: 6,
-};
-
-const footer: React.CSSProperties = {
-  display: 'flex', justifyContent: 'flex-end', gap: 8,
-  padding: '12px 20px 16px',
-  borderTop: '1px solid #272727',
-};
-
-const cancelBtnStyle: React.CSSProperties = {
-  padding: '7px 18px', borderRadius: 6, fontSize: 13,
-  background: 'none', border: '1px solid #333',
-  color: '#999', cursor: 'pointer',
-};
-
-const saveBtnStyle = (active: boolean): React.CSSProperties => ({
-  padding: '7px 18px', borderRadius: 6, fontSize: 13, fontWeight: 500,
-  background: active ? '#4a9eff' : '#1e2e40',
-  border: '1px solid ' + (active ? '#3080df' : '#2a3a50'),
-  color: active ? '#fff' : '#4a6a8a',
-  cursor: active ? 'pointer' : 'not-allowed',
-  transition: 'background 150ms, color 150ms',
-});

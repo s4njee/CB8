@@ -8,6 +8,8 @@ import { showToast } from '../../app.js';
 import { state, acquireWakeLock, releaseWakeLock } from './state.js';
 import { loadReaderPrefs, saveReaderPrefs } from './prefs.js';
 import { buildToolbar } from './utils.js';
+import { wirePinchPanSwipe } from './comicReader/gestures.js';
+import { wireKeyboard } from './comicReader/keyboard.js';
 
 export async function renderComicReader(el, record, initialPage, onBack) {
   const startPage = initialPage ?? record.lastPage ?? 0;
@@ -112,7 +114,6 @@ export async function renderComicReader(el, record, initialPage, onBack) {
 
   // --- Pinch-zoom / pan state ----------------------------------------------
   const pan = { scale: 1, tx: 0, ty: 0 };
-  const MAX_SCALE = 5;
   function applyTransform() {
     stage.style.transform = `translate(${pan.tx}px, ${pan.ty}px) scale(${pan.scale})`;
     readerBody.classList.toggle('is-zoomed', pan.scale > 1.001);
@@ -330,109 +331,19 @@ export async function renderComicReader(el, record, initialPage, onBack) {
     }
   }
 
-  // --- Pinch-to-zoom + pan on the stage ---
-  let gesture = null;
-  let lastTap = { t: 0, x: 0, y: 0 };
-
-  const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-  const mid = (a, b) => ({
-    x: (a.clientX + b.clientX) / 2,
-    y: (a.clientY + b.clientY) / 2,
+  wirePinchPanSwipe({
+    readerBody, pan, applyTransform, resetTransform,
+    prefs, comicState, gotoPage, pageDelta,
   });
 
-  readerBody.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 2) {
-      e.preventDefault();
-      gesture = {
-        kind: 'pinch',
-        d0: dist(e.touches[0], e.touches[1]),
-        c0: mid(e.touches[0], e.touches[1]),
-        baseScale: pan.scale,
-        baseTx: pan.tx,
-        baseTy: pan.ty,
-      };
-    } else if (e.touches.length === 1) {
-      const t = e.touches[0];
-      if (pan.scale > 1.001) {
-        gesture = { kind: 'pan', x: t.clientX, y: t.clientY, baseTx: pan.tx, baseTy: pan.ty };
-      } else {
-        gesture = { kind: 'swipe', x: t.clientX, y: t.clientY, t0: Date.now() };
-      }
-    }
-  }, { passive: false });
-
-  readerBody.addEventListener('touchmove', (e) => {
-    if (!gesture) return;
-    if (gesture.kind === 'pinch' && e.touches.length === 2) {
-      e.preventDefault();
-      const d = dist(e.touches[0], e.touches[1]);
-      const c = mid(e.touches[0], e.touches[1]);
-      const newScale = Math.max(1, Math.min(MAX_SCALE, gesture.baseScale * (d / gesture.d0)));
-      pan.scale = newScale;
-      pan.tx = gesture.baseTx + (c.x - gesture.c0.x);
-      pan.ty = gesture.baseTy + (c.y - gesture.c0.y);
-      if (newScale <= 1.001) { pan.tx = 0; pan.ty = 0; }
-      applyTransform();
-    } else if (gesture.kind === 'pan' && e.touches.length === 1) {
-      e.preventDefault();
-      const t = e.touches[0];
-      pan.tx = gesture.baseTx + (t.clientX - gesture.x);
-      pan.ty = gesture.baseTy + (t.clientY - gesture.y);
-      applyTransform();
-    }
-  }, { passive: false });
-
-  readerBody.addEventListener('touchend', (e) => {
-    if (!gesture) return;
-    if (gesture.kind === 'swipe' && e.changedTouches.length) {
-      const tch = e.changedTouches[0];
-      const dx = tch.clientX - gesture.x;
-      const dy = tch.clientY - gesture.y;
-      const duration = Date.now() - gesture.t0;
-      if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && duration < 300) {
-        const now = Date.now();
-        if (now - lastTap.t < 300 && Math.hypot(tch.clientX - lastTap.x, tch.clientY - lastTap.y) < 40) {
-          if (pan.scale > 1.001) {
-            resetTransform();
-          } else {
-            const rect = readerBody.getBoundingClientRect();
-            pan.scale = 2;
-            pan.tx = (rect.width / 2 - (tch.clientX - rect.left)) * 1;
-            pan.ty = (rect.height / 2 - (tch.clientY - rect.top)) * 1;
-            applyTransform();
-          }
-          lastTap = { t: 0, x: 0, y: 0 };
-        } else {
-          lastTap = { t: now, x: tch.clientX, y: tch.clientY };
-        }
-      } else if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) && pan.scale <= 1.001) {
-        const swipeDir = dx < 0 ? 1 : -1;
-        const step = prefs.spread === 'double' ? 2 : 1;
-        gotoPage(comicState.currentPage + pageDelta(swipeDir) * step, { animDir: swipeDir });
-      }
-    }
-    if (pan.scale < 1.001) resetTransform();
-    gesture = null;
-  }, { passive: true });
-
-  const onKey = (e) => {
-    switch (e.key) {
-      case 'ArrowRight': case ' ':    e.preventDefault(); gotoPage(comicState.currentPage + pageStep(), { animDir: 1 }); break;
-      case 'ArrowLeft':  case 'Backspace': e.preventDefault(); gotoPage(comicState.currentPage - pageStep(), { animDir: -1 }); break;
-      case 'Home': e.preventDefault(); gotoPage(0); break;
-      case 'End':  e.preventDefault(); gotoPage(record.pageCount - 1); break;
-      case 'f': case 'F': fsBtn.click(); break;
-      case 'z': case 'Z': zoomBtn.click(); break;
-      case 'b': case 'B': bmBtn.click(); break;
-      case 's': case 'S': spreadBtn.click(); break;
-      case '+': case '=': pan.scale = Math.min(MAX_SCALE, pan.scale + 0.25); applyTransform(); break;
-      case '-': case '_': pan.scale = Math.max(1, pan.scale - 0.25); if (pan.scale <= 1.001) resetTransform(); else applyTransform(); break;
-      case '0': resetTransform(); break;
-    }
-  };
-  document.addEventListener('keydown', onKey);
+  const unwireKeyboard = wireKeyboard({
+    comicState, pan,
+    applyTransform, resetTransform,
+    pageStep, gotoPage, pageCount: record.pageCount,
+    zoomBtn, fsBtn, bmBtn, spreadBtn,
+  });
   state.readerEl._cleanupKey = () => {
-    document.removeEventListener('keydown', onKey);
+    unwireKeyboard();
     document.removeEventListener('fullscreenchange', updateFsIcon);
     releaseWakeLock();
     if (orientSupported && orientationLocked) {

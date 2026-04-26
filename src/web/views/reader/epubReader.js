@@ -12,80 +12,13 @@ import { showToast } from '../../app.js';
 import { state } from './state.js';
 import { epubPrefs, saveEpubPrefs } from './prefs.js';
 import { buildToolbar, loadScript } from './utils.js';
+import {
+  FONT_FAMILIES, FONT_SIZES,
+  getThemeColors, buildEpubTheme, toEpubFontSizePercent, forceThemeOnContent,
+} from '../../shared/epubTheme.js';
 
 const JSZIP_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
 const EPUBJS_CDN = 'https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js';
-
-const FONT_FAMILIES = [
-  { label: 'System', value: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
-  { label: 'Serif', value: 'Georgia, "Times New Roman", serif' },
-  { label: 'Sans', value: 'Arial, Helvetica, sans-serif' },
-  { label: 'Mono', value: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' },
-];
-const FONT_SIZES = [70, 80, 90, 100, 110, 120, 130];
-const EPUB_BASE_FONT_SCALE = 0.85;
-
-function getThemeColors(mode) {
-  return mode === 'black'
-    ? { background: '#000000', text: '#f3f4f6', link: '#93c5fd' }
-    : { background: '#ffffff', text: '#111827', link: '#1d4ed8' };
-}
-
-function buildEpubTheme(mode, fontFamily) {
-  const colors = getThemeColors(mode);
-  const textRule = {
-    color: `${colors.text} !important`,
-    'background-color': 'transparent !important',
-  };
-  return {
-    html: {
-      background: `${colors.background} !important`,
-      'background-color': `${colors.background} !important`,
-    },
-    body: {
-      background: `${colors.background} !important`,
-      'background-color': `${colors.background} !important`,
-      color: `${colors.text} !important`,
-      'font-family': fontFamily,
-      'line-height': '1.6',
-      margin: '0',
-      padding: '2rem 2.75rem',
-      'box-sizing': 'border-box',
-    },
-    'body *': textRule,
-    'p, div, span, section, article, aside, li, blockquote, h1, h2, h3, h4, h5, h6': textRule,
-    a: { color: `${colors.link} !important`, 'background-color': 'transparent !important' },
-    img: { 'max-width': '100%', 'max-height': '100%' },
-    p: { 'margin-top': '0', 'margin-bottom': '1em' },
-  };
-}
-
-function toEpubFontSizePercent(fontSize) {
-  return `${Math.round(fontSize * EPUB_BASE_FONT_SCALE)}%`;
-}
-
-/**
- * Walk the section iframe and stamp colors + font inline with !important.
- * Author stylesheets with class-scoped !important rules outrank our theme
- * stylesheet, but inline !important beats any stylesheet.
- */
-function forceThemeOnContent(contents, mode, fontFamily) {
-  const colors = getThemeColors(mode);
-  const doc = contents?.document;
-  if (!doc) return;
-  if (doc.body) {
-    doc.body.style.setProperty('background-color', colors.background, 'important');
-    if (fontFamily) doc.body.style.setProperty('font-family', fontFamily, 'important');
-  }
-  doc.documentElement?.style.setProperty('background-color', colors.background, 'important');
-  for (const el of doc.querySelectorAll('*')) {
-    const tag = el.tagName;
-    if (tag === 'IMG' || tag === 'SVG' || tag === 'PICTURE' || tag === 'VIDEO') continue;
-    el.style.setProperty('color', colors.text, 'important');
-    el.style.setProperty('background-color', 'transparent', 'important');
-    if (fontFamily) el.style.setProperty('font-family', fontFamily, 'important');
-  }
-}
 
 function reapplyTheme() {
   const rendition = state.epubRendition;

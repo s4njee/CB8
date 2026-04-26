@@ -22,6 +22,8 @@ export interface MediaRecord {
   pageCount: number;
   fileSize: number;
   coverThumbnail: Buffer | null;
+  hasThumbnail?: boolean;
+  thumbnailVersion?: number;
   dateAdded: string;
   tags: string[];
   lastPage: number | null;
@@ -29,9 +31,6 @@ export interface MediaRecord {
   lastRead: string | null;
   mediaType: 'comic' | 'book';
 }
-
-/** @deprecated Use MediaRecord instead. Kept for backward compatibility. */
-export type ComicRecord = MediaRecord;
 
 export interface QueryOptions {
   search?: string;

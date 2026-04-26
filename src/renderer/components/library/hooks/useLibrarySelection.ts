@@ -43,11 +43,13 @@ export function useLibrarySelection({
       onSelectionChange(next);
       lastClickedIndex.current = index;
     } else {
-      if (currentSelectedIds.size === 1 && currentSelectedIds.has(comic.id)) {
-        onSelectionChange(new Set()); lastClickedIndex.current = null;
-      } else {
-        onSelectionChange(new Set([comic.id])); lastClickedIndex.current = index;
-      }
+      // Plain click is select-only. Deselect via cmd/ctrl-click, the
+      // selection-bar Cancel button, or by clicking empty grid space.
+      // Toggling on the second click broke double-click-to-open: the
+      // dblclick handler fired after the click had already deselected
+      // the card, leaving the user with no selection and no reader.
+      onSelectionChange(new Set([comic.id]));
+      lastClickedIndex.current = index;
     }
   }, [onSelectionChange]);
 

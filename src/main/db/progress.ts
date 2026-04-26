@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { SqlParam, ComicRow } from './types';
 import { rowToRecord } from './comics';
-import type { ComicRecord } from '../../shared/types';
+import type { MediaRecord } from '../../shared/types';
 
 export function upsertUserProgress(
   db: Database.Database,
@@ -46,7 +46,7 @@ export function getRecentlyReadByUser(
   userId: number,
   limit: number,
   mediaType?: 'comic' | 'book',
-): ComicRecord[] {
+): MediaRecord[] {
   const where = mediaType ? 'AND c.media_type = ?' : '';
   const params: SqlParam[] = [userId];
   if (mediaType) params.push(mediaType);
@@ -68,7 +68,7 @@ export function getContinueReadingByUser(
   userId: number,
   limit: number,
   mediaType?: 'comic' | 'book',
-): ComicRecord[] {
+): MediaRecord[] {
   const where = mediaType ? 'AND c.media_type = ?' : '';
   const params: SqlParam[] = [userId];
   if (mediaType) params.push(mediaType);

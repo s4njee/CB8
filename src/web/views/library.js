@@ -1,52 +1,33 @@
 /**
- * views/library.js — Library grid view
+ * views/library.js — Library grid view (entry point).
  *
- * Renders a paginated, infinitely-scrolling grid of comic/book cards.
- * Supports all routes: all, continue, recent, library, folder, tag.
+ * Renders the header, filter strips, optional Continue-Reading shelf, and
+ * the infinitely-scrolling grid of comic/book cards. Card builders live in
+ * library/cards.js, selection state in library/selection.js, the empty
+ * state in library/empty.js, and the chrome (strips, header actions) in
+ * library/strips.js.
  */
 
 import * as api from '../api.js';
-import { getState, setMediaType, setFileExt, setReadStatus, setFavoritesOnly } from '../app.js';
-import { isAuthenticated, isAdmin, bulkDeleteComics, onAdminChange } from '../admin.js';
-import { sidebarCache } from '../app/state.js';
-import { showToast } from '../app/toast.js';
+import { isAuthenticated, onAdminChange } from '../admin.js';
+
+import {
+  resetSelection, setGrid, trackId, clearSelection,
+  ensureCheckbox, syncCardSelection,
+} from './library/selection.js';
+import {
+  createCard, createFolderCard,
+} from './library/cards.js';
+import {
+  buildMediaStrip, buildFileTypeStrip, buildReadStatusStrip,
+  routeTitle, buildCollectionActions,
+} from './library/strips.js';
+import {
+  renderEmpty, emptyReasonForRoute,
+} from './library/empty.js';
 
 const PAGE_SIZE = 48;
-
-const FILETYPE_PILLS = [
-  { ext: '',     label: 'All' },
-  { ext: 'epub', label: 'EPUB' },
-  { ext: 'pdf',  label: 'PDF' },
-  { ext: 'cbz',  label: 'CBZ' },
-  { ext: 'cbr',  label: 'CBR' },
-  { ext: 'mobi', label: 'MOBI' },
-];
-
-const MEDIA_PILLS = [
-  { type: '',      label: 'All' },
-  { type: 'comic', label: 'Comics' },
-  { type: 'book',  label: 'Books' },
-];
-
-const READ_STATUS_PILLS = [
-  { status: '',            label: 'All' },
-  { status: 'unread',      label: 'Unread' },
-  { status: 'in-progress', label: 'In Progress' },
-  { status: 'completed',   label: 'Completed' },
-];
-
-// Inline neutral book placeholder (used when a thumbnail fails to load).
-const PLACEHOLDER_BOOK_SVG_DATA_URI =
-  'data:image/svg+xml;utf8,' +
-  encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 96" preserveAspectRatio="xMidYMid slice">
-       <rect width="64" height="96" fill="#1c1c1c"/>
-       <g fill="none" stroke="#444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-         <path d="M18 24h28v48H18z"/>
-         <path d="M18 24v48"/><path d="M22 32h20"/><path d="M22 40h20"/><path d="M22 48h14"/>
-       </g>
-     </svg>`,
-  );
+const SHELF_LIMIT = 20;
 
 let offset = 0;
 let totalCount = 0;
@@ -58,11 +39,6 @@ let currentOptions = null;
 let container = null;
 let grid = null;
 
-// Selection state (admin only)
-const selection = new Set();
-const orderedIds = [];
-let lastClickedId = null;
-let selectionBar = null;
 let adminUnsubscribe = null;
 
 // ---------------------------------------------------------------------------
@@ -76,26 +52,21 @@ export async function renderLibrary(el, route, options) {
   totalCount = 0;
   loading = false;
   container = el;
+  void container;
 
-  // Reset selection on each render
-  selection.clear();
-  orderedIds.length = 0;
-  lastClickedId = null;
-  updateSelectionBar();
+  resetSelection();
 
   // Subscribe once to admin auth changes so entering/leaving admin mode
   // re-renders the selection affordances on the grid.
   if (!adminUnsubscribe) {
     adminUnsubscribe = onAdminChange(() => {
-      selection.clear();
-      lastClickedId = null;
+      clearSelection();
       if (grid) {
         grid.querySelectorAll('.comic-card').forEach((card) => {
           syncCardSelection(card);
           ensureCheckbox(card);
         });
       }
-      updateSelectionBar();
     });
   }
 
@@ -151,6 +122,7 @@ export async function renderLibrary(el, route, options) {
   grid.className = 'comics-grid';
   grid.id = 'comics-grid';
   el.appendChild(grid);
+  setGrid(grid, route);
 
   // Infinite scroll sentinel
   sentinel = document.createElement('div');
@@ -243,79 +215,8 @@ function installPullToRefresh() {
 }
 
 // ---------------------------------------------------------------------------
-// Mobile filter strips
-// ---------------------------------------------------------------------------
-
-function buildMediaStrip() {
-  const strip = document.createElement('div');
-  strip.className = 'media-strip';
-  strip.setAttribute('role', 'group');
-  strip.setAttribute('aria-label', 'Media type');
-  const current = getState().mediaType || '';
-  for (const { type, label } of MEDIA_PILLS) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'strip-pill' + (type === current ? ' active' : '');
-    btn.dataset.type = type;
-    btn.textContent = label;
-    btn.addEventListener('click', () => setMediaType(type));
-    strip.appendChild(btn);
-  }
-  return strip;
-}
-
-function buildFileTypeStrip() {
-  const strip = document.createElement('div');
-  strip.className = 'filetype-strip';
-  strip.setAttribute('role', 'group');
-  strip.setAttribute('aria-label', 'File type');
-  const current = getState().fileExt || '';
-  for (const { ext, label } of FILETYPE_PILLS) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'strip-pill' + (ext === current ? ' active' : '');
-    btn.dataset.ext = ext;
-    btn.textContent = label;
-    btn.addEventListener('click', () => setFileExt(ext));
-    strip.appendChild(btn);
-  }
-  return strip;
-}
-
-function buildReadStatusStrip() {
-  const strip = document.createElement('div');
-  strip.className = 'read-status-strip';
-  strip.setAttribute('role', 'group');
-  strip.setAttribute('aria-label', 'Read status and favorites');
-  const current = getState().readStatus || '';
-  for (const { status, label } of READ_STATUS_PILLS) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'strip-pill' + (status === current ? ' active' : '');
-    btn.dataset.status = status;
-    btn.textContent = label;
-    btn.addEventListener('click', () => setReadStatus(status));
-    strip.appendChild(btn);
-  }
-
-  // Favorites toggle lives in the same row as the read-status pills.
-  const on = Boolean(getState().favoritesOnly);
-  const favBtn = document.createElement('button');
-  favBtn.type = 'button';
-  favBtn.className = 'strip-pill favorites-pill' + (on ? ' active' : '');
-  favBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  favBtn.innerHTML = `<span class="heart">${on ? '♥' : '♡'}</span> Favorites`;
-  favBtn.addEventListener('click', () => setFavoritesOnly(!on));
-  strip.appendChild(favBtn);
-
-  return strip;
-}
-
-// ---------------------------------------------------------------------------
 // Continue-reading shelf (inline, on #/ only)
 // ---------------------------------------------------------------------------
-
-const SHELF_LIMIT = 20;
 
 async function renderContinueShelf(host, options) {
   const records = await api.fetchContinueReading(SHELF_LIMIT, options.mediaType || undefined);
@@ -375,6 +276,15 @@ async function loadNextPage() {
 
     let result;
 
+    // The "all" view (no library, no folder, no search/tag) hides comics
+    // that already live inside a virtual folder, the same way the Electron
+    // grid does. Folder cards then take their place — see folder load below.
+    const isAllView = !currentRoute || (currentRoute.type !== 'recent'
+      && currentRoute.type !== 'continue'
+      && currentRoute.type !== 'library'
+      && currentRoute.type !== 'folder'
+      && currentRoute.type !== 'tag');
+
     if (currentRoute.type === 'recent') {
       const records = await api.fetchRecentlyRead(PAGE_SIZE + offset, currentOptions.mediaType || undefined);
       result = { records: records.slice(offset, offset + PAGE_SIZE), totalCount: records.length };
@@ -388,7 +298,20 @@ async function loadNextPage() {
     } else if (currentRoute.type === 'tag') {
       result = await api.fetchComics({ ...opts, tag: currentRoute.tag });
     } else {
-      result = await api.fetchComics(opts);
+      result = await api.fetchComics({ ...opts, excludeFoldered: true });
+    }
+
+    // First page of the all view: render folder cards before the comic cards
+    // so virtual folders behave like actual containers.
+    if (isAllView && offset === 0) {
+      try {
+        const folders = await api.fetchFolders();
+        for (const folder of folders ?? []) {
+          grid.appendChild(createFolderCard(folder));
+        }
+      } catch (err) {
+        console.warn('[CB8] Failed to load folders for all view:', err);
+      }
     }
 
     totalCount = result.totalCount || result.records.length;
@@ -398,11 +321,11 @@ async function loadNextPage() {
     if (countEl) countEl.textContent = `${totalCount.toLocaleString()} item${totalCount !== 1 ? 's' : ''}`;
 
     if (result.records.length === 0 && offset === 0) {
-      renderEmpty(emptyReasonForRoute());
+      renderEmpty(grid, emptyReasonForRoute(currentRoute));
     } else {
       for (const record of result.records) {
         grid.appendChild(createCard(record));
-        orderedIds.push(record.id);
+        trackId(record.id);
       }
     }
   } catch (err) {
@@ -412,439 +335,11 @@ async function loadNextPage() {
         err?.status === 401 || err?.status === 403 ? 'signed-out'
         : err?.status >= 400 && err?.status < 500 ? 'empty'
         : 'offline';
-      renderEmpty(reason);
+      renderEmpty(grid, reason);
     }
   } finally {
     loading = false;
     const spinner = document.getElementById('grid-spinner');
     if (spinner) spinner.hidden = true;
   }
-}
-
-function emptyReasonForRoute() {
-  const s = getState();
-  const hasFilter = Boolean(
-    s.search || s.mediaType || s.fileExt ||
-    (currentRoute && currentRoute.type === 'tag'),
-  );
-  if (hasFilter) return 'no-results';
-  if (currentRoute && currentRoute.type === 'recent') return 'no-recent';
-  if (currentRoute && currentRoute.type === 'continue') return 'no-continue';
-  return 'empty';
-}
-
-// ---------------------------------------------------------------------------
-// Card rendering
-// ---------------------------------------------------------------------------
-
-function formatBadgeFor(record) {
-  const ext = (record.fileExt || '').toLowerCase();
-  const isBookExt = ext === 'epub' || ext === 'pdf' || ext === 'mobi';
-  const label = ext
-    ? ext.toUpperCase()
-    : (record.mediaType === 'book' ? 'Book' : 'Comic');
-  const bookClass = isBookExt || (!ext && record.mediaType === 'book');
-  return { label, bookClass };
-}
-
-function progressLabelFor(record) {
-  // lastPage is 0-indexed, so pages-read = lastPage + 1.
-  if (record.pageCount > 0 && record.lastPage != null && record.lastPage > 0) {
-    const pct = Math.max(1, Math.min(100, Math.round(((record.lastPage + 1) / record.pageCount) * 100)));
-    return `${pct}%`;
-  }
-  if (record.lastLocation) return 'In progress';
-  return null;
-}
-
-function createCard(record) {
-  const card = document.createElement('div');
-  card.className = 'comic-card';
-  card.setAttribute('role', 'button');
-  card.setAttribute('tabindex', '0');
-  card.setAttribute('aria-label', record.title);
-  card.dataset.id = record.id;
-
-  const thumbWrap = document.createElement('div');
-  thumbWrap.className = 'card-thumb-wrap';
-
-  const img = document.createElement('img');
-  img.className = 'card-thumb loading';
-  img.alt = record.title;
-  img.loading = 'lazy';
-  img.decoding = 'async';
-  img.src = record.thumbnailUrl;
-  img.addEventListener('load', () => img.classList.remove('loading'));
-  img.addEventListener('error', () => {
-    img.classList.remove('loading');
-    img.src = PLACEHOLDER_BOOK_SVG_DATA_URI;
-  });
-
-  const { label: badgeLabel, bookClass } = formatBadgeFor(record);
-  const badge = document.createElement('div');
-  badge.className = `card-badge${bookClass ? ' book' : ''}`;
-  badge.textContent = badgeLabel;
-
-  thumbWrap.appendChild(img);
-  thumbWrap.appendChild(badge);
-
-  if (record.favorited) card.classList.add('favorited');
-  if (isAuthenticated()) {
-    const heart = document.createElement('div');
-    heart.className = 'card-fav-heart';
-    heart.textContent = record.favorited ? '♥' : '♡';
-    heart.title = 'Toggle favorite';
-    heart.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const on = card.classList.contains('favorited');
-      try {
-        if (on) await api.removeFavorite(record.id);
-        else await api.addFavorite(record.id);
-        card.classList.toggle('favorited', !on);
-        heart.textContent = !on ? '♥' : '♡';
-      } catch (err) {
-        console.error('[CB8] favorite toggle failed:', err);
-      }
-    });
-    thumbWrap.appendChild(heart);
-  }
-
-  ensureCheckbox(card);
-
-  // Progress badge
-  const progressLabel = progressLabelFor(record);
-  if (progressLabel) {
-    const pb = document.createElement('div');
-    pb.className = 'progress-badge';
-    pb.textContent = progressLabel;
-    thumbWrap.appendChild(pb);
-  }
-
-  // Progress bar (existing)
-  if (record.lastPage && record.pageCount > 0) {
-    const pct = Math.min(100, Math.round(((record.lastPage + 1) / record.pageCount) * 100));
-    const bar = document.createElement('div');
-    bar.className = 'progress-bar';
-    bar.style.width = `${pct}%`;
-    bar.setAttribute('title', `${pct}% read`);
-    thumbWrap.appendChild(bar);
-  }
-
-  const info = document.createElement('div');
-  info.className = 'card-info';
-
-  const title = document.createElement('div');
-  title.className = 'card-title';
-  title.textContent = record.title;
-
-  const meta = document.createElement('div');
-  meta.className = 'card-meta';
-  meta.textContent = record.pageCount > 0 ? `${record.pageCount} pages` : '';
-
-  info.appendChild(title);
-  info.appendChild(meta);
-
-  card.appendChild(thumbWrap);
-  card.appendChild(info);
-
-  // Navigation / selection
-  const open = () => { window.location.hash = `#/read/${record.id}`; };
-  card.addEventListener('click', (e) => {
-    if (!isAuthenticated()) { open(); return; }
-    e.preventDefault();
-    if (e.shiftKey) selectRangeTo(record.id);
-    else toggleSelection(record.id);
-  });
-  card.addEventListener('dblclick', (e) => {
-    e.preventDefault();
-    open();
-  });
-  card.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
-  });
-  card.addEventListener('contextmenu', (e) => {
-    if (!isAuthenticated()) return;
-    e.preventDefault();
-    openContextMenu(e.clientX, e.clientY, record.id);
-  });
-
-  return card;
-}
-
-// ---------------------------------------------------------------------------
-// Right-click context menu (admin only) — delegates to admin.js
-// ---------------------------------------------------------------------------
-
-function openContextMenu(x, y, targetId) {
-  const targets = selection.has(targetId) ? Array.from(selection) : [targetId];
-  import('../admin.js').then(({ openCardContextMenu }) => {
-    openCardContextMenu(x, y, {
-      targetId,
-      targets,
-      isSelected: selection.has(targetId),
-      grid,
-      route: currentRoute,
-      onToggleSelect: (id) => toggleSelection(id),
-      onRemoved: (ids) => {
-        for (const id of ids) {
-          selection.delete(id);
-          grid?.querySelector(`.comic-card[data-id="${id}"]`)?.remove();
-          const idx = orderedIds.indexOf(id);
-          if (idx >= 0) orderedIds.splice(idx, 1);
-        }
-        lastClickedId = null;
-        updateSelectionBar();
-      },
-      onDelete: async (ids) => {
-        const { removed } = await bulkDeleteComics(ids);
-        for (const id of removed) {
-          selection.delete(id);
-          grid?.querySelector(`.comic-card[data-id="${id}"]`)?.remove();
-          const idx = orderedIds.indexOf(id);
-          if (idx >= 0) orderedIds.splice(idx, 1);
-        }
-        lastClickedId = null;
-        updateSelectionBar();
-      },
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Selection (admin only)
-// ---------------------------------------------------------------------------
-
-function ensureCheckbox(card) {
-  const id = Number(card.dataset.id);
-  const existing = card.querySelector('.card-checkbox');
-  if (!isAuthenticated()) {
-    existing?.remove();
-    card.classList.remove('selected');
-    return;
-  }
-  if (existing) {
-    syncCardSelection(card);
-    return;
-  }
-  const box = document.createElement('button');
-  box.type = 'button';
-  box.className = 'card-checkbox';
-  box.setAttribute('aria-label', 'Select');
-  box.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (e.shiftKey) selectRangeTo(id);
-    else toggleSelection(id);
-  });
-  const thumbWrap = card.querySelector('.card-thumb-wrap');
-  thumbWrap?.appendChild(box);
-  syncCardSelection(card);
-}
-
-function syncCardSelection(card) {
-  const id = Number(card.dataset.id);
-  const selected = selection.has(id);
-  card.classList.toggle('selected', selected);
-  card.setAttribute('aria-selected', selected ? 'true' : 'false');
-}
-
-function toggleSelection(id) {
-  if (selection.has(id)) selection.delete(id);
-  else selection.add(id);
-  lastClickedId = id;
-  const card = grid?.querySelector(`.comic-card[data-id="${id}"]`);
-  if (card) syncCardSelection(card);
-  updateSelectionBar();
-}
-
-function selectRangeTo(id) {
-  if (lastClickedId == null) {
-    toggleSelection(id);
-    return;
-  }
-  const from = orderedIds.indexOf(lastClickedId);
-  const to = orderedIds.indexOf(id);
-  if (from < 0 || to < 0) {
-    toggleSelection(id);
-    return;
-  }
-  const [lo, hi] = from <= to ? [from, to] : [to, from];
-  for (let i = lo; i <= hi; i++) selection.add(orderedIds[i]);
-  grid?.querySelectorAll('.comic-card').forEach(syncCardSelection);
-  updateSelectionBar();
-}
-
-function clearSelection() {
-  selection.clear();
-  lastClickedId = null;
-  grid?.querySelectorAll('.comic-card.selected').forEach((card) => {
-    card.classList.remove('selected');
-    card.setAttribute('aria-selected', 'false');
-  });
-  updateSelectionBar();
-}
-
-function updateSelectionBar() {
-  if (selection.size === 0) {
-    selectionBar?.remove();
-    selectionBar = null;
-    return;
-  }
-  if (!selectionBar) {
-    selectionBar = document.createElement('div');
-    selectionBar.className = 'selection-bar';
-    selectionBar.innerHTML = `
-      <span class="selection-count"></span>
-      <div class="selection-actions">
-        <button type="button" class="selection-btn-secondary" data-action="clear">Cancel</button>
-        <button type="button" class="selection-btn-danger" data-action="delete">Delete</button>
-      </div>
-    `;
-    document.body.appendChild(selectionBar);
-    selectionBar.querySelector('[data-action="clear"]').addEventListener('click', clearSelection);
-    selectionBar.querySelector('[data-action="delete"]').addEventListener('click', async () => {
-      const ids = Array.from(selection);
-      const { removed } = await bulkDeleteComics(ids);
-      for (const id of removed) {
-        selection.delete(id);
-        grid?.querySelector(`.comic-card[data-id="${id}"]`)?.remove();
-        const idx = orderedIds.indexOf(id);
-        if (idx >= 0) orderedIds.splice(idx, 1);
-      }
-      lastClickedId = null;
-      updateSelectionBar();
-    });
-  }
-  selectionBar.querySelector('.selection-count').textContent =
-    `${selection.size} selected`;
-}
-
-function renderEmpty(reason) {
-  if (!grid) return;
-  grid.innerHTML = '';
-  const empty = document.createElement('div');
-  empty.className = 'empty-state';
-  empty.innerHTML = emptyStateMarkup(reason);
-  grid.appendChild(empty);
-}
-
-function emptyStateMarkup(reason) {
-  const svgAttrs = 'width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
-  switch (reason) {
-    case 'offline':
-      return `
-        <svg ${svgAttrs}>
-          <path d="M2 2l20 20"/>
-          <path d="M8.5 16.5A5 5 0 0 1 12 15a5 5 0 0 1 3.5 1.5"/>
-          <path d="M5 12.5A8 8 0 0 1 10 10"/>
-          <path d="M19 12a8 8 0 0 0-5.5-7.6"/>
-          <path d="M2 8.8A13 13 0 0 1 7 6"/>
-        </svg>
-        <p>Cannot reach the server. Check your connection.</p>
-      `;
-    case 'signed-out':
-      return `
-        <svg ${svgAttrs}>
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-        </svg>
-        <p>No books in the library.</p>
-      `;
-    case 'no-results':
-      return `
-        <svg ${svgAttrs}>
-          <circle cx="11" cy="11" r="7"/>
-          <path d="m20 20-3.5-3.5"/>
-        </svg>
-        <p>No items match your search or filters.</p>
-      `;
-    case 'no-recent':
-      return `
-        <svg ${svgAttrs}>
-          <circle cx="12" cy="12" r="9"/>
-          <path d="M12 7v5l3 2"/>
-        </svg>
-        <p>Nothing read yet. Open a book or comic to get started.</p>
-      `;
-    case 'no-continue':
-      return `
-        <svg ${svgAttrs}>
-          <path d="M8 5v14l11-7z"/>
-        </svg>
-        <p>Nothing in progress. Start a book to see it here.</p>
-      `;
-    case 'empty':
-    default:
-      return `
-        <svg ${svgAttrs}>
-          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-        </svg>
-        <p>No items found.</p>
-      `;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function routeTitle(route) {
-  switch (route.type) {
-    case 'all':     return 'All Items';
-    case 'continue': return 'Continue Reading';
-    case 'recent':  return 'Recently Read';
-    case 'library': {
-      const lib = sidebarCache.libraries.find((l) => l.id === route.id);
-      return lib?.name ?? 'Collection';
-    }
-    case 'folder': {
-      const folder = sidebarCache.folders.find((f) => f.id === route.id);
-      return folder?.name ?? 'Folder';
-    }
-    case 'tag':     return `Tag: ${route.tag}`;
-    default:        return 'Library';
-  }
-}
-
-/**
- * Header action bar shown when viewing a specific library or folder —
- * currently just a Delete button. Mirrors the sidebar context menu so the
- * action is discoverable for users who don't know about right-click.
- */
-function buildCollectionActions(route) {
-  const wrap = document.createElement('div');
-  wrap.className = 'library-header-actions';
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'library-header-btn library-header-btn-danger';
-  btn.title = route.type === 'library' ? 'Delete collection' : 'Delete folder';
-  btn.innerHTML = `
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M3 6h18"/>
-      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-      <path d="M6 6v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6"/>
-      <path d="M10 11v6"/><path d="M14 11v6"/>
-    </svg>
-    <span>Delete</span>
-  `;
-
-  btn.addEventListener('click', async () => {
-    const isLibrary = route.type === 'library';
-    const kind = isLibrary ? 'collection' : 'folder';
-    const name = routeTitle(route);
-    if (!window.confirm(`Delete ${kind} "${name}"? Comics and files are not removed.`)) return;
-    try {
-      if (isLibrary) await api.deleteLibrary(route.id);
-      else await api.deleteFolder(route.id);
-      showToast(`Deleted "${name}"`);
-      window.location.hash = '#/';
-      window.dispatchEvent(new CustomEvent('cb8:library-changed'));
-    } catch (err) {
-      showToast(err.message || `Could not delete ${kind}`);
-    }
-  });
-
-  wrap.appendChild(btn);
-  return wrap;
 }

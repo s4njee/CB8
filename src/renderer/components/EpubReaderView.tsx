@@ -2,94 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ePub, { type Book, type Contents, type Location, type NavItem, type Rendition } from 'epubjs';
 import { generateWindowTitle } from '../../shared/windowTitle';
 import { readBookFile, updateReadingLocation } from '../ipcClient';
+import {
+  FONT_FAMILIES, FONT_SIZES,
+  buildEpubTheme, toEpubFontSizePercent, forceThemeOnContent,
+  type ThemeMode,
+} from '../../web/shared/epubTheme';
 
 const DEFAULT_TITLE = 'CB8';
 const READER_MARGIN_X = 72;
 const READER_MARGIN_Y = 56;
-const FONT_FAMILIES = [
-  { label: 'System', value: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
-  { label: 'Serif', value: 'Georgia, "Times New Roman", serif' },
-  { label: 'Sans', value: 'Arial, Helvetica, sans-serif' },
-  { label: 'Mono', value: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' },
-] as const;
-const FONT_SIZES = [70, 80, 90, 100, 110, 120, 130] as const;
-const EPUB_BASE_FONT_SCALE = 0.85;
-type ThemeMode = 'black' | 'white';
-
-function getThemeColors(mode: ThemeMode): { background: string; text: string; link: string } {
-  return mode === 'black'
-    ? { background: '#000000', text: '#f3f4f6', link: '#93c5fd' }
-    : { background: '#ffffff', text: '#111827', link: '#1d4ed8' };
-}
-
-function buildEpubTheme(mode: ThemeMode, fontFamily: string): Record<string, Record<string, string>> {
-  const colors = getThemeColors(mode);
-  const textRule = {
-    color: `${colors.text} !important`,
-    'background-color': 'transparent !important',
-  };
-
-  return {
-    html: {
-      background: `${colors.background} !important`,
-      'background-color': `${colors.background} !important`,
-    },
-    body: {
-      background: `${colors.background} !important`,
-      'background-color': `${colors.background} !important`,
-      color: `${colors.text} !important`,
-      'font-family': fontFamily,
-      'line-height': '1.6',
-      margin: '0',
-      padding: '2rem 2.75rem',
-      'box-sizing': 'border-box',
-    },
-    'body *': textRule,
-    'p, div, span, section, article, aside, li, blockquote, h1, h2, h3, h4, h5, h6': textRule,
-    a: {
-      color: `${colors.link} !important`,
-      'background-color': 'transparent !important',
-    },
-    img: {
-      'max-width': '100%',
-      'max-height': '100%',
-    },
-    p: {
-      'margin-top': '0',
-      'margin-bottom': '1em',
-    },
-  };
-}
-
-function toEpubFontSizePercent(fontSize: number): string {
-  return `${Math.round(fontSize * EPUB_BASE_FONT_SCALE)}%`;
-}
-
-/**
- * Force theme colors onto every element in a rendered section, using inline
- * style with !important. This is the only way to beat epub author stylesheets
- * that declare color with a class-scoped !important rule — those outrank our
- * theme stylesheet on specificity, but inline !important beats any stylesheet.
- *
- * Runs in the section iframe's document, invoked from epubjs's `rendered` hook.
- */
-function forceThemeOnContent(contents: Contents, mode: ThemeMode): void {
-  const colors = getThemeColors(mode);
-  const doc = contents?.document;
-  if (!doc) return;
-  const body = doc.body;
-  if (body) body.style.setProperty('background-color', colors.background, 'important');
-  doc.documentElement?.style.setProperty('background-color', colors.background, 'important');
-  const all = doc.querySelectorAll<HTMLElement>('*');
-  for (const el of all) {
-    const tag = el.tagName;
-    if (tag === 'IMG' || tag === 'SVG' || tag === 'PICTURE' || tag === 'VIDEO') continue;
-    el.style.setProperty('color', colors.text, 'important');
-    // Wipe any author-set background on individual elements so the page
-    // background shows through consistently.
-    el.style.setProperty('background-color', 'transparent', 'important');
-  }
-}
 
 interface Props {
   filePath: string;

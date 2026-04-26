@@ -166,57 +166,99 @@ export async function getCoverImage(handle: ArchiveHandle): Promise<Buffer> {
 export async function close(handle: ArchiveHandle): Promise<void> {
   if (isCbzHandle(handle)) {
     handle._zipFile.close();
+  } else if (isCbrHandle(handle)) {
+    // Drop cached pages so they can't outlive the handle.
+    handle._pageCache.clear();
+    // File-mode also created a temp dir for on-disk extraction; clean it
+    // up. Best-effort: a stray dir under /tmp is harmless if removal fails.
+    if (handle._mode === 'file') {
+      await fsp.rm(handle._tempDir, { recursive: true, force: true }).catch(() => { /* ignore */ });
+    }
   }
-  // CBR handles don't hold persistent resources
 }
 
 
 // --- CBR (RAR) support ---
 
 import * as fsp from 'node:fs/promises';
-import { createExtractorFromData, type Extractor } from 'node-unrar-js';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { createExtractorFromData, createExtractorFromFile, type Extractor } from 'node-unrar-js';
+import { LruByBytes } from '../shared/lru';
 
-interface CbrHandle extends ArchiveHandle {
+/**
+ * Per-archive in-memory cap for cached decompressed pages. RAR pages
+ * decompress on every extract() call — solid archives in particular have
+ * to re-walk the dictionary — so a small LRU pays off heavily for back-
+ * navigation and adjacent prefetch. Keep the cap modest so a few open
+ * archives don't dominate memory.
+ */
+const CBR_PAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024; // 64 MiB
+
+/**
+ * Above this size we open the archive in file-mode (extractor reads from
+ * disk on demand) instead of slurping the whole file into a Buffer.
+ *
+ * Two reasons:
+ *   - Node's `fsp.readFile` errors with `ERR_FS_FILE_TOO_LARGE` at ≥ 2 GiB.
+ *   - V8 caps `ArrayBuffer` length at ~4 GiB, so even chunked reads
+ *     wouldn't fit a 5 GiB archive into one buffer.
+ *
+ * File-mode trades RAM for a temp directory + per-page disk round-trip
+ * (the extractor writes each requested file into the temp dir, we read
+ * it back as bytes, then unlink). The 64 MiB LRU page cache absorbs
+ * sequential and back-navigation reads.
+ */
+const HUGE_ARCHIVE_THRESHOLD = 2_000_000_000;
+
+interface CbrHandleBase extends ArchiveHandle {
   format: 'cbr';
-  /**
-   * Extractor kept for the life of the handle so pages can be extracted
-   * lazily on demand without re-reading the archive from disk. We store
-   * filenames in sorted order; page N maps to the entry at entries[N].
-   */
+  /** LRU page cache, byte-budgeted. */
+  _pageCache: LruByBytes<number, Buffer>;
+}
+
+interface CbrDataHandle extends CbrHandleBase {
+  _mode: 'data';
   _extractor: Extractor<Uint8Array>;
 }
+
+interface CbrFileHandle extends CbrHandleBase {
+  _mode: 'file';
+  _extractor: Extractor;
+  _tempDir: string;
+}
+
+type CbrHandle = CbrDataHandle | CbrFileHandle;
 
 function isCbrHandle(handle: ArchiveHandle): handle is CbrHandle {
   return handle.format === 'cbr';
 }
 
 /**
- * Open a CBR (RAR) archive. Reads the file asynchronously, enumerates image
- * entries, and keeps the extractor around so pages can be decoded on demand
- * rather than holding every decompressed page in memory up front.
+ * Open a CBR (RAR) archive. Picks data-mode (whole archive in RAM, fast
+ * lazy extract) for normal-sized archives and file-mode (extractor reads
+ * from disk) for >2 GiB archives that wouldn't fit in a single buffer.
  */
 export async function openCbr(filePath: string): Promise<ArchiveHandle> {
-  let fileData: Buffer;
+  let size = Infinity;
   try {
-    fileData = await fsp.readFile(filePath);
-  } catch (err: unknown) {
+    size = (await fsp.stat(filePath)).size;
+  } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to open archive: ${msg}`);
   }
 
-  let extractor: Extractor<Uint8Array>;
+  let handle: CbrHandle;
   try {
-    const archiveData = fileData.buffer.slice(
-      fileData.byteOffset,
-      fileData.byteOffset + fileData.byteLength
-    ) as ArrayBuffer;
-    extractor = await createExtractorFromData({ data: archiveData });
-  } catch (err: unknown) {
+    handle = size > HUGE_ARCHIVE_THRESHOLD
+      ? await openCbrFileMode(filePath)
+      : await openCbrDataMode(filePath);
+  } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to open archive: ${msg}`);
   }
 
-  const fileList = extractor.getFileList();
+  const fileList = handle._extractor.getFileList();
   const imageNames: string[] = [];
   for (const header of fileList.fileHeaders) {
     if (!header.flags.directory && isImageFile(header.name)) {
@@ -224,34 +266,92 @@ export async function openCbr(filePath: string): Promise<ArchiveHandle> {
     }
   }
   imageNames.sort((a, b) => naturalCompare(a, b));
-
   const entries: ArchiveEntry[] = imageNames.map((filename, index) => ({ filename, index }));
 
-  const handle: CbrHandle = {
-    filePath,
-    format: 'cbr',
-    entries,
-    pageCount: entries.length,
-    _extractor: extractor,
-  };
-
+  // Mutate the in-progress handle with metadata. (Type-stable: entries +
+  // pageCount are the only fields we set late.)
+  (handle as { entries: ArchiveEntry[] }).entries = entries;
+  (handle as { pageCount: number }).pageCount = entries.length;
   return handle;
 }
 
-function getCbrPage(handle: CbrHandle, pageIndex: number): Promise<Buffer> {
+async function openCbrDataMode(filePath: string): Promise<CbrDataHandle> {
+  const fileData = await fsp.readFile(filePath);
+  const archiveData = fileData.buffer.slice(
+    fileData.byteOffset,
+    fileData.byteOffset + fileData.byteLength,
+  ) as ArrayBuffer;
+  const extractor = await createExtractorFromData({ data: archiveData });
+  return {
+    filePath,
+    format: 'cbr',
+    entries: [],
+    pageCount: 0,
+    _mode: 'data',
+    _extractor: extractor,
+    _pageCache: new LruByBytes<number, Buffer>({
+      maxBytes: CBR_PAGE_CACHE_MAX_BYTES,
+      sizeOf: (b) => b.length,
+    }),
+  };
+}
+
+async function openCbrFileMode(filePath: string): Promise<CbrFileHandle> {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cb8-cbr-'));
+  const extractor = await createExtractorFromFile({ filepath: filePath, targetPath: tempDir });
+  return {
+    filePath,
+    format: 'cbr',
+    entries: [],
+    pageCount: 0,
+    _mode: 'file',
+    _extractor: extractor,
+    _tempDir: tempDir,
+    _pageCache: new LruByBytes<number, Buffer>({
+      maxBytes: CBR_PAGE_CACHE_MAX_BYTES,
+      sizeOf: (b) => b.length,
+    }),
+  };
+}
+
+function cachePage(handle: CbrHandle, pageIndex: number, buf: Buffer): Buffer {
+  // LruByBytes handles MRU bumping + byte-budgeted eviction internally.
+  handle._pageCache.set(pageIndex, buf);
+  return buf;
+}
+
+async function getCbrPage(handle: CbrHandle, pageIndex: number): Promise<Buffer> {
   if (pageIndex < 0 || pageIndex >= handle.pageCount) {
-    return Promise.reject(new Error(`Page index ${pageIndex} out of range (0-${handle.pageCount - 1})`));
+    throw new Error(`Page index ${pageIndex} out of range (0-${handle.pageCount - 1})`);
   }
+
+  // Cache hit — `get` already bumps to MRU.
+  const cached = handle._pageCache.get(pageIndex);
+  if (cached) return cached;
+
   const targetName = handle.entries[pageIndex].filename;
+
   try {
-    const extracted = handle._extractor.extract({ files: [targetName] });
-    for (const file of extracted.files) {
-      if (file.fileHeader.name === targetName && file.extraction) {
-        return Promise.resolve(Buffer.from(file.extraction));
+    if (handle._mode === 'data') {
+      const extracted = handle._extractor.extract({ files: [targetName] });
+      for (const file of extracted.files) {
+        if (file.fileHeader.name === targetName && file.extraction) {
+          return cachePage(handle, pageIndex, Buffer.from(file.extraction));
+        }
       }
+      throw new Error('entry not found');
     }
-    return Promise.reject(new Error(`Failed to read page ${pageIndex}: entry not found`));
+
+    // File-mode: extract() writes the requested entry under tempDir, then
+    // we read the bytes back off disk and unlink so tempDir stays small.
+    const extracted = handle._extractor.extract({ files: [targetName] });
+    // Consume the iterator — that's what actually triggers the extraction.
+    for (const _file of extracted.files) { void _file; }
+    const onDisk = path.join(handle._tempDir, targetName);
+    const buf = await fsp.readFile(onDisk);
+    fsp.unlink(onDisk).catch(() => { /* best effort */ });
+    return cachePage(handle, pageIndex, buf);
   } catch (err) {
-    return Promise.reject(new Error(`Failed to read page ${pageIndex}: ${err instanceof Error ? err.message : String(err)}`));
+    throw new Error(`Failed to read page ${pageIndex}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

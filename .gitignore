@@ -3,3 +3,13 @@ dist/
 .vite/
 out/
 *.js.map
+
+# Local comic libraries — never part of the repo.
+/Marvel Omnibus*/
+/comics/
+/library/
+*.cbz
+*.cbr
+*.epub
+*.pdf
+*.mobi

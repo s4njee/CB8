@@ -2,7 +2,7 @@
  * Pure filter and sort logic for the library filter & sort feature.
  * No side effects, no database or React dependencies.
  */
-import type { ComicRecord, QueryOptions, FilterPreset } from '../shared/types';
+import type { MediaRecord, QueryOptions, FilterPreset } from '../shared/types';
 
 type ReadStatus = 'unread' | 'in-progress' | 'completed';
 
@@ -30,9 +30,9 @@ export function classifyReadStatus(comic: {
  * Filter comics by read status. undefined returns all comics.
  */
 export function filterByReadStatus(
-  comics: ComicRecord[],
+  comics: MediaRecord[],
   status: ReadStatus | undefined,
-): ComicRecord[] {
+): MediaRecord[] {
   if (status === undefined) return comics;
   return comics.filter((c) => classifyReadStatus(c) === status);
 }
@@ -42,9 +42,9 @@ export function filterByReadStatus(
  * undefined returns all comics.
  */
 export function filterByFileExt(
-  comics: ComicRecord[],
+  comics: MediaRecord[],
   ext: string | undefined,
-): ComicRecord[] {
+): MediaRecord[] {
   if (ext === undefined) return comics;
   const suffix = '.' + ext.toLowerCase();
   return comics.filter((c) => c.filePath.toLowerCase().endsWith(suffix));
@@ -55,14 +55,14 @@ export function filterByFileExt(
  * A comic must pass every active filter to be included.
  */
 export function applyFilters(
-  comics: ComicRecord[],
+  comics: MediaRecord[],
   filters: {
     readStatus?: ReadStatus;
     fileExt?: string;
     tag?: string;
     search?: string;
   },
-): ComicRecord[] {
+): MediaRecord[] {
   let result = comics;
 
   if (filters.readStatus !== undefined) {

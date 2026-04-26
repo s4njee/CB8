@@ -1,12 +1,11 @@
-import { app, BrowserWindow, Menu, dialog, shell, type MenuItemConstructorOptions } from 'electron';
-import fs from 'node:fs';
+import { app, BrowserWindow, Menu } from 'electron';
 import path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import { registerIpcHandlers } from './ipcHandlers';
 import { closeAllHandles, startWebServer } from './webServer';
 import type { WebServerHandle } from './webServer';
 import { DbStartupError } from './db/schema';
-import { resetDefaultAdmin } from './adminReset';
+import { buildApplicationMenu, type MenuContext } from './menu';
 
 const isHeadless =
   process.argv.includes('--headless') ||
@@ -24,7 +23,6 @@ try {
 let db: LibraryDatabase | null = null;
 let mainWindow: BrowserWindow | null = null;
 const pendingOpenFiles: string[] = [];
-const RECENT_FILE_LIMIT = 12;
 
 /**
  * Shared mutable reference so registerIpcHandlers can update the active
@@ -52,186 +50,17 @@ function refreshRecentMenu(filePath?: string): void {
     app.addRecentDocument(filePath);
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    Menu.setApplicationMenu(buildApplicationMenu(mainWindow));
+    Menu.setApplicationMenu(buildApplicationMenu(mainWindow, menuContext()));
   }
 }
 
-function buildRecentMenuItems(): MenuItemConstructorOptions[] {
-  const recentRecords = db?.getRecentlyRead(RECENT_FILE_LIMIT) ?? [];
-  const existingRecords = recentRecords.filter((record) => fs.existsSync(record.filePath));
-
-  if (existingRecords.length === 0) {
-    return [{ label: 'No Recent Files', enabled: false }];
-  }
-
-  return existingRecords.map((record) => ({
-    label: record.title || path.basename(record.filePath),
-    sublabel: record.filePath,
-    click: () => openFileInWindow(record.filePath),
-  }));
-}
-
-/**
- * Close the DB, unlink the sqlite file + its WAL/SHM sidecars, then relaunch
- * Electron so the app starts against a fresh schema. Destructive; requires
- * explicit confirmation from the user.
- */
-async function clearDatabaseAndRelaunch(win: BrowserWindow): Promise<void> {
-  const userDataPath = app.getPath('userData');
-  const dbPath = path.join(userDataPath, 'library.db');
-  const result = await dialog.showMessageBox(win, {
-    type: 'warning',
-    buttons: ['Cancel', 'Clear database'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Clear database',
-    message: 'Delete the entire CB8 library database?',
-    detail:
-      `This will remove all libraries, folders, tags, reading progress, and user accounts.\n\n` +
-      `Comic and book files on disk are NOT removed. CB8 will restart with an empty database.\n\n` +
-      `Database: ${dbPath}`,
-  });
-  if (result.response !== 1) return;
-
-  // Close handles so SQLite releases the file.
-  try { await closeAllHandles(); } catch { /* ignore */ }
-  if (webServerRef.handle) {
-    try { webServerRef.handle.server.close(); } catch { /* ignore */ }
-    webServerRef.handle = null;
-  }
-  try {
-    if (db) {
-      db.raw.close();
-    }
-  } catch (err) {
-    console.warn('[CB8] Failed to close DB before clear:', err);
-  }
-  db = null;
-
-  for (const suffix of ['', '-wal', '-shm']) {
-    const target = dbPath + suffix;
-    try { fs.unlinkSync(target); } catch { /* may not exist */ }
-  }
-
-  if (app.isPackaged) {
-    app.relaunch();
-  }
-  app.quit();
-}
-
-/**
- * Reset the default admin account (`admin` / `gentrification`) in-place:
- * useful when the operator can't log into the web UI. Keeps the rest of the
- * library intact — this only touches the admin row and its credential row.
- */
-async function resetAdminPassword(win: BrowserWindow): Promise<void> {
-  if (!db) {
-    await dialog.showMessageBox(win, {
-      type: 'error',
-      title: 'Database unavailable',
-      message: 'Cannot reset admin password: database is not open.',
-    });
-    return;
-  }
-  const confirm = await dialog.showMessageBox(win, {
-    type: 'warning',
-    buttons: ['Cancel', 'Reset admin password'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Reset admin password',
-    message: 'Reset the admin account to the default password?',
-    detail:
-      'Sets the user named "admin" back to the default password ' +
-      '"gentrification" and creates the account if it does not exist.\n\n' +
-      'Library, users, and other accounts are left untouched.',
-  });
-  if (confirm.response !== 1) return;
-
-  try {
-    const result = await resetDefaultAdmin(db);
-    await dialog.showMessageBox(win, {
-      type: 'info',
-      title: result.created ? 'Admin created' : 'Admin password reset',
-      message: result.created ? 'Admin account created.' : 'Admin password reset.',
-      detail: `Username: ${result.username}\nPassword: ${result.password}\n\nChange it after signing in.`,
-    });
-  } catch (err) {
-    await dialog.showMessageBox(win, {
-      type: 'error',
-      title: 'Reset failed',
-      message: 'Failed to reset the admin password.',
-      detail: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-function buildApplicationMenu(win: BrowserWindow): Menu {
-  return Menu.buildFromTemplate([
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Open',
-          accelerator: 'CmdOrCtrl+O',
-          click: async () => {
-            const result = await dialog.showOpenDialog(win, {
-              filters: [{ name: 'Supported Books and Comics', extensions: ['cbz', 'cbr', 'epub', 'pdf', 'mobi'] }],
-              properties: ['openFile'],
-            });
-            if (!result.canceled && result.filePaths.length > 0) {
-              openFileInWindow(result.filePaths[0]);
-            }
-          },
-        },
-        {
-          label: 'Open Recent',
-          submenu: buildRecentMenuItems(),
-        },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    },
-    {
-      label: 'Settings',
-      submenu: [
-        {
-          label: 'Web Server…',
-          accelerator: 'CmdOrCtrl+,',
-          click: () => {
-            win.webContents.send('open-settings');
-          },
-        },
-        { type: 'separator' },
-        {
-          label: 'Open Web UI in Browser',
-          enabled: false,
-          id: 'open-web-ui',
-          click: () => {
-            if (webServerRef.handle) {
-              shell.openExternal(webServerRef.handle.url);
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          label: 'Reset Admin Password…',
-          click: () => {
-            resetAdminPassword(win).catch((err) => {
-              console.error('[CB8] Reset admin password failed:', err);
-            });
-          },
-        },
-        {
-          label: 'Clear Database…',
-          click: () => {
-            clearDatabaseAndRelaunch(win).catch((err) => {
-              console.error('[CB8] Clear database failed:', err);
-            });
-          },
-        },
-      ],
-    },
-  ]);
+function menuContext(): MenuContext {
+  return {
+    getDb: () => db,
+    setDb: (next) => { db = next; },
+    webServerRef,
+    openFile: openFileInWindow,
+  };
 }
 
 const createWindow = (): void => {
@@ -274,7 +103,7 @@ const createWindow = (): void => {
     },
   });
 
-  Menu.setApplicationMenu(buildApplicationMenu(mainWindow));
+  Menu.setApplicationMenu(buildApplicationMenu(mainWindow, menuContext()));
 
   if (typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined') {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);

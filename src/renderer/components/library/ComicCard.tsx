@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import { CELL_WIDTH } from './types';
 import type { ComicEntry } from './types';
+import { useThumbnail } from './hooks/useThumbnail';
 
 interface ComicCardProps {
   comic: ComicEntry;
@@ -23,6 +24,8 @@ export const ComicCard = memo(function ComicCard({
   onDoubleClick,
   onCheckboxClick,
 }: ComicCardProps) {
+  const thumbnailUrl = useThumbnail(comic.id, comic.thumbnailVersion, comic.hasThumbnail);
+
   return (
     <div draggable
       onDragStart={(e) => onDragStart(e, comic.id)}
@@ -54,8 +57,8 @@ export const ComicCard = memo(function ComicCard({
           onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
           onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.opacity = '0'; }}
         >{isSelected ? '✓' : ''}</div>
-        {comic.thumbnailUrl ? (
-          <img src={comic.thumbnailUrl} alt={comic.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" decoding="async" />
+        {thumbnailUrl ? (
+          <img src={thumbnailUrl} alt={comic.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} loading="lazy" decoding="async" />
         ) : (
           <span style={{ color: '#555', fontSize: 40 }}>📖</span>
         )}

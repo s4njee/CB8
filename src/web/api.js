@@ -1,188 +1,295 @@
 /**
  * api.js — CB8 Web UI API client
- * Thin fetch wrappers for the /api/* endpoints.
+ *
+ * Thin fetch wrappers for the /api/* endpoints. Almost every call follows the
+ * same shape (URL + optional query + optional JSON body, parse JSON, throw on
+ * !ok with a message lifted from the response body), so a single `request()`
+ * helper covers the bulk of the file.
  */
 
 const API = '';  // same-origin
 
-export async function fetchComics(options = {}) {
-  const params = new URLSearchParams(
-    Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== '' && v !== null))
-  );
-  const res = await fetch(`${API}/api/comics?${params}`);
+// ---------------------------------------------------------------------------
+// Core helpers
+// ---------------------------------------------------------------------------
+
+class ApiError extends Error {
+  constructor(message, { status, code } = {}) {
+    super(message);
+    this.name = 'ApiError';
+    if (status != null) this.status = status;
+    if (code != null) this.code = code;
+  }
+}
+
+function buildQuery(params) {
+  if (!params) return '';
+  const filtered = Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== null);
+  if (filtered.length === 0) return '';
+  return `?${new URLSearchParams(Object.fromEntries(filtered)).toString()}`;
+}
+
+async function readErrorMessage(res, fallback) {
+  const body = await res.json().catch(() => ({}));
+  return body.message || body.error || fallback;
+}
+
+/**
+ * Perform a JSON-in / JSON-out request. Returns parsed JSON on success.
+ * Throws ApiError with .status (and .code if the server provided one) on
+ * any non-2xx response.
+ *
+ *   request('GET', '/api/comics', { query: { limit: 50 } })
+ *   request('POST', '/api/folders', { body: { name } })
+ *
+ * Pass `parse: 'none'` to skip JSON parsing on success (for endpoints whose
+ * body is empty or irrelevant). Pass `parseError: 'soft'` to fall back to
+ * `{ ok: true }` if a successful response has no body.
+ */
+async function request(method, path, opts = {}) {
+  const { query, body, credentials, parse = 'json', parseError, headers } = opts;
+  const init = {
+    method,
+    headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers },
+    credentials,
+  };
+  if (body !== undefined) init.body = JSON.stringify(body);
+
+  const res = await fetch(`${API}${path}${buildQuery(query)}`, init);
   if (!res.ok) {
-    const err = new Error(`API error ${res.status}`);
-    err.status = res.status;
-    throw err;
+    const fallback = `API error ${res.status}`;
+    const errBody = await res.json().catch(() => ({}));
+    const message = errBody.message || errBody.error || fallback;
+    throw new ApiError(message, { status: res.status, code: errBody.code });
+  }
+  if (parse === 'none') return undefined;
+  if (parseError === 'soft') {
+    return res.json().catch(() => ({ ok: true }));
   }
   return res.json();
 }
 
-export async function fetchComic(id) {
-  const res = await fetch(`${API}/api/comics/${id}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
+// Convenience wrappers — keep the call sites readable.
+const get = (path, opts) => request('GET', path, opts);
+const post = (path, opts) => request('POST', path, opts);
+const put = (path, opts) => request('PUT', path, opts);
+const del = (path, opts) => request('DELETE', path, opts);
+
+export { ApiError };
+
+// ---------------------------------------------------------------------------
+// Comics & libraries
+// ---------------------------------------------------------------------------
+
+export const fetchComics = (options = {}) => get('/api/comics', { query: options });
+export const fetchComic = (id) => get(`/api/comics/${id}`);
+export const deleteComic = (id) => del(`/api/comics/${id}`);
 
 export function thumbnailUrl(id, width) {
-  const q = width ? `?width=${width|0}` : '';
-  return `${API}/api/comics/${id}/thumbnail${q}`;
+  return `${API}/api/comics/${id}/thumbnail${width ? `?width=${width|0}` : ''}`;
 }
-
 export function pageUrl(id, page, width) {
-  const q = width ? `?width=${width|0}` : '';
-  return `${API}/api/comics/${id}/pages/${page}${q}`;
+  return `${API}/api/comics/${id}/pages/${page}${width ? `?width=${width|0}` : ''}`;
 }
-
 export function fileUrl(id) {
   return `${API}/api/comics/${id}/file`;
 }
 
-export async function fetchLibraries(mediaType) {
-  const params = mediaType ? `?mediaType=${mediaType}` : '';
-  const res = await fetch(`${API}/api/libraries${params}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
+export const fetchLibraries = (mediaType) =>
+  get('/api/libraries', { query: { mediaType } });
+export const createLibrary = (name, mediaType) =>
+  post('/api/libraries', { body: { name, mediaType } });
+export const renameLibrary = (id, name) =>
+  put(`/api/libraries/${id}`, { body: { name } });
+export const deleteLibrary = (id) =>
+  del(`/api/libraries/${id}`);
+export const addComicsToLibrary = (libraryId, comicIds) =>
+  post(`/api/libraries/${libraryId}/comics`, { body: { comicIds } });
+export const removeComicsFromLibrary = (libraryId, comicIds) =>
+  del(`/api/libraries/${libraryId}/comics`, { body: { comicIds } });
+export const fetchLibraryComics = (libraryId, options = {}) =>
+  get(`/api/libraries/${libraryId}/comics`, { query: options });
 
-export async function createLibrary(name, mediaType) {
-  const res = await fetch(`${API}/api/libraries`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, mediaType }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
+// ---------------------------------------------------------------------------
+// Folders
+// ---------------------------------------------------------------------------
 
-export async function addComicsToLibrary(libraryId, comicIds) {
-  const res = await fetch(`${API}/api/libraries/${libraryId}/comics`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comicIds }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
+export const fetchFolders = () => get('/api/folders');
+export const fetchFolderComics = (folderId, options = {}) =>
+  get(`/api/folders/${folderId}/comics`, { query: options });
+export const createFolder = (name, comicIds = []) =>
+  post('/api/folders', { body: { name, comicIds } });
+export const renameFolder = (id, name) =>
+  put(`/api/folders/${id}`, { body: { name } });
+export const deleteFolder = (id) =>
+  del(`/api/folders/${id}`);
+export const addComicsToFolder = (folderId, comicIds) =>
+  post(`/api/folders/${folderId}/comics`, { body: { comicIds } });
+export const removeComicsFromFolder = (folderId, comicIds) =>
+  del(`/api/folders/${folderId}/comics`, { body: { comicIds } });
 
-export async function fetchLibraryComics(libraryId, options = {}) {
-  const params = new URLSearchParams(
-    Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== '' && v !== null))
-  );
-  const res = await fetch(`${API}/api/libraries/${libraryId}/comics?${params}`);
-  if (!res.ok) {
-    const err = new Error(`API error ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
-  return res.json();
-}
+// ---------------------------------------------------------------------------
+// Tags
+// ---------------------------------------------------------------------------
 
-export async function fetchFolders() {
-  const res = await fetch(`${API}/api/folders`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
+export const fetchTags = () => get('/api/tags');
+export const setComicTags = (comicId, tags) =>
+  put(`/api/comics/${comicId}/tags`, { body: { tags } });
+export const renameTag = (oldName, newName) =>
+  put(`/api/tags/${encodeURIComponent(oldName)}`, { body: { newName } });
+export const deleteTag = (name) =>
+  del(`/api/tags/${encodeURIComponent(name)}`);
 
-export async function fetchFolderComics(folderId, options = {}) {
-  const params = new URLSearchParams(
-    Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined && v !== '' && v !== null))
-  );
-  const res = await fetch(`${API}/api/folders/${folderId}/comics?${params}`);
-  if (!res.ok) {
-    const err = new Error(`API error ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
-  return res.json();
-}
+// ---------------------------------------------------------------------------
+// Reading lists
+// ---------------------------------------------------------------------------
 
-export async function fetchTags() {
-  const res = await fetch(`${API}/api/tags`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
+export const fetchRecentlyRead = (limit = 20, mediaType) =>
+  get('/api/recently-read', { query: { limit, mediaType } });
+export const fetchContinueReading = (limit = 20, mediaType) =>
+  get('/api/continue-reading', { query: { limit, mediaType } });
 
-export async function fetchRecentlyRead(limit = 20, mediaType) {
-  const params = new URLSearchParams({ limit });
-  if (mediaType) params.set('mediaType', mediaType);
-  const res = await fetch(`${API}/api/recently-read?${params}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
+// ---------------------------------------------------------------------------
+// Progress / completion
+// ---------------------------------------------------------------------------
 
-export async function fetchContinueReading(limit = 20, mediaType) {
-  const params = new URLSearchParams({ limit });
-  if (mediaType) params.set('mediaType', mediaType);
-  const res = await fetch(`${API}/api/continue-reading?${params}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
+export const updateProgress = (id, page) =>
+  put(`/api/comics/${id}/progress`, { body: { page }, parse: 'none' });
+export const updateLocation = (id, location) =>
+  put(`/api/comics/${id}/progress`, { body: { location }, parse: 'none' });
+export const clearProgress = (comicId) =>
+  del(`/api/comics/${comicId}/progress`, { parse: 'none' });
+export const setCompleted = (comicId, completed) =>
+  put(`/api/comics/${comicId}/progress`, { body: { completed }, parse: 'none' });
 
-export async function updateProgress(id, page) {
-  await fetch(`${API}/api/comics/${id}/progress`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page }),
-  });
-}
+// ---------------------------------------------------------------------------
+// Auth (multi-user, better-auth backed)
+// ---------------------------------------------------------------------------
 
-export async function updateLocation(id, location) {
-  await fetch(`${API}/api/comics/${id}/progress`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ location }),
-  });
-}
-
-// --- Admin ---
-
-export async function adminHostInfo() {
-  const res = await fetch(`${API}/api/admin/host-info`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export async function adminSession() {
-  const res = await fetch(`${API}/api/admin/session`);
-  if (!res.ok) return { authenticated: false };
-  return res.json();
-}
-
-export async function adminLogin(password) {
-  const res = await fetch(`${API}/api/admin/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
-  });
-  return res.ok;
-}
-
-export async function adminLogout() {
-  await fetch(`${API}/api/admin/logout`, { method: 'POST' });
+export async function getSession() {
+  // Soft-fail to "unauthenticated" on any error so guests have a session
+  // shape they can pattern-match against.
+  try { return await get('/api/auth/session'); }
+  catch { return { authenticated: false }; }
 }
 
 /**
- * Pop the Electron native picker on the server host.
- * Returns { path: string | null } (null when cancelled).
+ * Sign in with username or email. better-auth has separate endpoints; we
+ * sniff '@' to pick.
  */
-export async function adminPickPath(kind) {
-  const res = await fetch(`${API}/api/admin/pick-path`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  return res.json();
+export async function login(identifier, password) {
+  const isEmail = identifier.includes('@');
+  const path = isEmail ? '/api/auth/sign-in/email' : '/api/auth/sign-in/username';
+  const body = isEmail ? { email: identifier, password } : { username: identifier, password };
+  return request('POST', path, { body, credentials: 'same-origin' });
 }
+
+export const logout = () =>
+  post('/api/auth/sign-out', { credentials: 'same-origin', parse: 'none' });
+
+export const signup = ({ email, password, username, name }) =>
+  post('/api/auth/sign-up/email', {
+    body: { email, password, username, name: name ?? username ?? email,
+      callbackURL: `${window.location.origin}/#/verified` },
+    credentials: 'same-origin',
+  });
+
+// Compat shim — older callers; will be removed once admin user-mgmt UI uses signup.
+export const register = (username, password) =>
+  signup({ email: `${username}@local`, password, username });
+
+export const requestPasswordReset = (email) =>
+  post('/api/auth/forget-password', { body: { email }, credentials: 'same-origin', parseError: 'soft' });
+export const resetPassword = (newPassword, token) =>
+  post('/api/auth/reset-password', { body: { newPassword, token }, credentials: 'same-origin', parseError: 'soft' });
+export const sendVerificationEmail = (email) =>
+  post('/api/auth/send-verification-email', { body: { email }, credentials: 'same-origin', parseError: 'soft' });
+
+// ---------------------------------------------------------------------------
+// Users (admin only)
+// ---------------------------------------------------------------------------
+
+export const getUsers = () => get('/api/users');
+export const createUser = (username, password, _isAdmin = false) => register(username, password);
+export const deleteUser = (id) => del(`/api/users/${id}`);
+export const setUserRole = (id, isAdmin) => put(`/api/users/${id}/role`, { body: { isAdmin } });
+
+// ---------------------------------------------------------------------------
+// Bookmarks
+// ---------------------------------------------------------------------------
+
+export async function getBookmarks(comicId) {
+  try { return await get(`/api/comics/${comicId}/bookmarks`); }
+  catch { return []; }
+}
+export const createBookmark = (comicId, page, note = null) =>
+  post(`/api/comics/${comicId}/bookmarks`, { body: { page, note } });
+export const updateBookmark = (comicId, bookmarkId, note) =>
+  put(`/api/comics/${comicId}/bookmarks/${bookmarkId}`, { body: { note } });
+export const deleteBookmark = (comicId, bookmarkId) =>
+  del(`/api/comics/${comicId}/bookmarks/${bookmarkId}`, { parse: 'none' });
+
+// ---------------------------------------------------------------------------
+// History / series / favorites
+// ---------------------------------------------------------------------------
+
+export const logHistory = (comicId, action, page = null) =>
+  post('/api/history', { body: { comicId, action, page }, parse: 'none' });
+export const getHistory = (offset = 0, limit = 50) =>
+  get('/api/history', { query: { offset, limit } });
+
+export const getSeries = () => get('/api/series');
+export const getSeriesComics = (name) => get(`/api/series/${encodeURIComponent(name)}/comics`);
+
+export const addFavorite = (comicId) =>
+  post(`/api/comics/${comicId}/favorite`, { parse: 'none' });
+export const removeFavorite = (comicId) =>
+  del(`/api/comics/${comicId}/favorite`, { parse: 'none' });
+
+// ---------------------------------------------------------------------------
+// Metadata + settings
+// ---------------------------------------------------------------------------
+
+export const searchMetadata = (comicId, query, sources) =>
+  get(`/api/comics/${comicId}/metadata-search`, {
+    query: { q: query, sources: sources?.length ? sources.join(',') : undefined },
+  });
+export const applyMetadata = (comicId, metadata) =>
+  put(`/api/comics/${comicId}/metadata`, { body: metadata });
+
+export const setGuestAccess = (enabled) =>
+  put('/api/settings/guest-access', { body: { enabled } });
+
+// ---------------------------------------------------------------------------
+// Admin (legacy + host-only)
+// ---------------------------------------------------------------------------
+
+export const adminHostInfo = () => get('/api/admin/host-info');
+export async function adminSession() {
+  try { return await get('/api/admin/session'); }
+  catch { return { authenticated: false }; }
+}
+export async function adminLogin(password) {
+  try { await post('/api/admin/login', { body: { password } }); return true; }
+  catch { return false; }
+}
+export const adminLogout = () =>
+  post('/api/admin/logout', { parse: 'none' });
+
+/** Pop the Electron native picker on the server host. */
+export const adminPickPath = (kind) => post('/api/admin/pick-path', { body: { kind } });
+
+/** List directory entries for path autocomplete. */
+export const adminListDir = (partialPath) =>
+  get('/api/admin/list-dir', { query: { path: partialPath } });
 
 /**
  * Start a server-side scan. `onProgress` is called with each
- * {type:'progress', phase, discovered, processed, currentFile} event.
- * Resolves with { added, errors } after the 'done' event.
+ * `{type:'progress', phase, discovered, processed, currentFile}` event.
+ * Resolves with `{ added, errors }` after the 'done' event.
+ *
+ * Streamed NDJSON response — handled directly because `request()` assumes
+ * a single JSON body.
  */
 export async function adminAddPath(targetPath, onProgress) {
   const res = await fetch(`${API}/api/admin/add-path`, {
@@ -191,8 +298,7 @@ export async function adminAddPath(targetPath, onProgress) {
     body: JSON.stringify({ path: targetPath }),
   });
   if (!res.ok || !res.body) {
-    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    throw new ApiError(await readErrorMessage(res, `HTTP ${res.status}`), { status: res.status });
   }
 
   const reader = res.body.getReader();
@@ -220,24 +326,11 @@ export async function adminAddPath(targetPath, onProgress) {
 }
 
 /**
- * List directory entries for path autocomplete. Filters to directories and
- * supported file types. Returns up to 50 matches.
- */
-export async function adminListDir(partialPath) {
-  const res = await fetch(`${API}/api/admin/list-dir?path=${encodeURIComponent(partialPath)}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
-/**
- * Upload a single file using a raw-body POST. Uses XHR because `fetch` has no
- * upload-progress events in browsers.
+ * Upload a single file with a raw-body POST. Uses XHR for upload-progress
+ * events (fetch can't report those in browsers).
  *
- * `relPath` may include forward-slash-separated subdirs (for folder drops).
- * Returns { added, skipped?, reason?, filePath } on success.
+ * `relPath` may include forward-slash-separated subdirs (folder drops).
+ * Returns `{ added, skipped?, reason?, filePath }` on success.
  */
 export function adminUploadFile(file, relPath, onProgress) {
   return new Promise((resolve, reject) => {
@@ -255,395 +348,11 @@ export function adminUploadFile(file, relPath, onProgress) {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(xhr.response || {});
       } else {
-        const msg = xhr.response?.error || `HTTP ${xhr.status}`;
-        reject(new Error(msg));
+        reject(new ApiError(xhr.response?.error || `HTTP ${xhr.status}`, { status: xhr.status }));
       }
     };
     xhr.onerror = () => reject(new Error('Network error'));
     xhr.onabort = () => reject(new Error('Upload aborted'));
     xhr.send(file);
   });
-}
-
-// --- Library management ---
-
-export async function renameLibrary(id, name) {
-  const res = await fetch(`${API}/api/libraries/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function deleteLibrary(id) {
-  const res = await fetch(`${API}/api/libraries/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function removeComicsFromLibrary(libraryId, comicIds) {
-  const res = await fetch(`${API}/api/libraries/${libraryId}/comics`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comicIds }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-// --- Folder management ---
-
-export async function createFolder(name, comicIds = []) {
-  const res = await fetch(`${API}/api/folders`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, comicIds }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function renameFolder(id, name) {
-  const res = await fetch(`${API}/api/folders/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function deleteFolder(id) {
-  const res = await fetch(`${API}/api/folders/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function addComicsToFolder(folderId, comicIds) {
-  const res = await fetch(`${API}/api/folders/${folderId}/comics`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comicIds }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function removeComicsFromFolder(folderId, comicIds) {
-  const res = await fetch(`${API}/api/folders/${folderId}/comics`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comicIds }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-// --- Tag management ---
-
-export async function setComicTags(comicId, tags) {
-  const res = await fetch(`${API}/api/comics/${comicId}/tags`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tags }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function renameTag(oldName, newName) {
-  const res = await fetch(`${API}/api/tags/${encodeURIComponent(oldName)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newName }),
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function deleteTag(name) {
-  const res = await fetch(`${API}/api/tags/${encodeURIComponent(name)}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `API error ${res.status}`);
-  return res.json();
-}
-
-export async function deleteComic(id) {
-  const res = await fetch(`${API}/api/comics/${id}`, { method: 'DELETE' });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-}
-
-// --- Auth (multi-user) ---
-
-export async function getSession() {
-  const res = await fetch(`${API}/api/auth/session`);
-  if (!res.ok) return { authenticated: false };
-  return res.json();
-}
-
-/**
- * Sign in. `identifier` can be either a username or an email — we sniff on
- * '@' and route to better-auth's matching endpoint. Errors from better-auth
- * come back as `{ message }`; legacy shape uses `{ error }`.
- */
-export async function login(identifier, password) {
-  const isEmail = identifier.includes('@');
-  const path = isEmail ? '/api/auth/sign-in/email' : '/api/auth/sign-in/username';
-  const body = isEmail ? { email: identifier, password } : { username: identifier, password };
-  const res = await fetch(`${API}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    credentials: 'same-origin',
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const e = new Error(body.message || body.error || `Login failed (${res.status})`);
-    e.code = body.code || null;
-    e.status = res.status;
-    throw e;
-  }
-  return res.json();
-}
-
-export async function logout() {
-  await fetch(`${API}/api/auth/sign-out`, { method: 'POST', credentials: 'same-origin' });
-}
-
-/**
- * Create a new account. Email is required; username is optional but
- * recommended (enables username-based login via the better-auth username
- * plugin).
- */
-export async function signup({ email, password, username, name }) {
-  const res = await fetch(`${API}/api/auth/sign-up/email`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email,
-      password,
-      username,
-      name: name ?? username ?? email,
-      // Where the server should send the user after they click the
-      // verification link in their email.
-      callbackURL: `${window.location.origin}/#/verified`,
-    }),
-    credentials: 'same-origin',
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || err.error || `Sign-up failed (${res.status})`);
-  }
-  return res.json();
-}
-
-// Kept as a compatibility shim for older callers — will be removed once the
-// admin-side user management UI is wired to `signup`.
-export async function register(username, password) {
-  return signup({ email: `${username}@local`, password, username });
-}
-
-/** Ask the server to email a password-reset link for the given address. */
-export async function requestPasswordReset(email) {
-  const res = await fetch(`${API}/api/auth/forget-password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
-    credentials: 'same-origin',
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || err.error || `Reset failed (${res.status})`);
-  }
-  return res.json().catch(() => ({ ok: true }));
-}
-
-/** Complete a password reset using the token from the emailed link. */
-export async function resetPassword(newPassword, token) {
-  const res = await fetch(`${API}/api/auth/reset-password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newPassword, token }),
-    credentials: 'same-origin',
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || err.error || `Reset failed (${res.status})`);
-  }
-  return res.json().catch(() => ({ ok: true }));
-}
-
-/** Re-send the verification email. Used when a user tries to sign in but isn't verified yet. */
-export async function sendVerificationEmail(email) {
-  const res = await fetch(`${API}/api/auth/send-verification-email`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
-    credentials: 'same-origin',
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || err.error || `Could not send verification email (${res.status})`);
-  }
-  return res.json().catch(() => ({ ok: true }));
-}
-
-// --- Users (admin only) ---
-
-export async function getUsers() {
-  const res = await fetch(`${API}/api/users`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export async function createUser(username, password, isAdmin = false) {
-  return register(username, password, isAdmin);
-}
-
-export async function deleteUser(id) {
-  const res = await fetch(`${API}/api/users/${id}`, { method: 'DELETE' });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `API error ${res.status}`);
-  }
-  return res.json();
-}
-
-export async function setUserRole(id, isAdmin) {
-  const res = await fetch(`${API}/api/users/${id}/role`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ isAdmin }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `API error ${res.status}`);
-  }
-  return res.json();
-}
-
-// --- Progress ---
-
-export async function clearProgress(comicId) {
-  await fetch(`${API}/api/comics/${comicId}/progress`, { method: 'DELETE' });
-}
-
-export async function setCompleted(comicId, completed) {
-  await fetch(`${API}/api/comics/${comicId}/progress`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ completed }),
-  });
-}
-
-// --- Bookmarks ---
-
-export async function getBookmarks(comicId) {
-  const res = await fetch(`${API}/api/comics/${comicId}/bookmarks`);
-  if (!res.ok) return [];
-  return res.json();
-}
-
-export async function createBookmark(comicId, page, note = null) {
-  const res = await fetch(`${API}/api/comics/${comicId}/bookmarks`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page, note }),
-  });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export async function updateBookmark(comicId, bookmarkId, note) {
-  const res = await fetch(`${API}/api/comics/${comicId}/bookmarks/${bookmarkId}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ note }),
-  });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export async function deleteBookmark(comicId, bookmarkId) {
-  await fetch(`${API}/api/comics/${comicId}/bookmarks/${bookmarkId}`, { method: 'DELETE' });
-}
-
-// --- History ---
-
-export async function logHistory(comicId, action, page = null) {
-  await fetch(`${API}/api/history`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comicId, action, page }),
-  });
-}
-
-export async function getHistory(offset = 0, limit = 50) {
-  const res = await fetch(`${API}/api/history?offset=${offset}&limit=${limit}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-// --- Series ---
-
-export async function getSeries() {
-  const res = await fetch(`${API}/api/series`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export async function getSeriesComics(name) {
-  const res = await fetch(`${API}/api/series/${encodeURIComponent(name)}/comics`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-// --- Favorites ---
-
-export async function addFavorite(comicId) {
-  await fetch(`${API}/api/comics/${comicId}/favorite`, { method: 'POST' });
-}
-
-export async function removeFavorite(comicId) {
-  await fetch(`${API}/api/comics/${comicId}/favorite`, { method: 'DELETE' });
-}
-
-// --- Metadata ---
-
-export async function searchMetadata(comicId, query, sources) {
-  const params = new URLSearchParams({ q: query });
-  if (sources?.length) params.set('sources', sources.join(','));
-  const res = await fetch(`${API}/api/comics/${comicId}/metadata-search?${params}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-export async function applyMetadata(comicId, metadata) {
-  const res = await fetch(`${API}/api/comics/${comicId}/metadata`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(metadata),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `API error ${res.status}`);
-  }
-  return res.json();
-}
-
-// --- Settings ---
-
-export async function setGuestAccess(enabled) {
-  const res = await fetch(`${API}/api/settings/guest-access`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
 }

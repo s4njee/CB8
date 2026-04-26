@@ -406,6 +406,8 @@ body.admin-authenticated .sidebar-add-btn { display: inline-flex; }
   backdrop-filter: blur(4px);
 }
 .card-badge.book { color: #a3cfff; }
+.card-badge.comic { color: #93c5fd; }
+.card-badge.folder { color: #93c5fd; }
 
 .card-fav-heart {
   position: absolute;

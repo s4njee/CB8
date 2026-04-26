@@ -6,7 +6,7 @@
  */
 
 import Database from 'better-sqlite3';
-import type { ComicRecord, QueryOptions, QueryResult } from '../shared/types';
+import type { MediaRecord, QueryOptions, QueryResult } from '../shared/types';
 import { openOrRecreate } from './db/schema';
 import * as appMeta from './db/appMeta';
 import * as tags from './db/tags';
@@ -38,10 +38,10 @@ export class LibraryDatabase {
   setAppMeta(key: string, value: string): void { appMeta.setAppMeta(this.db, key, value); }
 
   // --- comics ---
-  addComic(record: Omit<ComicRecord, 'id' | 'dateAdded'>): ComicRecord { return comics.addComic(this.db, record); }
+  addComic(record: Omit<MediaRecord, 'id' | 'dateAdded'>): MediaRecord { return comics.addComic(this.db, record); }
   removeComics(ids: number[]): void { comics.removeComics(this.db, ids); }
   isDismissed(filePath: string): boolean { return comics.isDismissed(this.db, filePath); }
-  getComic(id: number): ComicRecord | null { return comics.getComic(this.db, id); }
+  getComic(id: number): MediaRecord | null { return comics.getComic(this.db, id); }
   comicExistsByPath(filePath: string): boolean { return comics.comicExistsByPath(this.db, filePath); }
   updateCoverThumbnailByPath(filePath: string, coverThumbnail: Buffer | null): void {
     comics.updateCoverThumbnailByPath(this.db, filePath, coverThumbnail);
@@ -50,17 +50,18 @@ export class LibraryDatabase {
     comics.updatePageCountByPath(this.db, filePath, pageCount);
   }
   queryComics(options: QueryOptions = {}): QueryResult { return comics.queryComics(this.db, options); }
-  getComicByPath(filePath: string): ComicRecord | null { return comics.getComicByPath(this.db, filePath); }
+  getComicByPath(filePath: string): MediaRecord | null { return comics.getComicByPath(this.db, filePath); }
+  getCoverThumbnail(comicId: number): Buffer | null { return comics.getCoverThumbnail(this.db, comicId); }
   updateReadingProgress(comicId: number, pageIndex: number): void {
     comics.updateReadingProgress(this.db, comicId, pageIndex);
   }
   updateReadingLocation(comicId: number, location: string): void {
     comics.updateReadingLocation(this.db, comicId, location);
   }
-  getRecentlyRead(limit: number = 10, mediaType?: 'comic' | 'book'): ComicRecord[] {
+  getRecentlyRead(limit: number = 10, mediaType?: 'comic' | 'book'): MediaRecord[] {
     return comics.getRecentlyRead(this.db, limit, mediaType);
   }
-  getContinueReading(limit: number = 10, mediaType?: 'comic' | 'book'): ComicRecord[] {
+  getContinueReading(limit: number = 10, mediaType?: 'comic' | 'book'): MediaRecord[] {
     return comics.getContinueReading(this.db, limit, mediaType);
   }
   setComicSeries(comicId: number, seriesName: string | null, volumeNumber: number | null, chapterNumber: number | null): void {
@@ -69,7 +70,7 @@ export class LibraryDatabase {
   getAllSeries(): { name: string; count: number; coverComicId: number | null }[] {
     return comics.getAllSeries(this.db);
   }
-  getSeriesComics(name: string): ComicRecord[] { return comics.getSeriesComics(this.db, name); }
+  getSeriesComics(name: string): MediaRecord[] { return comics.getSeriesComics(this.db, name); }
   updateComicMetadata(
     comicId: number,
     fields: Parameters<typeof comics.updateComicMetadata>[2],
@@ -156,10 +157,10 @@ export class LibraryDatabase {
   getUserProgress(userId: number, comicId: number) {
     return progress.getUserProgress(this.db, userId, comicId);
   }
-  getRecentlyReadByUser(userId: number, limit: number, mediaType?: 'comic' | 'book'): ComicRecord[] {
+  getRecentlyReadByUser(userId: number, limit: number, mediaType?: 'comic' | 'book'): MediaRecord[] {
     return progress.getRecentlyReadByUser(this.db, userId, limit, mediaType);
   }
-  getContinueReadingByUser(userId: number, limit: number, mediaType?: 'comic' | 'book'): ComicRecord[] {
+  getContinueReadingByUser(userId: number, limit: number, mediaType?: 'comic' | 'book'): MediaRecord[] {
     return progress.getContinueReadingByUser(this.db, userId, limit, mediaType);
   }
 

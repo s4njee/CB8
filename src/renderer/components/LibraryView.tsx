@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { isSupportedFile } from '../../shared/dropValidator';
 import type { FilterPreset } from '../../shared/types';
 import { parseFilterPreset } from '../../shared/filterLogic';
 import { ContinueReadingShelf } from './ContinueReadingShelf';
@@ -17,40 +16,28 @@ import { useScanProgress } from './library/hooks/useScanProgress';
 import { useLibraryQuery } from './library/hooks/useLibraryQuery';
 import { useLibraryFilters } from './library/hooks/useLibraryFilters';
 import { useLibrarySelection } from './library/hooks/useLibrarySelection';
+import { useDetailsModal } from './library/hooks/useDetailsModal';
+import { useFolderContextMenu } from './library/hooks/useFolderContextMenu';
+import { useDragDropFiles } from './library/hooks/useDragDropFiles';
+import { useComicContextMenu } from './library/hooks/useComicContextMenu';
 import {
-  CELL_WIDTH, GAP, PAGE_SIZE, ROW_HEIGHT,
+  CELL_WIDTH, GAP, ROW_HEIGHT,
   type ComicEntry, type FolderEntry,
-  type ComicContextMenuState, type FolderContextMenuState,
+  type ComicContextMenuState,
 } from './library/types';
 import {
-  addComicFiles,
-  addComicsToFolder,
-  addComicsToLibrary,
-  addFoldersToLibrary,
-  createLibrary,
-  createFolder,
-  deleteFolder,
-  getComicByPath,
-  getPathForFile,
   getFolders,
-  getLibraries,
   openDirectoryDialog,
-  renameFolder,
-  removeComics,
   removeComicsFromLibrary,
   removeComicsFromFolder,
   refreshBookMetadata,
   scanDirectory,
   scanBooksDirectory,
   cancelScan,
-  classifyPaths,
   getAllTags,
   getAppMeta,
   setAppMeta,
 } from '../ipcClient';
-
-// PAGE_SIZE is imported above but not used directly in this file after hook extraction
-void PAGE_SIZE;
 
 interface Props {
   activeLibraryId: number | null;
@@ -71,23 +58,13 @@ export const LibraryView: React.FC<Props> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [scanning, setScanning] = useState(false);
   const { scanProgress, setScanProgress } = useScanProgress();
-  const [dragOver, setDragOver] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [folderDropTargetId, setFolderDropTargetId] = useState<number | null>(null);
-  const [contextMenu, setContextMenu] = useState<ComicContextMenuState | null>(null);
-  const [folderContextMenu, setFolderContextMenu] = useState<FolderContextMenuState | null>(null);
-  const [contextCreateMode, setContextCreateMode] = useState<'library' | 'folder' | null>(null);
-  const [contextCreateName, setContextCreateName] = useState('');
-  const [contextCreateError, setContextCreateError] = useState<string | null>(null);
-  const [contextCreating, setContextCreating] = useState(false);
-  const [detailsComic, setDetailsComic] = useState<ComicEntry | null>(null);
-  const [detailsLoading, setDetailsLoading] = useState(false);
-  const [renamingFolder, setRenamingFolder] = useState(false);
-  const [folderRenameName, setFolderRenameName] = useState('');
-  const [folderRenameError, setFolderRenameError] = useState<string | null>(null);
+  // Drag-drop state + handlers come from useDragDropFiles below (instantiated
+  // after loadInitial is in scope).
+  // contextMenu / contextCreate* state come from useComicContextMenu below.
+  const { detailsComic, setDetailsComic, detailsLoading, setDetailsLoading, closeDetails } = useDetailsModal();
   const [columnCount, setColumnCount] = useState(4);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const thumbnailUrls = useRef<Set<string>>(new Set());
+  const folderThumbnailUrls = useRef<Set<string>>(new Set());
   const activeFolderRef = useRef<{ id: number; name: string } | null>(activeFolder);
   activeFolderRef.current = activeFolder;
 
@@ -111,7 +88,7 @@ export const LibraryView: React.FC<Props> = ({
   // --- Query hook ---
   const {
     comics, folders, totalCount, loadingMore, hasMore,
-    loadInitial, loadMore, setComics, setFolders, setTotalCount, currentSearch,
+    loadInitial, loadMore, setComics, setTotalCount,
   } = useLibraryQuery({
     activeFolder, activeLibraryId, activeView,
     sortBy, sortOrder, readStatus, fileExt, filterTag,
@@ -128,21 +105,88 @@ export const LibraryView: React.FC<Props> = ({
     onSelectionChange,
   });
 
-  // Sync external activeFolderId prop with internal activeFolder state
+  // --- Folder context menu hook ---
+  const {
+    folderContextMenu,
+    setFolderContextMenu,
+    renamingFolder,
+    setRenamingFolder,
+    folderRenameName,
+    setFolderRenameName,
+    folderRenameError,
+    closeFolderContextMenu,
+    handleSubmitRenameFolder,
+    handleDeleteFolder,
+  } = useFolderContextMenu({
+    activeFolder,
+    setActiveFolder,
+    reload: () => loadInitial(searchQuery),
+    onChanged: onComicsChanged,
+    confirm,
+  });
+
+  // --- Drag-drop hook ---
+  const {
+    dragOver, adding, folderDropTargetId,
+    handleDragOver, handleDragLeave, handleDrop,
+    handleFolderDragOver, handleFolderDragLeave, handleFolderDrop,
+  } = useDragDropFiles({
+    activeLibraryId, activeView, searchQuery,
+    reload: loadInitial,
+    onSelectionChange,
+    onComicsChanged,
+  });
+
+  // --- Comic context menu hook ---
+  const {
+    contextMenu, setContextMenu,
+    contextCreateMode, setContextCreateMode,
+    contextCreateName, setContextCreateName,
+    contextCreateError, setContextCreateError,
+    contextCreating,
+    openContextMenu: handleComicContextMenu,
+    closeContextMenu,
+    handleContextAddToLibrary, handleContextCreateLibrary,
+    handleContextAddToFolder, handleContextCreateFolder,
+    handleContextDelete,
+  } = useComicContextMenu({
+    selectedIds, onSelectionChange,
+    activeLibraryId, activeView, activeFolderRef,
+    reload: () => loadInitial(searchQuery),
+    onChanged: onComicsChanged,
+    confirm,
+  });
+
   useEffect(() => {
-    if (activeFolderId != null) {
-      // If the folder ID changed from the sidebar, update internal state
-      if (activeFolder?.id !== activeFolderId) {
-        getFolders().then((allFolders) => {
-          const match = allFolders.find((f) => f.id === activeFolderId);
-          if (match) setActiveFolder({ id: match.id, name: match.name });
-        }).catch(() => {});
+    let cancelled = false;
+
+    if (activeFolderId == null) {
+      if (activeFolderRef.current != null) {
+        setActiveFolder(null);
       }
-    } else if (activeFolder != null && activeFolderId == null) {
-      // Sidebar cleared the folder selection
-      setActiveFolder(null);
+      return undefined;
     }
-  }, [activeFolderId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (activeFolderRef.current?.id === activeFolderId) {
+      return undefined;
+    }
+
+    getFolders()
+      .then((allFolders) => {
+        if (cancelled) return;
+        const match = allFolders.find((f) => f.id === activeFolderId);
+        if (match) {
+          setActiveFolder({ id: match.id, name: match.name });
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to sync active folder:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFolderId]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -178,17 +222,17 @@ export const LibraryView: React.FC<Props> = ({
     overscan: 1,
   });
 
-  // URL cleanup effect for thumbnails
+  // URL cleanup effect for folder thumbnails.
   useEffect(() => {
-    const currentUrls = new Set(comics.map((comic) => comic.thumbnailUrl).filter((url): url is string => url !== null));
-    for (const url of thumbnailUrls.current) {
+    const currentUrls = new Set(folders.map((folder) => folder.thumbnailUrl).filter((url): url is string => url !== null));
+    for (const url of folderThumbnailUrls.current) {
       if (!currentUrls.has(url)) URL.revokeObjectURL(url);
     }
-    thumbnailUrls.current = currentUrls;
-  }, [comics]);
+    folderThumbnailUrls.current = currentUrls;
+  }, [folders]);
 
   useEffect(() => () => {
-    for (const url of thumbnailUrls.current) URL.revokeObjectURL(url);
+    for (const url of folderThumbnailUrls.current) URL.revokeObjectURL(url);
   }, []);
 
   useEffect(() => {
@@ -238,12 +282,8 @@ export const LibraryView: React.FC<Props> = ({
     if (!contextMenu && !folderContextMenu) return;
 
     const close = () => {
-      setContextMenu(null);
-      setFolderContextMenu(null);
-      setContextCreateMode(null);
-      setContextCreateName('');
-      setContextCreateError(null);
-      setContextCreating(false);
+      closeContextMenu();
+      closeFolderContextMenu();
     };
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
@@ -318,12 +358,12 @@ export const LibraryView: React.FC<Props> = ({
   };
 
   const handleFolderContextMenu = (e: React.MouseEvent, folder: FolderEntry) => {
+    // Close the comic context menu first; the hook handles its own state.
+    setContextMenu(null);
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu(null);
     setRenamingFolder(false);
     setFolderRenameName(folder.name);
-    setFolderRenameError(null);
     setFolderContextMenu({ x: e.clientX, y: e.clientY, folder });
   };
 
@@ -333,244 +373,12 @@ export const LibraryView: React.FC<Props> = ({
     scrollRef.current?.scrollTo({ top: 0 });
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault(); e.stopPropagation();
-    if (e.dataTransfer.types.includes('Files')) { e.dataTransfer.dropEffect = 'copy'; setDragOver(true); return; }
-    e.dataTransfer.dropEffect = 'none';
-  };
-  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); };
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault(); e.stopPropagation(); setDragOver(false);
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    const droppedPaths = droppedFiles
-      .map((file) => getPathForFile(file))
-      .filter((p) => p.length > 0);
-    if (!droppedPaths.length) return;
-    setAdding(true);
-    try {
-      const { files, directories } = await classifyPaths(droppedPaths);
-      for (const dir of directories) {
-        try { await scanDirectory(dir); }
-        catch (err) { console.error('Failed to scan dropped folder (comics):', dir, err); }
-        try { await scanBooksDirectory(dir); }
-        catch (err) { console.error('Failed to scan dropped folder (books):', dir, err); }
-      }
-      const supportedFiles = files.filter((p) => isSupportedFile(p.split(/[\\/]/).pop() ?? ''));
-      let result: Awaited<ReturnType<typeof addComicFiles>> | undefined;
-      if (supportedFiles.length) {
-        result = await addComicFiles(supportedFiles);
-        if (result?.errors.length) console.error('Failed to add some comics:', result.errors);
-      }
-      if (activeLibraryId != null && supportedFiles.length) {
-        const records = await Promise.all(supportedFiles.map((filePath) => getComicByPath(filePath)));
-        const matchingIds = records.flatMap((record) => {
-          if (!record) return [];
-          const expectedMediaType = activeView === 'all' ? null : (activeView === 'books' ? 'book' : 'comic');
-          return expectedMediaType === null || record.mediaType === expectedMediaType ? [record.id] : [];
-        });
-        if (matchingIds.length > 0) {
-          await addComicsToLibrary(activeLibraryId, Array.from(new Set(matchingIds)));
-        }
-      }
-      await loadInitial(searchQuery);
-      if (directories.length || (result?.added ?? 0) > 0) onComicsChanged();
-    } catch (err) { console.error('Failed to add dropped files:', err); }
-    finally { setAdding(false); }
-  };
+  // handleDragOver / handleDragLeave / handleDrop come from useDragDropFiles above.
 
-  const handleComicContextMenu = useCallback(async (e: React.MouseEvent, comic: ComicEntry) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const comicIds = selectedIds.has(comic.id) ? Array.from(selectedIds) : [comic.id];
-    if (!selectedIds.has(comic.id)) {
-      onSelectionChange(new Set([comic.id]));
-    }
-
-    setContextCreateMode(null);
-    setContextCreateName('');
-    setContextCreateError(null);
-    setContextCreating(false);
-
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      comic,
-      comicIds,
-      libraries: [],
-      folders: [],
-      loading: true,
-    });
-
-    try {
-      const currentActiveFolder = activeFolderRef.current;
-      const [libraries, folderSummaries] = await Promise.all([getLibraries(activeView === 'books' ? 'book' : 'comic'), getFolders()]);
-      setContextMenu((current) => {
-        if (!current || current.comic.id !== comic.id) return current;
-        return {
-          ...current,
-          libraries,
-          folders: folderSummaries
-            .filter((folder) => folder.id !== currentActiveFolder?.id)
-            .map((folder) => ({
-              id: folder.id,
-              name: folder.name,
-              comicCount: folder.comicCount,
-              thumbnailUrl: null,
-            })),
-          loading: false,
-        };
-      });
-    } catch (err) {
-      console.error('Failed to load context menu data:', err);
-      setContextMenu((current) => current ? { ...current, loading: false } : current);
-    }
-  }, [activeView, onSelectionChange, selectedIds]);
-
-  const closeContextMenu = () => {
-    setContextMenu(null);
-    setContextCreateMode(null);
-    setContextCreateName('');
-    setContextCreateError(null);
-    setContextCreating(false);
-  };
-  const closeFolderContextMenu = () => {
-    setFolderContextMenu(null);
-    setRenamingFolder(false);
-    setFolderRenameName('');
-    setFolderRenameError(null);
-  };
-
-  const handleSubmitRenameFolder = async () => {
-    if (!folderContextMenu) return;
-    const trimmed = folderRenameName.trim();
-    if (!trimmed || trimmed === folderContextMenu.folder.name) {
-      closeFolderContextMenu();
-      return;
-    }
-
-    try {
-      setFolderRenameError(null);
-      await renameFolder(folderContextMenu.folder.id, trimmed);
-      if (activeFolder?.id === folderContextMenu.folder.id) {
-        setActiveFolder({ id: folderContextMenu.folder.id, name: trimmed });
-      }
-      closeFolderContextMenu();
-      await loadInitial(searchQuery);
-    } catch (err) {
-      console.error('Failed to rename folder:', err);
-      setFolderRenameError(err instanceof Error ? err.message : 'Failed to rename folder.');
-    }
-  };
-
-  const handleDeleteFolder = async () => {
-    if (!folderContextMenu) return;
-    const { folder } = folderContextMenu;
-    const confirmed = await confirm(
-      `Delete virtual folder "${folder.name}"?\n\nThis only removes the folder grouping. Comics and image files stay in the library.`
-    );
-    if (!confirmed) return;
-
-    try {
-      await deleteFolder(folder.id);
-      if (activeFolder?.id === folder.id) {
-        setActiveFolder(null);
-      }
-      closeFolderContextMenu();
-      await loadInitial(searchQuery);
-      onComicsChanged();
-    } catch (err) {
-      console.error('Failed to delete folder:', err);
-      setFolderRenameError(err instanceof Error ? err.message : 'Failed to delete folder.');
-    }
-  };
-
-  const handleContextAddToLibrary = async (libraryId: number) => {
-    if (!contextMenu) return;
-    await addComicsToLibrary(libraryId, contextMenu.comicIds);
-    closeContextMenu();
-    onComicsChanged();
-  };
-
-  const handleContextCreateLibrary = async () => {
-    if (!contextMenu) return;
-    const name = contextCreateName.trim();
-    if (!name) return;
-
-    setContextCreating(true);
-    setContextCreateError(null);
-    try {
-      const library = await createLibrary(name, activeView === 'books' ? 'book' : 'comic');
-      if (!library) {
-        setContextCreateError('Library was not created.');
-        setContextCreating(false);
-        return;
-      }
-      await addComicsToLibrary(library.id, contextMenu.comicIds);
-      closeContextMenu();
-      onComicsChanged();
-    } catch (err) {
-      console.error('Failed to create library:', err);
-      setContextCreateError(err instanceof Error ? err.message : 'Failed to create library.');
-      setContextCreating(false);
-    }
-  };
-
-  const handleContextAddToFolder = async (folderId: number) => {
-    if (!contextMenu) return;
-    await addComicsToFolder(folderId, contextMenu.comicIds);
-    closeContextMenu();
-    onSelectionChange(new Set());
-    await loadInitial(searchQuery);
-  };
-
-  const handleContextCreateFolder = async () => {
-    if (!contextMenu) return;
-    const name = contextCreateName.trim();
-    if (!name) return;
-
-    setContextCreating(true);
-    setContextCreateError(null);
-    try {
-      const folder = await createFolder(name, contextMenu.comicIds);
-      if (!folder) {
-        setContextCreateError('Virtual folder was not created.');
-        setContextCreating(false);
-        return;
-      }
-      if (activeLibraryId != null) {
-        await addFoldersToLibrary(activeLibraryId, [folder.id]);
-      }
-      closeContextMenu();
-      onSelectionChange(new Set());
-      await loadInitial(searchQuery);
-    } catch (err) {
-      console.error('Failed to create folder:', err);
-      setContextCreateError(err instanceof Error ? err.message : 'Failed to create folder.');
-      setContextCreating(false);
-    }
-  };
-
-  const handleContextDelete = async () => {
-    if (!contextMenu) return;
-    const count = contextMenu.comicIds.length;
-    if (activeLibraryId != null) {
-      await removeComicsFromLibrary(activeLibraryId, contextMenu.comicIds);
-      closeContextMenu();
-      onSelectionChange(new Set());
-      await loadInitial(searchQuery);
-      onComicsChanged();
-      return;
-    }
-
-    const confirmed = await confirm(`Delete ${count} comic${count !== 1 ? 's' : ''} from the database?\n\nFiles stay on disk, but future scans will skip these paths.`);
-    if (!confirmed) return;
-    await removeComics(contextMenu.comicIds);
-    closeContextMenu();
-    onSelectionChange(new Set());
-    await loadInitial(searchQuery);
-    onComicsChanged();
-  };
+  // handleComicContextMenu / closeContextMenu / handleContextAddToLibrary /
+  // handleContextCreateLibrary / handleContextAddToFolder /
+  // handleContextCreateFolder / handleContextDelete come from
+  // useComicContextMenu above.
 
   const handleContextDetails = async () => {
     if (!contextMenu) return;
@@ -601,38 +409,7 @@ export const LibraryView: React.FC<Props> = ({
     }
   };
 
-  const handleFolderDragOver = (e: React.DragEvent, folderId: number) => {
-    if (!e.dataTransfer.types.includes('application/comic-ids')) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'link';
-    setFolderDropTargetId(folderId);
-  };
-
-  const handleFolderDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setFolderDropTargetId(null);
-  };
-
-  const handleFolderDrop = async (e: React.DragEvent, folder: FolderEntry) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setFolderDropTargetId(null);
-
-    const data = e.dataTransfer.getData('application/comic-ids');
-    if (!data) return;
-
-    try {
-      const comicIds = JSON.parse(data) as number[];
-      if (!Array.isArray(comicIds) || comicIds.length === 0) return;
-      await addComicsToFolder(folder.id, comicIds);
-      onSelectionChange(new Set());
-      await loadInitial(searchQuery);
-    } catch (err) {
-      console.error(`Failed to add comics to folder "${folder.name}":`, err);
-    }
-  };
+  // handleFolderDragOver / Leave / Drop come from useDragDropFiles above.
 
   const handleRemoveFromLibrary = async () => {
     if (activeLibraryId == null || selectedIds.size === 0) return;
@@ -853,7 +630,7 @@ export const LibraryView: React.FC<Props> = ({
         <DetailsModal
           comic={detailsComic}
           loading={detailsLoading}
-          onClose={() => setDetailsComic(null)}
+          onClose={closeDetails}
         />
       )}
       {confirmModal}

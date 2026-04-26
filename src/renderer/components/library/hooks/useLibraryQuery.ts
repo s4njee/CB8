@@ -29,9 +29,7 @@ interface UseLibraryQueryResult {
   loadInitial: (search?: string) => Promise<void>;
   loadMore: () => Promise<void>;
   setComics: React.Dispatch<React.SetStateAction<ComicEntry[]>>;
-  setFolders: React.Dispatch<React.SetStateAction<FolderEntry[]>>;
   setTotalCount: React.Dispatch<React.SetStateAction<number>>;
-  currentSearch: React.MutableRefObject<string>;
 }
 
 export function useLibraryQuery(params: UseLibraryQueryParams): UseLibraryQueryResult {
@@ -68,7 +66,8 @@ export function useLibraryQuery(params: UseLibraryQueryParams): UseLibraryQueryR
     const entries: ComicEntry[] = result.records.map((rec) => ({
       id: rec.id, title: rec.title, pageCount: rec.pageCount,
       fileSize: rec.fileSize, filePath: rec.filePath,
-      thumbnailUrl: parseThumb(rec.coverThumbnail),
+      hasThumbnail: rec.hasThumbnail ?? rec.coverThumbnail != null,
+      thumbnailVersion: rec.thumbnailVersion ?? (rec.coverThumbnail?.byteLength ?? 0),
       mediaType: rec.mediaType,
     }));
     return { entries, total: result.totalCount };
@@ -128,8 +127,6 @@ export function useLibraryQuery(params: UseLibraryQueryParams): UseLibraryQueryR
     loadInitial,
     loadMore,
     setComics,
-    setFolders,
     setTotalCount,
-    currentSearch,
   };
 }

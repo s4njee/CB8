@@ -1,4 +1,4 @@
-import type { QueryOptions, QueryResult, ScanProgress } from './types';
+import type { QueryOptions, QueryResult, ScanProgress, MediaRecord } from './types';
 
 export interface LibrarySummary {
   id: number;
@@ -27,128 +27,93 @@ export interface FolderSummary {
   coverThumbnail: Buffer | null;
 }
 
-export interface IpcInvokeMap {
-  'archive:open': { args: [filePath: string]; result: ArchiveOpenResponse };
-  'archive:page': { args: [pageIndex: number]; result: ArchivePageResponse };
-  'archive:close': { args: []; result: void };
-  'book:read-file': { args: [filePath: string]; result: ArrayBuffer };
-  'dialog:open-file': { args: []; result: string | null };
-  'dialog:open-directory': { args: []; result: string | null };
-  'library:query': { args: [options: QueryOptions]; result: QueryResult };
-  'library:scan': { args: [directoryPath: string]; result: number };
-  'library:scan-books': { args: [directoryPath: string]; result: number };
-  'library:classify-paths': { args: [paths: string[]]; result: { files: string[]; directories: string[] } };
-  'library:add-files': { args: [filePaths: string[]]; result: AddFilesResponse };
-  'library:refresh-book-metadata': { args: [comicId: number]; result: import('./types').ComicRecord | null };
-  'library:add-tag': { args: [comicId: number, tag: string]; result: void };
-  'library:remove-tag': { args: [comicId: number, tag: string]; result: void };
-  'library:remove-comics': { args: [ids: number[]]; result: void };
-  'library:get-thumbnail': { args: [comicId: number]; result: Buffer | null };
-  'library:get-tags': { args: []; result: string[] };
-  'library:rename-tag': { args: [oldName: string, newName: string]; result: void };
-  'library:delete-tag': { args: [tag: string]; result: void };
-  'library:add-tag-bulk': { args: [comicIds: number[], tag: string]; result: void };
-  'library:remove-tag-bulk': { args: [comicIds: number[], tag: string]; result: void };
-  'libraries:list': { args: [mediaType?: 'comic' | 'book']; result: LibrarySummary[] };
-  'libraries:create': { args: [name: string, mediaType?: 'comic' | 'book']; result: { id: number; name: string; mediaType: 'comic' | 'book' } | null };
-  'libraries:rename': { args: [id: number, newName: string]; result: void };
-  'libraries:delete': { args: [id: number]; result: void };
-  'libraries:add-comics': { args: [libraryId: number, comicIds: number[]]; result: void };
-  'libraries:add-folders': { args: [libraryId: number, folderIds: number[]]; result: void };
-  'libraries:remove-comics': { args: [libraryId: number, comicIds: number[]]; result: void };
-  'libraries:query': { args: [libraryId: number, options: QueryOptions]; result: QueryResult };
-  'folders:list': { args: [libraryId?: number | null]; result: FolderSummary[] };
-  'folders:create': { args: [name: string, comicIds: number[]]; result: { id: number; name: string } | null };
-  'folders:rename': { args: [id: number, newName: string]; result: void };
-  'folders:delete': { args: [id: number]; result: void };
-  'folders:add-comics': { args: [folderId: number, comicIds: number[]]; result: void };
-  'folders:remove-comics': { args: [folderId: number, comicIds: number[]]; result: void };
-  'folders:query': { args: [folderId: number, options: QueryOptions]; result: QueryResult };
-  'reading:update-progress': { args: [comicId: number, pageIndex: number]; result: void };
-  'reading:update-location': { args: [comicId: number, location: string]; result: void };
-  'reading:recently-read': { args: [limit?: number, mediaType?: 'comic' | 'book']; result: import('./types').ComicRecord[] };
-  'reading:get-comic-by-path': { args: [filePath: string]; result: import('./types').ComicRecord | null };
-  'shell:open-path': { args: [filePath: string]; result: string };
-  'window:toggle-fullscreen': { args: []; result: void };
-  'window:exit-fullscreen': { args: []; result: void };
-  'webserver:get-settings': { args: []; result: { enabled: boolean; port: number; url: string | null; lanUrl: string | null } };
-  'webserver:set-settings': { args: [enabled: boolean, port: number]; result: { enabled: boolean; port: number; url: string | null; lanUrl: string | null } };
-  'app-meta:get': { args: [key: string]; result: string | null };
-  'app-meta:set': { args: [key: string, value: string]; result: void };
-}
+// ---------------------------------------------------------------------------
+// Channel registries
+//
+// Each registry is a plain object mapping channel names to a phantom payload
+// type. We don't read the values at runtime — they're carried only in TS — so
+// the underlying object can be `as const` and stripped to keys for the
+// preload allowlist. Adding a channel = one edit here.
+// ---------------------------------------------------------------------------
 
-export interface IpcEventMap {
-  'library:scan-progress': [progress: ScanProgress];
-  'file-opened': [filePath: string];
-  'open-settings': [];
-}
+type Spec<Args extends readonly unknown[], Result> = { args: Args; result: Result };
 
-export type IpcInvokeChannel = keyof IpcInvokeMap;
-export type IpcEventChannel = keyof IpcEventMap;
+// `phantom` exists only so the const-object trick has values; readers never
+// touch it. Using `null!` keeps the bundle small.
+const phantom = null! as never;
 
-export type IpcInvokeArgs<C extends IpcInvokeChannel> = IpcInvokeMap[C]['args'];
-export type IpcInvokeResult<C extends IpcInvokeChannel> = IpcInvokeMap[C]['result'];
-export type IpcEventArgs<C extends IpcEventChannel> = IpcEventMap[C];
+export const IpcInvokeMap = {
+  'archive:open':                  phantom as Spec<[filePath: string], ArchiveOpenResponse>,
+  'archive:page':                  phantom as Spec<[pageIndex: number], ArchivePageResponse>,
+  'archive:close':                 phantom as Spec<[], void>,
+  'book:read-file':                phantom as Spec<[filePath: string], ArrayBuffer>,
+  'dialog:open-file':              phantom as Spec<[], string | null>,
+  'dialog:open-directory':         phantom as Spec<[], string | null>,
+  'library:query':                 phantom as Spec<[options: QueryOptions], QueryResult>,
+  'library:scan':                  phantom as Spec<[directoryPath: string], number>,
+  'library:scan-books':            phantom as Spec<[directoryPath: string], number>,
+  'library:classify-paths':        phantom as Spec<[paths: string[]], { files: string[]; directories: string[] }>,
+  'library:add-files':             phantom as Spec<[filePaths: string[]], AddFilesResponse>,
+  'library:refresh-book-metadata': phantom as Spec<[comicId: number], MediaRecord | null>,
+  'library:add-tag':               phantom as Spec<[comicId: number, tag: string], void>,
+  'library:remove-tag':            phantom as Spec<[comicId: number, tag: string], void>,
+  'library:remove-comics':         phantom as Spec<[ids: number[]], void>,
+  'library:get-thumbnail':         phantom as Spec<[comicId: number], Buffer | null>,
+  'library:get-tags':              phantom as Spec<[], string[]>,
+  'library:rename-tag':            phantom as Spec<[oldName: string, newName: string], void>,
+  'library:delete-tag':            phantom as Spec<[tag: string], void>,
+  'library:add-tag-bulk':          phantom as Spec<[comicIds: number[], tag: string], void>,
+  'library:remove-tag-bulk':       phantom as Spec<[comicIds: number[], tag: string], void>,
+  'libraries:list':                phantom as Spec<[mediaType?: 'comic' | 'book'], LibrarySummary[]>,
+  'libraries:create':              phantom as Spec<[name: string, mediaType?: 'comic' | 'book'], { id: number; name: string; mediaType: 'comic' | 'book' } | null>,
+  'libraries:rename':              phantom as Spec<[id: number, newName: string], void>,
+  'libraries:delete':              phantom as Spec<[id: number], void>,
+  'libraries:add-comics':          phantom as Spec<[libraryId: number, comicIds: number[]], void>,
+  'libraries:add-folders':         phantom as Spec<[libraryId: number, folderIds: number[]], void>,
+  'libraries:remove-comics':       phantom as Spec<[libraryId: number, comicIds: number[]], void>,
+  'libraries:query':               phantom as Spec<[libraryId: number, options: QueryOptions], QueryResult>,
+  'folders:list':                  phantom as Spec<[libraryId?: number | null], FolderSummary[]>,
+  'folders:create':                phantom as Spec<[name: string, comicIds: number[]], { id: number; name: string } | null>,
+  'folders:rename':                phantom as Spec<[id: number, newName: string], void>,
+  'folders:delete':                phantom as Spec<[id: number], void>,
+  'folders:add-comics':            phantom as Spec<[folderId: number, comicIds: number[]], void>,
+  'folders:remove-comics':         phantom as Spec<[folderId: number, comicIds: number[]], void>,
+  'folders:query':                 phantom as Spec<[folderId: number, options: QueryOptions], QueryResult>,
+  'reading:update-progress':       phantom as Spec<[comicId: number, pageIndex: number], void>,
+  'reading:update-location':       phantom as Spec<[comicId: number, location: string], void>,
+  'reading:recently-read':         phantom as Spec<[limit?: number, mediaType?: 'comic' | 'book'], MediaRecord[]>,
+  'reading:get-comic-by-path':     phantom as Spec<[filePath: string], MediaRecord | null>,
+  'shell:open-path':               phantom as Spec<[filePath: string], string>,
+  'window:toggle-fullscreen':      phantom as Spec<[], void>,
+  'window:exit-fullscreen':        phantom as Spec<[], void>,
+  'webserver:get-settings':        phantom as Spec<[], { enabled: boolean; port: number; url: string | null; lanUrl: string | null }>,
+  'webserver:set-settings':        phantom as Spec<[enabled: boolean, port: number], { enabled: boolean; port: number; url: string | null; lanUrl: string | null }>,
+  'app-meta:get':                  phantom as Spec<[key: string], string | null>,
+  'app-meta:set':                  phantom as Spec<[key: string, value: string], void>,
+} as const;
 
-export const IPC_INVOKE_CHANNELS = [
-  'archive:open',
-  'archive:page',
-  'archive:close',
-  'book:read-file',
-  'dialog:open-file',
-  'dialog:open-directory',
-  'library:query',
-  'library:scan',
-  'library:scan-books',
-  'library:classify-paths',
-  'library:add-files',
-  'library:refresh-book-metadata',
-  'library:add-tag',
-  'library:remove-tag',
-  'library:remove-comics',
-  'library:get-thumbnail',
-  'library:get-tags',
-  'library:rename-tag',
-  'library:delete-tag',
-  'library:add-tag-bulk',
-  'library:remove-tag-bulk',
-  'libraries:list',
-  'libraries:create',
-  'libraries:rename',
-  'libraries:delete',
-  'libraries:add-comics',
-  'libraries:add-folders',
-  'libraries:remove-comics',
-  'libraries:query',
-  'folders:list',
-  'folders:create',
-  'folders:rename',
-  'folders:delete',
-  'folders:add-comics',
-  'folders:remove-comics',
-  'folders:query',
-  'reading:update-progress',
-  'reading:update-location',
-  'reading:recently-read',
-  'reading:get-comic-by-path',
-  'shell:open-path',
-  'window:toggle-fullscreen',
-  'window:exit-fullscreen',
-  'webserver:get-settings',
-  'webserver:set-settings',
-  'app-meta:get',
-  'app-meta:set',
-] as const satisfies readonly IpcInvokeChannel[];
+export const IpcEventMap = {
+  'library:scan-progress': phantom as [progress: ScanProgress],
+  'file-opened':           phantom as [filePath: string],
+  'open-settings':         phantom as [],
+} as const;
 
-export const IPC_EVENT_CHANNELS = [
-  'library:scan-progress',
-  'file-opened',
-  'open-settings',
-] as const satisfies readonly IpcEventChannel[];
+export const IpcSendMap = {
+  'library:scan-cancel': phantom as [],
+} as const;
 
-// One-way fire-and-forget channels (renderer → main, no response).
-export type IpcSendChannel = 'library:scan-cancel';
+// ---------------------------------------------------------------------------
+// Derived types + runtime allowlists. No hand-maintained arrays.
+// ---------------------------------------------------------------------------
 
-export const IPC_SEND_CHANNELS = [
-  'library:scan-cancel',
-] as const satisfies readonly IpcSendChannel[];
+export type IpcInvokeChannel = keyof typeof IpcInvokeMap;
+export type IpcEventChannel = keyof typeof IpcEventMap;
+export type IpcSendChannel = keyof typeof IpcSendMap;
+
+export type IpcInvokeArgs<C extends IpcInvokeChannel>   = (typeof IpcInvokeMap)[C]['args'];
+export type IpcInvokeResult<C extends IpcInvokeChannel> = (typeof IpcInvokeMap)[C]['result'];
+export type IpcEventArgs<C extends IpcEventChannel>     = (typeof IpcEventMap)[C];
+
+export const IPC_INVOKE_CHANNELS = Object.keys(IpcInvokeMap) as IpcInvokeChannel[];
+export const IPC_EVENT_CHANNELS  = Object.keys(IpcEventMap)  as IpcEventChannel[];
+export const IPC_SEND_CHANNELS   = Object.keys(IpcSendMap)   as IpcSendChannel[];

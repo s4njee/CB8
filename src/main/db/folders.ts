@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
-import type { SqlParam, ComicRow, CountRow } from './types';
+import type { SqlParam, ComicListRow, CountRow } from './types';
 import { SORT_COLUMN_MAP } from './types';
-import { rowToRecord } from './comics';
+import { rowToListRecord } from './comics';
 import type { QueryOptions, QueryResult } from '../../shared/types';
 
 export function createFolder(
@@ -125,9 +125,15 @@ export function getFolderComics(
   const offset = options.offset ?? 0;
   const totalCount = (db.prepare(`SELECT COUNT(*) as cnt FROM comics c ${where}`).get(...params) as CountRow).cnt;
   const rows = db.prepare(
-    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_location, c.last_read, c.media_type FROM comics c ${where} ORDER BY ${sortCol} ${sortDir} LIMIT ? OFFSET ?`
-  ).all(...params, limit, offset) as ComicRow[];
-  return { records: rows.map((r) => rowToRecord(db, r)), totalCount };
+    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size,
+            CASE WHEN c.cover_thumbnail IS NULL THEN 0 ELSE 1 END as has_thumbnail,
+            COALESCE(length(c.cover_thumbnail), 0) as thumbnail_version,
+            c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
+     FROM comics c ${where}
+     ORDER BY ${sortCol} ${sortDir}
+     LIMIT ? OFFSET ?`
+  ).all(...params, limit, offset) as ComicListRow[];
+  return { records: rows.map(rowToListRecord), totalCount };
 }
 
 export function getComicFolderIds(db: Database.Database, comicId: number): number[] {

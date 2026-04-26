@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback, useState } from 'react';
-import type { ComicRecord } from '../../shared/types';
+import type { MediaRecord } from '../../shared/types';
 import { getRecentlyRead } from '../ipcClient';
+import { parseThumb } from './library/utils';
 
 interface Props {
   mediaType?: 'comic' | 'book';
@@ -8,25 +9,7 @@ interface Props {
   refreshKey: number;
 }
 
-function parseThumb(data: unknown): string | null {
-  if (!data) return null;
-  try {
-    let bytes: Uint8Array;
-    if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
-    else if (typeof data === 'object' && data !== null && 'type' in data && (data as { type?: string }).type === 'Buffer' && Array.isArray((data as unknown as { data?: number[] }).data))
-      bytes = new Uint8Array((data as unknown as { data: number[] }).data);
-    else if (data instanceof Uint8Array) bytes = data;
-    else if (typeof data === 'object') bytes = new Uint8Array(Object.values(data as Record<string, number>) as number[]);
-    else return null;
-    const copy = new Uint8Array(bytes.byteLength);
-    copy.set(bytes);
-    return URL.createObjectURL(new Blob([copy.buffer]));
-  } catch {
-    return null;
-  }
-}
-
-function formatProgress(comic: ComicRecord): string {
+function formatProgress(comic: MediaRecord): string {
   if (comic.mediaType === 'book') {
     if (comic.lastPage != null && comic.pageCount > 0) {
       const pct = Math.round(((comic.lastPage + 1) / comic.pageCount) * 100);
@@ -43,7 +26,7 @@ function formatProgress(comic: ComicRecord): string {
 }
 
 export const ContinueReadingShelf: React.FC<Props> = ({ mediaType, onOpenFile, refreshKey }) => {
-  const [records, setRecords] = useState<(ComicRecord & { thumbUrl: string | null })[]>([]);
+  const [records, setRecords] = useState<(MediaRecord & { thumbUrl: string | null })[]>([]);
 
   const load = useCallback(async () => {
     try {

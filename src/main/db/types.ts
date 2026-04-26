@@ -14,6 +14,11 @@ export interface ComicRow {
   media_type: string;
 }
 
+export interface ComicListRow extends Omit<ComicRow, 'cover_thumbnail'> {
+  has_thumbnail: number;
+  thumbnail_version: number;
+}
+
 export interface CountRow {
   cnt: number;
 }

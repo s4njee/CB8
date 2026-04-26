@@ -127,8 +127,7 @@ export function registerLibraryHandlers(
   });
 
   ipcMain.handle('library:get-thumbnail', (_e, comicId: number) => {
-    const comic = db?.getComic(comicId);
-    return comic?.coverThumbnail ?? null;
+    return db?.getCoverThumbnail(comicId) ?? null;
   });
 
   ipcMain.handle('library:get-tags', () => {

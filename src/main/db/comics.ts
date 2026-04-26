@@ -1,10 +1,35 @@
 import type Database from 'better-sqlite3';
-import type { ComicRecord, QueryOptions, QueryResult } from '../../shared/types';
-import type { SqlParam, ComicRow, CountRow, TagNameRow } from './types';
+import type { MediaRecord, QueryOptions, QueryResult } from '../../shared/types';
+import type { SqlParam, ComicRow, ComicListRow, CountRow, TagNameRow } from './types';
 import { SORT_COLUMN_MAP } from './types';
 import { addTag } from './tags';
 
-export function rowToRecord(db: Database.Database, row: ComicRow): ComicRecord {
+/**
+ * Build a safe FTS5 MATCH expression from free-form user input.
+ *
+ * FTS5 has its own query syntax with reserved characters (`-`, `*`, `(`,
+ * `"`, `:`, etc.); pasting raw user text into MATCH would either error
+ * out or trigger surprising operator semantics. Strategy: tokenize on
+ * whitespace, strip non-alphanumerics from each token (the unicode61
+ * tokenizer already discards them in the index, so the search side
+ * should match), append `*` for prefix matching, AND together.
+ *
+ * Example: `"naru-to vol 1"` → `naruto* vol* 1*`.
+ *
+ * Returns null if no usable tokens remain — the caller should then fall
+ * through to no search predicate (or treat as zero-results, depending on
+ * UX preference).
+ */
+function buildFtsQuery(raw: string): string | null {
+  const tokens = raw
+    .split(/\s+/)
+    .map((t) => t.replace(/[^\p{L}\p{N}_]/gu, ''))
+    .filter(Boolean);
+  if (tokens.length === 0) return null;
+  return tokens.map((t) => `${t}*`).join(' ');
+}
+
+export function rowToRecord(db: Database.Database, row: ComicRow): MediaRecord {
   const tags = db.prepare(
     `SELECT t.name FROM tags t JOIN comic_tags ct ON t.id = ct.tag_id WHERE ct.comic_id = ?`
   ).all(row.id) as TagNameRow[];
@@ -25,7 +50,26 @@ export function rowToRecord(db: Database.Database, row: ComicRow): ComicRecord {
   };
 }
 
-export function addComic(db: Database.Database, record: Omit<ComicRecord, 'id' | 'dateAdded'>): ComicRecord {
+export function rowToListRecord(row: ComicListRow): MediaRecord {
+  return {
+    id: row.id,
+    filePath: row.file_path,
+    title: row.title,
+    pageCount: row.page_count,
+    fileSize: row.file_size,
+    coverThumbnail: null,
+    hasThumbnail: row.has_thumbnail === 1,
+    thumbnailVersion: row.thumbnail_version,
+    dateAdded: row.date_added,
+    tags: [],
+    lastPage: row.last_page ?? null,
+    lastLocation: row.last_location ?? null,
+    lastRead: row.last_read ?? null,
+    mediaType: (row.media_type === 'book' ? 'book' : 'comic') as 'comic' | 'book',
+  };
+}
+
+export function addComic(db: Database.Database, record: Omit<MediaRecord, 'id' | 'dateAdded'>): MediaRecord {
   db.prepare('DELETE FROM dismissed_paths WHERE file_path = ?').run(record.filePath);
   const stmt = db.prepare(
     `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, last_page, last_location, last_read, media_type)
@@ -70,7 +114,7 @@ export function isDismissed(db: Database.Database, filePath: string): boolean {
   return db.prepare('SELECT 1 FROM dismissed_paths WHERE file_path = ?').get(filePath) !== undefined;
 }
 
-export function getComic(db: Database.Database, id: number): ComicRecord | null {
+export function getComic(db: Database.Database, id: number): MediaRecord | null {
   const row = db.prepare(
     `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
      FROM comics WHERE id = ?`
@@ -92,13 +136,18 @@ export function updatePageCountByPath(db: Database.Database, filePath: string, p
   db.prepare('UPDATE comics SET page_count = ? WHERE file_path = ?').run(pageCount, filePath);
 }
 
-export function getComicByPath(db: Database.Database, filePath: string): ComicRecord | null {
+export function getComicByPath(db: Database.Database, filePath: string): MediaRecord | null {
   const row = db.prepare(
     `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
      FROM comics WHERE file_path = ?`
   ).get(filePath) as ComicRow | undefined;
   if (!row) return null;
   return rowToRecord(db, row);
+}
+
+export function getCoverThumbnail(db: Database.Database, comicId: number): Buffer | null {
+  const row = db.prepare('SELECT cover_thumbnail FROM comics WHERE id = ?').get(comicId) as { cover_thumbnail: Buffer | null } | undefined;
+  return row?.cover_thumbnail ?? null;
 }
 
 export function queryComics(db: Database.Database, options: QueryOptions = {}): QueryResult {
@@ -111,9 +160,15 @@ export function queryComics(db: Database.Database, options: QueryOptions = {}): 
   }
 
   if (options.search) {
-    conditions.push('(c.title LIKE ? COLLATE NOCASE OR c.file_path LIKE ? COLLATE NOCASE)');
-    const term = `%${options.search}%`;
-    params.push(term, term);
+    const fts = buildFtsQuery(options.search);
+    if (fts) {
+      conditions.push('c.id IN (SELECT rowid FROM comics_fts WHERE comics_fts MATCH ?)');
+      params.push(fts);
+    } else {
+      // User typed only punctuation / whitespace — match nothing rather
+      // than silently dropping the filter.
+      conditions.push('1 = 0');
+    }
   }
 
   if (options.tag) {
@@ -151,14 +206,17 @@ export function queryComics(db: Database.Database, options: QueryOptions = {}): 
   ).get(...params) as CountRow).cnt;
 
   const rows = db.prepare(
-    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
+    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size,
+            CASE WHEN c.cover_thumbnail IS NULL THEN 0 ELSE 1 END as has_thumbnail,
+            COALESCE(length(c.cover_thumbnail), 0) as thumbnail_version,
+            c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
      FROM comics c ${where}
      ORDER BY ${sortCol} ${sortDir}
      LIMIT ? OFFSET ?`
-  ).all(...params, limit, offset) as ComicRow[];
+  ).all(...params, limit, offset) as ComicListRow[];
 
   return {
-    records: rows.map((r) => rowToRecord(db, r)),
+    records: rows.map(rowToListRecord),
     totalCount,
   };
 }
@@ -188,7 +246,7 @@ export function getRecentlyRead(
   db: Database.Database,
   limit: number = 10,
   mediaType?: 'comic' | 'book',
-): ComicRecord[] {
+): MediaRecord[] {
   const rows = mediaType
     ? db.prepare(
         `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
@@ -207,7 +265,7 @@ export function getContinueReading(
   db: Database.Database,
   limit: number = 10,
   mediaType?: 'comic' | 'book',
-): ComicRecord[] {
+): MediaRecord[] {
   const rows = mediaType
     ? db.prepare(
         `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type
@@ -244,7 +302,7 @@ export function getAllSeries(db: Database.Database): { name: string; count: numb
   return rows.map((r) => ({ name: r.name, count: r.count, coverComicId: r.cover_id }));
 }
 
-export function getSeriesComics(db: Database.Database, name: string): ComicRecord[] {
+export function getSeriesComics(db: Database.Database, name: string): MediaRecord[] {
   const rows = db.prepare(
     `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
      FROM comics c
@@ -298,7 +356,7 @@ export function queryComicsForUser(
   db: Database.Database,
   userId: number | null,
   options: QueryOptions & { readStatus?: 'unread' | 'in-progress' | 'completed'; favorites?: boolean; libraryId?: number; folderId?: number },
-): { records: (ComicRecord & { favorited?: boolean })[]; totalCount: number } {
+): { records: (MediaRecord & { favorited?: boolean })[]; totalCount: number } {
   const conditions: string[] = [];
   const params: SqlParam[] = [];
 
@@ -315,9 +373,13 @@ export function queryComicsForUser(
     params.push(options.mediaType);
   }
   if (options.search) {
-    conditions.push('(c.title LIKE ? COLLATE NOCASE OR c.file_path LIKE ? COLLATE NOCASE)');
-    const t = `%${options.search}%`;
-    params.push(t, t);
+    const fts = buildFtsQuery(options.search);
+    if (fts) {
+      conditions.push('c.id IN (SELECT rowid FROM comics_fts WHERE comics_fts MATCH ?)');
+      params.push(fts);
+    } else {
+      conditions.push('1 = 0');
+    }
   }
   if (options.tag) {
     conditions.push('c.id IN (SELECT ct.comic_id FROM comic_tags ct JOIN tags t ON ct.tag_id = t.id WHERE t.name = ?)');

@@ -1,4 +1,4 @@
-import type { ComicRecord, QueryOptions, QueryResult, ScanProgress } from '../shared/types';
+import type { MediaRecord, QueryOptions, QueryResult, ScanProgress } from '../shared/types';
 import type {
   AddFilesResponse,
   ArchiveOpenResponse,
@@ -91,7 +91,7 @@ export async function addComicFiles(filePaths: string[]): Promise<AddFilesRespon
   return api.invoke('library:add-files', filePaths);
 }
 
-export async function refreshBookMetadata(comicId: number): Promise<ComicRecord | null> {
+export async function refreshBookMetadata(comicId: number): Promise<MediaRecord | null> {
   return api.invoke('library:refresh-book-metadata', comicId);
 }
 
@@ -177,11 +177,11 @@ export async function updateReadingProgress(comicId: number, pageIndex: number):
   await api.invoke('reading:update-progress', comicId, pageIndex);
 }
 
-export async function getRecentlyRead(limit?: number, mediaType?: 'comic' | 'book'): Promise<ComicRecord[]> {
+export async function getRecentlyRead(limit?: number, mediaType?: 'comic' | 'book'): Promise<MediaRecord[]> {
   return api.invoke('reading:recently-read', limit, mediaType);
 }
 
-export async function getComicByPath(filePath: string): Promise<ComicRecord | null> {
+export async function getComicByPath(filePath: string): Promise<MediaRecord | null> {
   return api.invoke('reading:get-comic-by-path', filePath);
 }
 
