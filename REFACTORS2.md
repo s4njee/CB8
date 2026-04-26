@@ -47,21 +47,21 @@ These are pure functions of strings and DOM nodes; they don't need to be re-impl
 
 ## Tier 2 — File-level shrinking
 
-### `LibraryView.tsx` (841 lines, 16 useState/useRef, 28 handlers)
+### `LibraryView.tsx` (841 lines → 639 lines, partially done)
 
 The earlier hooks pass extracted query / filters / selection / folder-context-menu / details-modal. The remaining clusters:
 
-1. **`useDragDropFiles`** — `dragOver`, `adding`, `folderDropTargetId` + `handleDragOver/Leave/Drop`. Self-contained except for needing `loadInitial`, `activeLibraryId`, `activeView`, `searchQuery`.
-2. **`useComicContextMenu`** — `contextMenu`, `contextCreateMode`, `contextCreateName`, `contextCreateError`, `contextCreating` + `handleComicContextMenu` / `handleContextAddToLibrary` / `handleContextCreateLibrary` / `handleContextCreateFolder` / `closeContextMenu`. Roughly 200 lines, all self-contained.
+1. ~~**`useDragDropFiles`**~~ — extracted to `library/hooks/useDragDropFiles.ts`. ✓
+2. ~~**`useComicContextMenu`**~~ — extracted to `library/hooks/useComicContextMenu.ts`. ✓
 3. **JSX subcomponents** — `<LibraryHeader>` (search + scan + breadcrumbs), `<LibraryGrid>` (the virtualized renderer), `<LibraryDropOverlay>` (drag-over state). These each bring 30–80 lines out of the parent.
 
 Target after split: ~400 lines in `LibraryView.tsx`, with each new hook in `library/hooks/`.
 
-### `App.tsx` (350 lines)
+### `App.tsx` (350 lines → 270 lines, partially done)
 
 App.tsx is the comic-reader page-cache + the file-open dispatcher + the view-router + the keyboard handler in one component.
 
-- **`useReaderPageCache(pageCount)`** — `pageCache`, `prefetchInFlight`, `cacheGet`, `cacheSet`, `clearCache`, `fetchPageData`, `prefetch`, `loadPage`. Returns the same surface but as a hook. Removes about 90 lines from `App.tsx`.
+- ~~**`useReaderPageCache(pageCount)`**~~ — extracted to `library/hooks/useReaderPageCache.ts`. ✓
 - **`prepareBookReaderState(filePath, comic)`** — the chunk inside `openFile` that sniffs ext + builds the `bookReader` object can move out as a pure helper.
 - **`useFileOpener({ ... })`** — bundles `openFile`, `backToLibrary`, `nextPage`, `previousPage`, the IPC subscriptions for `file-opened` and `open-settings`, and the keyboard binding.
 
@@ -88,45 +88,21 @@ Mixes the right-click card context menu with the in-place tag editor modal. The 
 
 ## Tier 3 — Targeted deduplication / hygiene
 
-### One LRU primitive instead of four
+### ~~One LRU primitive instead of four~~ ✓
 
-Four places implement their own LRU:
+~~Four places implement their own LRU~~ — unified into `src/shared/lru.ts` with `LruByCount<K, V>` and `LruByBytes<K, V>`. The archive-handle cache (refcount + TTL) remains bespoke but uses these primitives for bookkeeping.
 
-- `src/main/webServer/archiveCache.ts` — refcount + TTL eviction over open archive handles.
-- `src/main/imageResizer.ts` — disk LRU with byte budget (2 GiB cap).
-- `src/main/archiveLoader.ts` — CBR per-handle 64 MiB byte-budgeted page cache.
-- `src/renderer/components/App.tsx` — count-based blob-URL cache (`PAGE_CACHE_MAX`).
+### ~~Codegen the preload whitelist from the IPC type map~~ ✓
 
-Each implements eviction differently. Pull two small helpers into `src/shared/lru.ts`:
+Done via `Object.keys(IpcInvokeMap)` / `Object.keys(IpcEventMap)` / `Object.keys(IpcSendMap)` in `src/shared/ipcTypes.ts:117-119`. Adding a channel now only touches the type map + handler + client.
 
-- `LruByCount<K, V>(capacity, onEvict?)` — for the App.tsx page cache.
-- `LruByBytes<K>(maxBytes, sizeOf, onEvict?)` — for the CBR + image-resize caches.
+### ~~Drop the `ComicRecord = MediaRecord` alias~~ ✓
 
-The archive-handle cache stays bespoke because of the refcount + TTL semantics, but it can still consume the byte/count primitives for its own bookkeeping.
+Alias removed from `src/shared/types.ts`; all callers migrated to `MediaRecord`. (`WebComicRecord` in `webServer/mapping.ts` is a separate web-facing interface, not the old alias.)
 
-### Codegen the preload whitelist from the IPC type map
+### ~~Replace `SettingsDialog.tsx` 7 useStates with a reducer~~ ✓
 
-Adding a new IPC channel currently touches four places:
-
-1. `src/shared/ipcTypes.ts` — type map.
-2. `src/shared/ipcTypes.ts` — channel array (parallel to the map; easy to forget).
-3. `src/main/preload.ts` — channel allowlist (uses the array).
-4. handler + client.
-
-The channel array is a pure derivation of the keys of the type map. Either:
-
-- Use `as const satisfies` plus a runtime `Object.keys(IpcInvokeMap)` (requires the map to be a const object, not just a type), or
-- Codegen `IPC_INVOKE_CHANNELS` / `IPC_EVENT_CHANNELS` / `IPC_SEND_CHANNELS` from the type map at build time via a tiny script wired into `prestart`.
-
-Either way, drop the manual array. One less file to touch per channel; eliminates the class of "preload threw an Unsupported channel" errors that have happened twice.
-
-### Drop the `ComicRecord = MediaRecord` alias
-
-`src/shared/types.ts` keeps `export type ComicRecord = MediaRecord` for backwards compatibility. 22 files still import the old name. One sweep pass (rename in source, fix imports in the 22 files, delete the alias) closes the migration cleanly. The DB column names on disk don't change — this is a TS-side cleanup only.
-
-### Replace `SettingsDialog.tsx` 7 useStates with a reducer
-
-The file has `settings`, `pendingEnabled`, `pendingPort`, `portInput`, `saving`, `saveError`, `copied` — really one state machine: `idle | dirty | saving | error`. A `useReducer` collapses the surface, makes the "ok to save" predicate explicit, and removes the parallel `pending*` shadow state. Drops ~40 lines and prevents the "user typed but didn't save" bug class.
+Converted to `useReducer` — `idle | dirty | saving | error` state machine in place.
 
 ### `web/views/reader/state.js` global mutable bag
 

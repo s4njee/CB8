@@ -38,6 +38,7 @@ let currentRoute = null;
 let currentOptions = null;
 let container = null;
 let grid = null;
+let renderEpoch = 0;
 
 let adminUnsubscribe = null;
 
@@ -46,6 +47,7 @@ let adminUnsubscribe = null;
 // ---------------------------------------------------------------------------
 
 export async function renderLibrary(el, route, options) {
+  const epoch = ++renderEpoch;
   currentRoute = route;
   currentOptions = { ...options };
   offset = 0;
@@ -112,7 +114,7 @@ export async function renderLibrary(el, route, options) {
     shelfHost.id = 'continue-shelf-host';
     el.appendChild(shelfHost);
     // Fire-and-forget: don't block grid render on shelf fetch.
-    renderContinueShelf(shelfHost, options).catch((err) => {
+    renderContinueShelf(shelfHost, options, epoch).catch((err) => {
       console.error('[CB8] continue shelf load failed:', err);
       shelfHost.remove();
     });
@@ -138,7 +140,7 @@ export async function renderLibrary(el, route, options) {
   observer = new IntersectionObserver(
     (entries) => {
       if (entries[0].isIntersecting && !loading && offset < totalCount) {
-        loadNextPage();
+        loadNextPage(epoch);
       }
     },
     { rootMargin: '200px' },
@@ -147,7 +149,7 @@ export async function renderLibrary(el, route, options) {
 
   installPullToRefresh();
 
-  await loadNextPage();
+  await loadNextPage(epoch);
 }
 
 // ---------------------------------------------------------------------------
@@ -218,8 +220,9 @@ function installPullToRefresh() {
 // Continue-reading shelf (inline, on #/ only)
 // ---------------------------------------------------------------------------
 
-async function renderContinueShelf(host, options) {
+async function renderContinueShelf(host, options, epoch) {
   const records = await api.fetchContinueReading(SHELF_LIMIT, options.mediaType || undefined);
+  if (epoch !== renderEpoch || !host.isConnected) return;
   if (!records || records.length === 0) {
     host.remove();
     return;
@@ -258,7 +261,7 @@ async function renderContinueShelf(host, options) {
 // Data loading
 // ---------------------------------------------------------------------------
 
-async function loadNextPage() {
+async function loadNextPage(epoch = renderEpoch) {
   if (loading) return;
   loading = true;
 
@@ -300,12 +303,14 @@ async function loadNextPage() {
     } else {
       result = await api.fetchComics({ ...opts, excludeFoldered: true });
     }
+    if (epoch !== renderEpoch) return;
 
     // First page of the all view: render folder cards before the comic cards
     // so virtual folders behave like actual containers.
     if (isAllView && offset === 0) {
       try {
         const folders = await api.fetchFolders();
+        if (epoch !== renderEpoch) return;
         for (const folder of folders ?? []) {
           grid.appendChild(createFolderCard(folder));
         }
@@ -338,8 +343,10 @@ async function loadNextPage() {
       renderEmpty(grid, reason);
     }
   } finally {
-    loading = false;
-    const spinner = document.getElementById('grid-spinner');
-    if (spinner) spinner.hidden = true;
+    if (epoch === renderEpoch) {
+      loading = false;
+      const spinner = document.getElementById('grid-spinner');
+      if (spinner) spinner.hidden = true;
+    }
   }
 }
