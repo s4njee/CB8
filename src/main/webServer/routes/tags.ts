@@ -32,6 +32,27 @@ export const handle: RouteHandler = async (ctx) => {
     return true;
   }
 
+  // Bulk add/remove a single tag across many comics.
+  // Match before the catch-all `/api/tags/(.+)` so `name/comics` doesn't get
+  // routed into rename/delete.
+  const tagBulkMatch = pathname.match(/^\/api\/tags\/([^/]+)\/comics$/);
+  if (tagBulkMatch && (method === 'POST' || method === 'DELETE')) {
+    if (!requireAdmin(ctx)) return true;
+    const tag = decodeURIComponent(tagBulkMatch[1]).trim();
+    if (!tag) { sendError(res, 400, 'Tag name is empty'); return true; }
+    const body = await readBody(req);
+    let parsed: { comicIds?: number[] };
+    try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
+    if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) {
+      sendError(res, 400, 'Provide "comicIds" (non-empty array)'); return true;
+    }
+    const ids = parsed.comicIds.map(Number);
+    if (method === 'POST') db.addTagBulk(ids, tag);
+    else db.removeTagBulk(ids, tag);
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   // Rename tag
   const tagNameMatch = pathname.match(/^\/api\/tags\/(.+)$/);
   if (method === 'PUT' && tagNameMatch) {

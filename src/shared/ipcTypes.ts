@@ -72,8 +72,7 @@ export const IpcInvokeMap = {
   // posts to /api/admin/upload, which sidesteps the path classification step.
   'library:classify-paths':        phantom as Spec<[paths: string[]], { files: string[]; directories: string[] }>,
   'library:add-files':             phantom as Spec<[filePaths: string[]], AddFilesResponse>,
-  // AUDIT-GAP — no HTTP equivalent for "re-read book metadata for an indexed
-  // comic" yet. Phase 5: add POST /api/comics/:id/refresh-metadata.
+  // RETIRE — HTTP: POST /api/comics/:id/refresh-metadata.
   'library:refresh-book-metadata': phantom as Spec<[comicId: number], MediaRecord | null>,
   // RETIRE — HTTP: PUT /api/comics/:id/tags carries the full tag set.
   'library:add-tag':               phantom as Spec<[comicId: number, tag: string], void>,
@@ -86,8 +85,7 @@ export const IpcInvokeMap = {
   'library:get-tags':              phantom as Spec<[], string[]>,
   'library:rename-tag':            phantom as Spec<[oldName: string, newName: string], void>,
   'library:delete-tag':            phantom as Spec<[tag: string], void>,
-  // AUDIT-GAP — bulk tag ops have no single HTTP route; the SPA loops over
-  // individual PUTs today. Phase 5 may add POST /api/tags/:name/comics.
+  // RETIRE — HTTP: POST/DELETE /api/tags/:name/comics with `{ comicIds }`.
   'library:add-tag-bulk':          phantom as Spec<[comicIds: number[], tag: string], void>,
   'library:remove-tag-bulk':       phantom as Spec<[comicIds: number[], tag: string], void>,
   // RETIRE — HTTP: /api/libraries[ /:id[ /comics ] ] mirrors all of these.
@@ -96,7 +94,7 @@ export const IpcInvokeMap = {
   'libraries:rename':              phantom as Spec<[id: number, newName: string], void>,
   'libraries:delete':              phantom as Spec<[id: number], void>,
   'libraries:add-comics':          phantom as Spec<[libraryId: number, comicIds: number[]], void>,
-  // AUDIT-GAP — "add a whole folder of comics to a library" has no HTTP route.
+  // RETIRE — HTTP: POST /api/libraries/:id/folders with `{ folderIds }`.
   'libraries:add-folders':         phantom as Spec<[libraryId: number, folderIds: number[]], void>,
   'libraries:remove-comics':       phantom as Spec<[libraryId: number, comicIds: number[]], void>,
   'libraries:query':               phantom as Spec<[libraryId: number, options: QueryOptions], QueryResult>,
@@ -124,9 +122,9 @@ export const IpcInvokeMap = {
   // HOST — controls the embedded server itself; no HTTP analogue makes sense.
   'webserver:get-settings':        phantom as Spec<[], { enabled: boolean; port: number; url: string | null; lanUrl: string | null }>,
   'webserver:set-settings':        phantom as Spec<[enabled: boolean, port: number], { enabled: boolean; port: number; url: string | null; lanUrl: string | null }>,
-  // AUDIT-GAP — generic app-meta read/write used by SettingsDialog.tsx for
-  // ad-hoc keys. Phase 5: replace each caller with a typed HTTP setting
-  // (e.g. /api/settings/guest-access already does this for one key).
+  // RETIRE — only used by the React renderer's LibraryView for its
+  // `filterPreset` UI state. The SPA equivalent already persists prefs
+  // via localStorage (see views/reader/prefs.js); no server route needed.
   'app-meta:get':                  phantom as Spec<[key: string], string | null>,
   'app-meta:set':                  phantom as Spec<[key: string, value: string], void>,
 } as const;

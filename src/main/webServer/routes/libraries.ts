@@ -84,6 +84,22 @@ export const handle: RouteHandler = async (ctx) => {
     return true;
   }
 
+  // Add folders (whole-folder import) to library
+  const libFoldersMatch = pathname.match(/^\/api\/libraries\/(\d+)\/folders$/);
+  if (method === 'POST' && libFoldersMatch) {
+    if (!requireAdmin(ctx)) return true;
+    const libId = parseInt(libFoldersMatch[1], 10);
+    const body = await readBody(req);
+    let parsed: { folderIds?: number[] };
+    try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
+    if (!Array.isArray(parsed.folderIds) || parsed.folderIds.length === 0) {
+      sendError(res, 400, 'Provide "folderIds" (non-empty array)'); return true;
+    }
+    db.addFoldersToLibrary(libId, parsed.folderIds.map(Number));
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   // Query comics in library
   if (method === 'GET' && libComicsMatch) {
     const libId = parseInt(libComicsMatch[1], 10);

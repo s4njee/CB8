@@ -107,8 +107,15 @@ export const addComicsToLibrary = (libraryId, comicIds) =>
   post(`/api/libraries/${libraryId}/comics`, { body: { comicIds } });
 export const removeComicsFromLibrary = (libraryId, comicIds) =>
   del(`/api/libraries/${libraryId}/comics`, { body: { comicIds } });
+export const addFoldersToLibrary = (libraryId, folderIds) =>
+  post(`/api/libraries/${libraryId}/folders`, { body: { folderIds } });
 export const fetchLibraryComics = (libraryId, options = {}) =>
   get(`/api/libraries/${libraryId}/comics`, { query: options });
+
+// Re-derive page count + cover for an indexed book whose original ingest
+// produced an incomplete record (typically a PDF that timed out).
+export const refreshBookMetadata = (comicId) =>
+  post(`/api/comics/${comicId}/refresh-metadata`);
 
 // ---------------------------------------------------------------------------
 // Folders
@@ -139,6 +146,10 @@ export const renameTag = (oldName, newName) =>
   put(`/api/tags/${encodeURIComponent(oldName)}`, { body: { newName } });
 export const deleteTag = (name) =>
   del(`/api/tags/${encodeURIComponent(name)}`);
+export const addTagToComics = (tag, comicIds) =>
+  post(`/api/tags/${encodeURIComponent(tag)}/comics`, { body: { comicIds } });
+export const removeTagFromComics = (tag, comicIds) =>
+  del(`/api/tags/${encodeURIComponent(tag)}/comics`, { body: { comicIds } });
 
 // ---------------------------------------------------------------------------
 // Reading lists

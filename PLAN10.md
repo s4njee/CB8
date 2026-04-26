@@ -160,21 +160,24 @@ Exit criteria:
 
 ---
 
-## Phase 4 — Collapse duplicated API access patterns ✅ AUDIT DONE
+## Phase 4 — Collapse duplicated API access patterns ✅ DONE
 
-**Status:** Audit complete. The SPA already only talks to the HTTP API; the
-duplication lives entirely in `src/renderer/ipcClient.ts`, which Phase 6
-deletes outright. Each invoke channel in `src/shared/ipcTypes.ts` is now
-annotated `HOST` / `RETIRE` / `AUDIT-GAP` so Phase 6 can mechanically drop
-the `RETIRE` set. The `AUDIT-GAP` entries are the work Phase 5 must
-backfill on the server before deletion:
+**Status:** Audit complete and the `AUDIT-GAP` server backfill landed in
+Phase 5. The SPA already only talks to the HTTP API; the duplication
+lives entirely in `src/renderer/ipcClient.ts`, which Phase 6 deletes
+outright. Every invoke channel in `src/shared/ipcTypes.ts` is now
+annotated `HOST` / `RETIRE` so Phase 6 can mechanically drop the
+`RETIRE` set.
 
-- `library:refresh-book-metadata` — needs `POST /api/comics/:id/refresh-metadata`.
-- `library:add-tag-bulk` / `library:remove-tag-bulk` — needs a bulk endpoint
-  or accepted-loop pattern (the SPA can iterate today).
-- `libraries:add-folders` — needs `POST /api/libraries/:id/folders`.
-- `app-meta:get` / `app-meta:set` — replace each caller with a typed
-  HTTP settings route (model: `/api/settings/guest-access`).
+Backfilled HTTP routes (all admin-gated):
+- `POST /api/comics/:id/refresh-metadata` ↔ `library:refresh-book-metadata`.
+- `POST /api/tags/:name/comics` and `DELETE` ↔ bulk tag ops.
+- `POST /api/libraries/:id/folders` ↔ `libraries:add-folders`.
+
+The `app-meta:get/set` channels were the only renderer-only consumer
+(`LibraryView.tsx` filter preset) — the SPA already persists similar
+prefs via localStorage, so no server route is required and the channels
+ride out with the renderer in Phase 6.
 
 The plan items below were the original scope notes, kept for traceability.
 

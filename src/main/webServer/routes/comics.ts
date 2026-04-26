@@ -9,6 +9,7 @@ import { toWebRecord, overlayUserState } from '../mapping';
 import { withArchive, evictFromCache } from '../archiveCache';
 import { safeFetchBuffer, SafeFetchError } from '../safeFetch';
 import { requireAdmin, type RouteHandler } from '../context';
+import { FileScannerImpl } from '../../fileScanner';
 import type { QueryOptions } from '../../../shared/types';
 
 const PAGE_MIME: Record<string, string> = {
@@ -256,6 +257,33 @@ export const handle: RouteHandler = async (ctx) => {
       }
     }
     sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // Refresh book metadata (re-derive page count + cover from the file on
+  // disk for an already-indexed book). PDFs whose pageCount is still 0
+  // are the typical case — the original ingest may have timed out.
+  const refreshMatch = pathname.match(/^\/api\/comics\/(\d+)\/refresh-metadata$/);
+  if (method === 'POST' && refreshMatch) {
+    if (!requireAdmin(ctx)) return true;
+    const id = parseInt(refreshMatch[1], 10);
+    const record = db.getComic(id);
+    if (!record) { sendError(res, 404, 'Comic not found'); return true; }
+    if (record.mediaType !== 'book') {
+      sendJson(res, 200, overlayUserState(toWebRecord(record)!, db, currentUser?.id ?? null));
+      return true;
+    }
+    if (record.filePath.toLowerCase().endsWith('.pdf') && record.pageCount <= 0) {
+      const scanner = new FileScannerImpl(db);
+      try {
+        await scanner.refreshBookMetadata(record.filePath);
+      } catch (err) {
+        console.warn(`[webServer] refreshBookMetadata failed for comic=${id}:`, err);
+      }
+    }
+    const fresh = db.getComic(id);
+    if (!fresh) { sendError(res, 404, 'Comic not found'); return true; }
+    sendJson(res, 200, overlayUserState(toWebRecord(fresh)!, db, currentUser?.id ?? null));
     return true;
   }
 
