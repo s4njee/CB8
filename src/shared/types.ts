@@ -15,13 +15,15 @@ export interface ArchiveHandle {
   pageCount: number;
 }
 
-export interface ComicRecord {
+export interface MediaRecord {
   id: number;
   filePath: string;
   title: string;
   pageCount: number;
   fileSize: number;
   coverThumbnail: Buffer | null;
+  hasThumbnail?: boolean;
+  thumbnailVersion?: number;
   dateAdded: string;
   tags: string[];
   lastPage: number | null;
@@ -33,16 +35,26 @@ export interface ComicRecord {
 export interface QueryOptions {
   search?: string;
   tag?: string;
-  sortBy?: 'title' | 'dateAdded' | 'fileSize' | 'pageCount';
+  sortBy?: 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead';
   sortOrder?: 'asc' | 'desc';
   offset?: number;
   limit?: number;
   excludeFoldered?: boolean;
   mediaType?: 'comic' | 'book';
+  fileExt?: string;
+  readStatus?: 'unread' | 'in-progress' | 'completed';
+}
+
+export interface FilterPreset {
+  sortBy: QueryOptions['sortBy'];
+  sortOrder: QueryOptions['sortOrder'];
+  readStatus?: QueryOptions['readStatus'];
+  fileExt?: string;
+  tag?: string;
 }
 
 export interface QueryResult {
-  records: ComicRecord[];
+  records: MediaRecord[];
   totalCount: number;
 }
 

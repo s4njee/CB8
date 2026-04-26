@@ -56,6 +56,11 @@ const config: ForgeConfig = {
   hooks: {
     packageAfterCopy: async (_config, appDir) => {
       copyModules(appDir);
+      // Copy web SPA assets into packaged app resources
+      const webSrc = path.join(__dirname, 'src', 'web');
+      const webDest = path.join(appDir, 'web');
+      fs.mkdirSync(webDest, { recursive: true });
+      fs.cpSync(webSrc, webDest, { recursive: true });
     },
     postPackage: async (_config, result) => {
       if (process.platform !== 'darwin') return;
@@ -92,12 +97,9 @@ const config: ForgeConfig = {
           target: 'preload',
         },
       ],
-      renderer: [
-        {
-          name: 'main_window',
-          config: 'vite.renderer.config.ts',
-        },
-      ],
+      // No renderer target: PLAN10 collapsed the desktop UI onto the SPA
+      // served by the embedded HTTP server (see hooks.packageAfterCopy).
+      renderer: [],
     }),
   ],
 };

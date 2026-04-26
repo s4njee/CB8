@@ -2,12 +2,15 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   IPC_EVENT_CHANNELS,
   IPC_INVOKE_CHANNELS,
+  IPC_SEND_CHANNELS,
   type IpcEventChannel,
   type IpcInvokeChannel,
+  type IpcSendChannel,
 } from '../shared/ipcTypes';
 
 const invokeChannels = new Set<string>(IPC_INVOKE_CHANNELS);
 const eventChannels = new Set<string>(IPC_EVENT_CHANNELS);
+const sendChannels = new Set<string>(IPC_SEND_CHANNELS);
 
 contextBridge.exposeInMainWorld('electronAPI', {
   invoke: (channel: IpcInvokeChannel, ...args: unknown[]) => {
@@ -26,6 +29,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       ipcRenderer.removeListener(channel, subscription);
     };
+  },
+  send: (channel: IpcSendChannel) => {
+    if (!sendChannels.has(channel)) {
+      throw new Error(`Unsupported IPC send channel: ${channel}`);
+    }
+    ipcRenderer.send(channel);
   },
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 });
