@@ -39,36 +39,27 @@ framework purity. The core decision is:
 - Do not remove Electron entirely; desktop packaging and native integration are
   still valuable.
 
-## Recommended target
-Use one SPA as the only frontend. Electron opens that SPA. The embedded web
-server serves that same SPA for browser clients.
+## Target
+`src/web/` is the unified frontend. Electron opens it. The embedded web
+server serves the same code for browser clients.
 
-Two concrete ways to realize that:
-
-1. Preferred: `src/web-next/` becomes the unified app.
-   - It is already present in the repo and is a better long-term home for a
-     single maintained frontend than continuing the legacy DOM code forever.
-2. Acceptable interim: `src/web/` remains the unified app first.
-   - Electron loads the existing web UI while the migration to `src/web-next/`
-     continues separately.
-
-The structural steps below work for either option. Where the plan says "the
-SPA", read that as either `src/web-next/build` or `src/web/` during the
-transition.
+`src/web-next/` (the SvelteKit scaffold) is **not** the target and is out
+of scope for this campaign. It can be removed or left dormant; do not
+invest further effort in it. Where this plan says "the SPA", read that as
+`src/web/`.
 
 ---
 
 ## Phase 0 — Choose the single frontend and freeze duplication
 
-1. Declare one frontend as the source of truth.
-   - Recommended: `src/web-next/`.
-   - Interim fallback: `src/web/`.
+1. Declare `src/web/` as the source of truth for all frontend work.
 2. Stop adding net-new user-facing features to `src/renderer/` unless the work
    is strictly desktop-native.
 3. Treat `src/renderer/` as a compatibility shell during the migration, not as
    an evolving app.
-4. Update `REFACTORS2.md` / `FEATURES.md` language if needed so contributors do
-   not keep landing mirrored UI work on both sides.
+4. Update `REFACTORS2.md` / `FEATURES.md` language so contributors do not keep
+   landing mirrored UI work on both sides.
+5. Remove or freeze `src/web-next/` so it is not mistaken for the target.
 
 Exit criteria:
 - Everyone working in the repo knows which frontend owns future UI work.
@@ -81,10 +72,7 @@ Exit criteria:
 The unified SPA needs a small, explicit way to ask "am I running inside
 Electron, and if so, what native capabilities are available?"
 
-1. Add a tiny frontend host module.
-   - Example target:
-     - `src/web-next/src/lib/host/` if `src/web-next/` is the target
-     - `src/web/host/` if the legacy web UI is used first
+1. Add a tiny frontend host module at `src/web/host/`.
 2. Expose only desktop-native capabilities through preload:
    - open file passed by OS / app menu
    - native file-picker or folder-picker, if still preferred over browser
@@ -177,7 +165,7 @@ Exit criteria:
 The current split is not only visual; it also duplicates transport.
 
 1. Prefer HTTP API access for shared product behavior.
-   - `src/web/api.js` or its `src/web-next/` successor becomes canonical.
+   - `src/web/api.js` is canonical.
 2. Reserve IPC for host-only actions.
    - menu events
    - native path/file affordances
@@ -280,7 +268,7 @@ Exit criteria:
 
 ## Suggested execution order
 
-1. Pick the canonical SPA target (`src/web-next/` recommended).
+1. Declare `src/web/` canonical; freeze/remove `src/web-next/`.
 2. Add the host capability boundary.
 3. Make Electron load the same SPA served by the embedded server.
 4. Move desktop-only flows into the SPA path.
@@ -297,9 +285,10 @@ Exit criteria:
 - Some Electron-only flows may currently assume IPC-first state rather than URL
     or API-driven SPA state.
   - Mitigation: convert those flows one at a time behind the new host wrapper.
-- `src/web/` and `src/web-next/` are themselves a second frontend split.
-  - Mitigation: pick one of them early. Do not finish this campaign while still
-    maintaining both.
+- `src/web-next/` exists as a partial SvelteKit scaffold and could distract
+  from the unification work.
+  - Mitigation: remove or freeze `src/web-next/` early in Phase 0 so all
+    frontend work lands on `src/web/`.
 - Packaging may still copy the old web assets or build the old renderer target.
   - Mitigation: treat `forge.config.ts` and static-root selection as explicit
     cutover checkpoints.
