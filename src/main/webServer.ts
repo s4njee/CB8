@@ -220,8 +220,11 @@ export interface WebServerHandle {
  * Start the embedded HTTP server.
  * @param db    The open LibraryDatabase instance.
  * @param port  TCP port to listen on. Default 8008.
+ * @param host  Bind address. Default `0.0.0.0` (reachable from LAN). Pass
+ *              `127.0.0.1` for local-only when LAN exposure is disabled —
+ *              the desktop window still loads the SPA from the local URL.
  */
-export function startWebServer(db: LibraryDatabase, port = 8008): WebServerHandle {
+export function startWebServer(db: LibraryDatabase, port = 8008, host = '0.0.0.0'): WebServerHandle {
   ensureInitialAdmin(db).catch((err) => {
     console.error('[CB8] Failed to create initial admin user:', err);
   });
@@ -258,10 +261,14 @@ export function startWebServer(db: LibraryDatabase, port = 8008): WebServerHandl
     });
   });
 
-  server.listen(port, '0.0.0.0', () => {
-    const lan = getLanIp();
-    console.log(`[CB8] Web UI: http://localhost:${port}`);
-    console.log(`[CB8] LAN:    http://${lan}:${port}`);
+  server.listen(port, host, () => {
+    if (host === '0.0.0.0') {
+      const lan = getLanIp();
+      console.log(`[CB8] Web UI: http://localhost:${port}`);
+      console.log(`[CB8] LAN:    http://${lan}:${port}`);
+    } else {
+      console.log(`[CB8] Web UI: http://${host}:${port} (local-only)`);
+    }
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {

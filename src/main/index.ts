@@ -86,7 +86,10 @@ const createWindow = (): void => {
     db = null;
   }
   try {
-    registerIpcHandlers(db, webServerRef, refreshRecentMenu);
+    // 'desktop' mode keeps the embedded server alive at all times — the
+    // BrowserWindow loads the SPA from it. The user-facing "enabled" toggle
+    // controls LAN exposure (bind 0.0.0.0 vs 127.0.0.1), not server existence.
+    registerIpcHandlers(db, webServerRef, refreshRecentMenu, 'desktop');
   } catch (err) {
     console.error('[CB8] Failed to register IPC handlers:', err);
   }
@@ -105,13 +108,14 @@ const createWindow = (): void => {
 
   Menu.setApplicationMenu(buildApplicationMenu(mainWindow, menuContext()));
 
-  if (typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined') {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
-    );
-  }
+  // Load the SPA from the embedded server. registerIpcHandlers' desktop-mode
+  // autostart guarantees a handle exists when DB init succeeded; if it failed,
+  // fall back to a direct URL using the saved/default port so a stale server
+  // (or a manual `pnpm start --headless` already binding the port) is still
+  // reachable.
+  const handle = webServerRef.handle;
+  const port = handle?.port ?? 8008;
+  mainWindow.loadURL(`http://127.0.0.1:${port}`);
 
   mainWindow.webContents.once('did-finish-load', () => {
     for (const filePath of pendingOpenFiles.splice(0)) {
@@ -132,7 +136,7 @@ function startHeadless(): void {
     const dbPath = path.join(userDataPath, 'library.db');
     db = new LibraryDatabase(dbPath);
     db.initialize();
-    registerIpcHandlers(db, webServerRef);
+    registerIpcHandlers(db, webServerRef, undefined, 'headless');
   } catch (err) {
     console.error('[CB8] Failed to initialize database or IPC:', err);
     process.exit(1);
