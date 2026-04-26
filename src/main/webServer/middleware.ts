@@ -1,11 +1,18 @@
 import * as http from 'node:http';
+import * as crypto from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import type { LibraryDatabase } from '../libraryDatabase';
 import type { QueryOptions } from '../../shared/types';
 
-/** Legacy hardcoded admin password, migrated to the first users row on startup. */
-const LEGACY_ADMIN_PASSWORD = 'gentrification';
 export const GUEST_ACCESS_KEY = 'guest_access';
+
+/**
+ * 18 bytes → 24 url-safe base64 chars. Enough entropy that the password is
+ * useful as the only credential on first boot, short enough to retype.
+ */
+function generateInitialAdminPassword(): string {
+  return crypto.randomBytes(18).toString('base64url');
+}
 
 /**
  * "Superadmin" = authenticated admin whose connection originates from the
@@ -42,9 +49,10 @@ export function isGuestAccessEnabled(db: LibraryDatabase): boolean {
   return v !== 'false';
 }
 
-export async function ensureInitialAdmin(db: LibraryDatabase): Promise<void> {
+export function ensureInitialAdmin(db: LibraryDatabase): void {
   if (db.countUsers() > 0) return;
-  const hash = await bcrypt.hash(LEGACY_ADMIN_PASSWORD, 10);
+  const password = generateInitialAdminPassword();
+  const hash = bcrypt.hashSync(password, 10);
   const user = db.createUser('admin', hash, true);
   // better-auth's username plugin validates the returned user shape on
   // sign-in and rejects rows where email / display_username / name are null.
@@ -64,7 +72,15 @@ export async function ensureInitialAdmin(db: LibraryDatabase): Promise<void> {
   // this covers the first-boot case where the migration runs against an empty
   // table and then we immediately insert the admin.
   db.upsertCredentialAccount(user.id, 'admin', hash);
-  console.log('[CB8] Created initial admin user (username=admin, default password).');
+  // Printed only here, only once. The plaintext is never persisted — if the
+  // operator misses this line they must reset via the CLI / DB directly.
+  const banner = '='.repeat(60);
+  console.log(`\n${banner}`);
+  console.log('[CB8] Initial admin account created.');
+  console.log('      username: admin');
+  console.log(`      password: ${password}`);
+  console.log('      Sign in and change this password immediately.');
+  console.log(`${banner}\n`);
 }
 
 export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {

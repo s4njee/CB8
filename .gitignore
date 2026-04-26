@@ -4,6 +4,13 @@ dist/
 out/
 *.js.map
 
+# OS / editor / tooling cruft.
+.DS_Store
+.env
+.env.*
+.pnpm-store/
+.claude/
+
 # Local comic libraries — never part of the repo.
 /Marvel Omnibus*/
 /comics/

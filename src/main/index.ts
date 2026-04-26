@@ -12,6 +12,13 @@ const isHeadless =
   process.argv.includes('--headless') ||
   process.env.CB8_HEADLESS === '1';
 
+// On headless servers there is no display / GPU — skip hardware acceleration
+// so Electron doesn't try to initialise it and fail. Must be called before
+// `app.ready` fires, hence the top-level position.
+if (isHeadless) {
+  app.disableHardwareAcceleration();
+}
+
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 try {
   if (require('electron-squirrel-startup')) {
