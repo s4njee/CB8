@@ -42,36 +42,65 @@ type Spec<Args extends readonly unknown[], Result> = { args: Args; result: Resul
 // touch it. Using `null!` keeps the bundle small.
 const phantom = null! as never;
 
+/*
+ * PLAN10 Phase 4 audit. Channels are grouped by their fate post-renderer-removal:
+ *
+ *   HOST       — Stay. Genuine shell concerns (native pickers, OS open, fullscreen,
+ *                embedded-server controls) with no HTTP-API equivalent.
+ *   RETIRE     — Delete with `src/renderer/` in Phase 6. Each one duplicates an
+ *                existing HTTP route the SPA already uses; the React renderer is
+ *                the only remaining caller.
+ *   AUDIT-GAP  — Retire-eligible but lacks a verified HTTP equivalent. Phase 5
+ *                must port these onto the server before deletion.
+ */
 export const IpcInvokeMap = {
+  // RETIRE — HTTP: /api/comics/:id/pages/:n streams pages directly.
   'archive:open':                  phantom as Spec<[filePath: string], ArchiveOpenResponse>,
   'archive:page':                  phantom as Spec<[pageIndex: number], ArchivePageResponse>,
   'archive:close':                 phantom as Spec<[], void>,
+  // RETIRE — HTTP: /api/comics/:id/file streams the original file body.
   'book:read-file':                phantom as Spec<[filePath: string], ArrayBuffer>,
+  // HOST — native pickers; the SPA falls back to <input type=file> in browsers.
   'dialog:open-file':              phantom as Spec<[], string | null>,
   'dialog:open-directory':         phantom as Spec<[], string | null>,
+  // RETIRE — HTTP: GET /api/comics covers the same query shape.
   'library:query':                 phantom as Spec<[options: QueryOptions], QueryResult>,
+  // RETIRE — HTTP: /api/admin/add-path runs an equivalent server-side scan.
   'library:scan':                  phantom as Spec<[directoryPath: string], number>,
   'library:scan-books':            phantom as Spec<[directoryPath: string], number>,
+  // RETIRE — local-fs drop classification; SPA reads File objects directly and
+  // posts to /api/admin/upload, which sidesteps the path classification step.
   'library:classify-paths':        phantom as Spec<[paths: string[]], { files: string[]; directories: string[] }>,
   'library:add-files':             phantom as Spec<[filePaths: string[]], AddFilesResponse>,
+  // AUDIT-GAP — no HTTP equivalent for "re-read book metadata for an indexed
+  // comic" yet. Phase 5: add POST /api/comics/:id/refresh-metadata.
   'library:refresh-book-metadata': phantom as Spec<[comicId: number], MediaRecord | null>,
+  // RETIRE — HTTP: PUT /api/comics/:id/tags carries the full tag set.
   'library:add-tag':               phantom as Spec<[comicId: number, tag: string], void>,
   'library:remove-tag':            phantom as Spec<[comicId: number, tag: string], void>,
+  // RETIRE — HTTP: DELETE /api/comics/:id (one-by-one); the SPA loops.
   'library:remove-comics':         phantom as Spec<[ids: number[]], void>,
+  // RETIRE — HTTP: /api/comics/:id/thumbnail returns image bytes directly.
   'library:get-thumbnail':         phantom as Spec<[comicId: number], Buffer | null>,
+  // RETIRE — HTTP: /api/tags + PUT /api/tags/:name + DELETE /api/tags/:name.
   'library:get-tags':              phantom as Spec<[], string[]>,
   'library:rename-tag':            phantom as Spec<[oldName: string, newName: string], void>,
   'library:delete-tag':            phantom as Spec<[tag: string], void>,
+  // AUDIT-GAP — bulk tag ops have no single HTTP route; the SPA loops over
+  // individual PUTs today. Phase 5 may add POST /api/tags/:name/comics.
   'library:add-tag-bulk':          phantom as Spec<[comicIds: number[], tag: string], void>,
   'library:remove-tag-bulk':       phantom as Spec<[comicIds: number[], tag: string], void>,
+  // RETIRE — HTTP: /api/libraries[ /:id[ /comics ] ] mirrors all of these.
   'libraries:list':                phantom as Spec<[mediaType?: 'comic' | 'book'], LibrarySummary[]>,
   'libraries:create':              phantom as Spec<[name: string, mediaType?: 'comic' | 'book'], { id: number; name: string; mediaType: 'comic' | 'book' } | null>,
   'libraries:rename':              phantom as Spec<[id: number, newName: string], void>,
   'libraries:delete':              phantom as Spec<[id: number], void>,
   'libraries:add-comics':          phantom as Spec<[libraryId: number, comicIds: number[]], void>,
+  // AUDIT-GAP — "add a whole folder of comics to a library" has no HTTP route.
   'libraries:add-folders':         phantom as Spec<[libraryId: number, folderIds: number[]], void>,
   'libraries:remove-comics':       phantom as Spec<[libraryId: number, comicIds: number[]], void>,
   'libraries:query':               phantom as Spec<[libraryId: number, options: QueryOptions], QueryResult>,
+  // RETIRE — HTTP: /api/folders[ /:id[ /comics ] ].
   'folders:list':                  phantom as Spec<[libraryId?: number | null], FolderSummary[]>,
   'folders:create':                phantom as Spec<[name: string, comicIds: number[]], { id: number; name: string } | null>,
   'folders:rename':                phantom as Spec<[id: number, newName: string], void>,
@@ -79,15 +108,25 @@ export const IpcInvokeMap = {
   'folders:add-comics':            phantom as Spec<[folderId: number, comicIds: number[]], void>,
   'folders:remove-comics':         phantom as Spec<[folderId: number, comicIds: number[]], void>,
   'folders:query':                 phantom as Spec<[folderId: number, options: QueryOptions], QueryResult>,
+  // RETIRE — HTTP: PUT /api/comics/:id/progress + /api/recently-read.
   'reading:update-progress':       phantom as Spec<[comicId: number, pageIndex: number], void>,
   'reading:update-location':       phantom as Spec<[comicId: number, location: string], void>,
   'reading:recently-read':         phantom as Spec<[limit?: number, mediaType?: 'comic' | 'book'], MediaRecord[]>,
+  // HOST — used by main when resolving `file-opened` to a comic id; never
+  // called from the SPA. Keep for the OS-open code path.
   'reading:get-comic-by-path':     phantom as Spec<[filePath: string], MediaRecord | null>,
+  // HOST — open a path in the OS file manager / default app.
   'shell:open-path':               phantom as Spec<[filePath: string], string>,
+  // HOST — browsers have a native Fullscreen API; this drives Electron's
+  // BrowserWindow chrome instead.
   'window:toggle-fullscreen':      phantom as Spec<[], void>,
   'window:exit-fullscreen':        phantom as Spec<[], void>,
+  // HOST — controls the embedded server itself; no HTTP analogue makes sense.
   'webserver:get-settings':        phantom as Spec<[], { enabled: boolean; port: number; url: string | null; lanUrl: string | null }>,
   'webserver:set-settings':        phantom as Spec<[enabled: boolean, port: number], { enabled: boolean; port: number; url: string | null; lanUrl: string | null }>,
+  // AUDIT-GAP — generic app-meta read/write used by SettingsDialog.tsx for
+  // ad-hoc keys. Phase 5: replace each caller with a typed HTTP setting
+  // (e.g. /api/settings/guest-access already does this for one key).
   'app-meta:get':                  phantom as Spec<[key: string], string | null>,
   'app-meta:set':                  phantom as Spec<[key: string, value: string], void>,
 } as const;
