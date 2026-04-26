@@ -90,9 +90,9 @@ async function clearDatabaseAndRelaunch(win: BrowserWindow, ctx: MenuContext): P
     try { fs.unlinkSync(target); } catch { /* may not exist */ }
   }
 
-  if (app.isPackaged) {
-    app.relaunch();
-  }
+  // Clearing the DB is a "wipe and start fresh" flow in both packaged and
+  // dev runs. The confirmation copy promises a restart, so always relaunch.
+  app.relaunch();
   app.quit();
 }
 

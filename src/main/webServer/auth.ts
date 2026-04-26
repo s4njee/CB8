@@ -104,6 +104,9 @@ function buildAuth(db: Database.Database) {
     database: db,
     secret: resolveSecret(),
     baseURL: resolveBaseURL(),
+    telemetry: {
+      enabled: false,
+    },
     advanced: {
       database: { generateId: false },
       cookiePrefix: 'cb8',

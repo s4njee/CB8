@@ -7,7 +7,7 @@
 
 export const state = {
   mediaType: '',       // '' | 'comic' | 'book'
-  sortBy:    'title',  // 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead'
+  sortBy:    'dateAdded',  // 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead'
   search:    '',
   fileExt:   '',       // '' | 'epub' | 'pdf' | 'cbz' | 'cbr' | 'mobi'
   readStatus: '',      // '' | 'unread' | 'in-progress' | 'completed'

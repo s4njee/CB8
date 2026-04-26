@@ -36,7 +36,6 @@ let sentinel = null;
 let observer = null;
 let currentRoute = null;
 let currentOptions = null;
-let container = null;
 let grid = null;
 let renderEpoch = 0;
 
@@ -53,8 +52,6 @@ export async function renderLibrary(el, route, options) {
   offset = 0;
   totalCount = 0;
   loading = false;
-  container = el;
-  void container;
 
   resetSelection();
 
@@ -273,8 +270,11 @@ async function loadNextPage(epoch = renderEpoch) {
       ...currentOptions,
       offset,
       limit: PAGE_SIZE,
-      sortBy: currentOptions.sortBy || 'title',
-      sortOrder: currentOptions.sortBy === 'lastRead' ? 'desc' : undefined,
+      sortBy: currentOptions.sortBy || 'dateAdded',
+      sortOrder:
+        currentOptions.sortBy === 'dateAdded' || currentOptions.sortBy === 'lastRead'
+          ? 'desc'
+          : undefined,
     };
 
     let result;

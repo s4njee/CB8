@@ -225,9 +225,11 @@ export interface WebServerHandle {
  *              the desktop window still loads the SPA from the local URL.
  */
 export function startWebServer(db: LibraryDatabase, port = 8008, host = '0.0.0.0'): WebServerHandle {
-  ensureInitialAdmin(db).catch((err) => {
+  try {
+    ensureInitialAdmin(db);
+  } catch (err) {
     console.error('[CB8] Failed to create initial admin user:', err);
-  });
+  }
 
   // Initialize better-auth against the raw sqlite handle and wrap it as a
   // Node-style http handler so we can dispatch on URL prefix.
