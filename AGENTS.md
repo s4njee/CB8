@@ -62,11 +62,12 @@ ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron scripts/bench-search.mjs --r
   - `src/shared/ipcTypes.ts`: canonical IPC channel names, argument tuples, result types, event payloads, send-only channels.
   - `src/shared/mediaTypes.ts`: extension allowlist + media-type classification.
   - `src/shared/types.ts`: `MediaRecord`, `QueryOptions`, `FilterPreset`, `ScanProgress`, etc.
-- `src/web/`: browser-only web UI served by the embedded HTTP server (vanilla ES modules, no React).
+- `src/web/`: canonical SPA — served by the embedded HTTP server for browser clients, and (per PLAN10) loaded by Electron once the cutover lands. Vanilla ES modules, no React.
   - `src/web/views/library/`: card builders, strip filters, selection, empty states.
   - `src/web/views/reader/`: reader entry + per-format submodules + comic-reader gestures/keyboard.
   - `src/web/admin/`: auth flows + admin UI (login, signup, forgot/reset password, upload, add-path, context menu, modal).
   - `src/web/app/`: routing, sidebar, toast, sort sheet, tab panel, drop, state.
+  - `src/web/host/`: desktop-host capability boundary (`isElectron`, `onFileOpened`, `onOpenSettings`, native pickers, `openExternalPath`). Browser callers degrade to no-ops. Domain operations belong on the HTTP API, not here.
 
 ## IPC Rules
 
