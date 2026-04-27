@@ -41,6 +41,10 @@ jobs:
         if: matrix.platform == 'darwin'
         run: pip3 install --break-system-packages setuptools
 
+      - name: Install AppImage dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: sudo apt-get install -y libfuse2
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -48,6 +52,7 @@ jobs:
         run: pnpm run make
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
