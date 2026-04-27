@@ -4,6 +4,7 @@ import { defineConfig, type Plugin } from 'vite';
 const extraExternals = [
   'better-sqlite3',
   '@napi-rs/canvas',
+  'sharp',
   'node-unrar-js',
   'yauzl',
   '@jsquash/jxl',
