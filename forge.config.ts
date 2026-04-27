@@ -2,8 +2,7 @@ import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDMG } from '@electron-forge/maker-dmg';
-import { MakerDeb } from '@electron-forge/maker-deb';
-import { MakerRpm } from '@electron-forge/maker-rpm';
+import MakerAppImage from '@reforged/maker-appimage';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -80,10 +79,8 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({ authors: 's4njee' }),
-    new MakerZIP({}, ['linux']),
     new MakerDMG({}),
-    new MakerDeb({}),
-    new MakerRpm({}),
+    new MakerAppImage({}),
   ],
   plugins: [
     new VitePlugin({

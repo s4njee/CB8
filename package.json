@@ -30,6 +30,7 @@
     "@electron/notarize": "^3.1.1",
     "@electron/osx-sign": "^2.4.0",
     "@electron/rebuild": "^3.7.0",
+    "@reforged/maker-appimage": "^5.2.0",
     "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/yauzl": "^2.10.3",
