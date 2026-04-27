@@ -131,7 +131,7 @@ spec:
       containers:
         - name: cb8
           image: ghcr.io/s4njee/cb8:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           ports:
             - name: http
               containerPort: 8008

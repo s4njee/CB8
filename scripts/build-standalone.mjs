@@ -43,7 +43,11 @@ await build({
     js: [
       '#!/usr/bin/env node',
       "import { createRequire as __cb8_createRequire } from 'node:module';",
+      "import { fileURLToPath as __cb8_fileURLToPath } from 'node:url';",
+      "import { dirname as __cb8_dirname } from 'node:path';",
       'const require = __cb8_createRequire(import.meta.url);',
+      'const __filename = __cb8_fileURLToPath(import.meta.url);',
+      'const __dirname = __cb8_dirname(__filename);',
     ].join('\n'),
   },
 });
