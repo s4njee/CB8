@@ -32,6 +32,7 @@ export const handle: RouteHandler = async (ctx) => {
     try {
       const result = await getAuth().api.signInUsername({
         body: { username, password: parsed.password },
+        headers: fromNodeHeaders(req.headers),
         returnHeaders: true,
       });
       const cookies = result.headers?.getSetCookie?.() ?? [];
@@ -74,6 +75,21 @@ export const handle: RouteHandler = async (ctx) => {
     } catch {
       // best-effort; always succeed
     }
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // Initial credentials — public, used for first-boot auto-login and settings display.
+  if (method === 'GET' && pathname === '/api/settings/initial-credentials') {
+    const password = db.getAppMeta('initial_password') || null;
+    sendJson(res, 200, { username: 'admin', password });
+    return true;
+  }
+
+  // Clear initial password (admin only — called after the admin has set a real password)
+  if (method === 'DELETE' && pathname === '/api/settings/initial-credentials') {
+    if (!requireAdmin(ctx)) return true;
+    db.setAppMeta('initial_password', '');
     sendJson(res, 200, { ok: true });
     return true;
   }

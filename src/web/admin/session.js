@@ -41,18 +41,33 @@ function notify() {
   }
 }
 
-export async function refreshSession() {
+async function fetchAndApplySession() {
   try {
     const resp = await api.getSession();
     state.authenticated = Boolean(resp.authenticated);
     state.host = Boolean(resp.host);
     state.user = resp.user ?? null;
     state.guestAccess = Boolean(resp.guestAccess);
+    return state.authenticated;
   } catch {
     state.authenticated = false;
     state.host = false;
     state.user = null;
     state.guestAccess = false;
+    return false;
+  }
+}
+
+export async function refreshSession() {
+  const authed = await fetchAndApplySession();
+  if (!authed) {
+    try {
+      const { password } = await api.fetchInitialCredentials();
+      if (password) {
+        await api.adminLogin(password);
+        await fetchAndApplySession();
+      }
+    } catch { /* auto-login failed; stay unauthenticated */ }
   }
   notify();
   return state.authenticated;

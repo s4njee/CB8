@@ -90,6 +90,15 @@ function resolveTrustedOrigins(): string[] {
       }
     }
   } catch { /* fall back to BASE_URL only */ }
+  // Comma-separated extra origins for k8s/Ingress/cross-network deploys where
+  // the browser-facing host:port differs from the pod's view.
+  const extra = process.env.BETTER_AUTH_TRUSTED_ORIGINS;
+  if (extra) {
+    for (const origin of extra.split(',')) {
+      const trimmed = origin.trim();
+      if (trimmed) out.add(trimmed);
+    }
+  }
   return Array.from(out);
 }
 
@@ -205,7 +214,23 @@ function buildAuth(db: Database.Database) {
         maxUsernameLength: 30,
       }),
     ],
-    trustedOrigins: resolveTrustedOrigins(),
+    // Per-request trusted origins: always include the configured static set,
+    // and additionally trust the Origin header when it points at the same
+    // host as the incoming request (i.e. the SPA we just served). This makes
+    // NodePort/LoadBalancer/Ingress deploys work without curating every
+    // possible host:port pair in env vars.
+    trustedOrigins: (request) => {
+      const out = new Set<string>(resolveTrustedOrigins());
+      try {
+        const origin = request?.headers.get('origin');
+        const host = request?.headers.get('host');
+        if (origin && host) {
+          const o = new URL(origin);
+          if (o.host === host) out.add(origin);
+        }
+      } catch { /* ignore */ }
+      return Array.from(out);
+    },
   });
 }
 

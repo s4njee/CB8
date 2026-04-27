@@ -10,6 +10,7 @@ import { state, isAdmin, refreshSession } from './session.js';
 import { renderLogin } from './login.js';
 import { renderUpload } from './upload.js';
 import { renderAddPath } from './addPath.js';
+import { renderSettings } from './settings.js';
 
 export function renderMenu(body) {
   const authed = state.authenticated;
@@ -28,6 +29,9 @@ export function renderMenu(body) {
         </button>
       ` : ''}
       ${authed ? `
+        <button type="button" class="admin-menu-btn" data-action="settings">
+          Settings
+        </button>
         <button type="button" class="admin-menu-btn" data-action="logout">
           Sign out
         </button>
@@ -50,6 +54,11 @@ export function renderMenu(body) {
   const addPathBtn = body.querySelector('[data-action="add-path"]');
   if (addPathBtn) {
     addPathBtn.addEventListener('click', () => openModal(renderAddPath));
+  }
+
+  const settingsBtn = body.querySelector('[data-action="settings"]');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => openModal((b) => renderSettings(b)));
   }
 
   const loginBtn = body.querySelector('[data-action="login"]');

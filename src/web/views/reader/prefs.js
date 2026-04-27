@@ -2,13 +2,13 @@
  * views/reader/prefs.js — Persistent comic-reader prefs + in-memory EPUB prefs.
  */
 
-const PREFS_KEY = 'cb8.reader.prefs.v1';
+const PREFS_KEY = 'cb8.reader.prefs.v2';
 
 export const DEFAULT_PREFS = {
   zoomMode: 'fit-height',   // 'fit-width' | 'fit-height' | 'original'
   direction: 'ltr',         // 'ltr' | 'rtl'
   transition: 'slide',      // 'none' | 'slide' | 'fade'
-  spread: 'single',         // 'single' | 'double'
+  spread: 'double',         // 'single' | 'double'
 };
 
 export function loadReaderPrefs() {
@@ -30,6 +30,7 @@ const DEFAULT_EPUB_PREFS = {
   fontSize: 100,
   fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   themeMode: 'black', // 'black' | 'white'
+  googleFont: '',     // Google Font name, e.g. 'Merriweather'
 };
 
 function loadEpubPrefs() {

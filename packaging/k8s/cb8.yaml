@@ -1,0 +1,195 @@
+# CB8 headless deployment using hostPath storage.
+#
+# Single pod. SQLite is the source of truth, so this Deployment cannot scale
+# horizontally — `replicas: 1` and `strategy: Recreate` are intentional.
+#
+# Storage layout (hostPath, all on the node selected by the nodeSelector):
+#   - cb8-data    /var/lib/cb8   SQLite DB, generated covers, uploads.
+#   - cb8-comics  /comics        comic archives (.cbz / .cbr).
+#   - cb8-ebooks  /ebooks        e-book files (.epub / .pdf / .mobi).
+#
+# After the pod is up, sign in as admin and add /comics and /ebooks as
+# library paths from the web UI.
+#
+# Override host paths and the target node via kustomization.yaml in this
+# directory.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cb8
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: cb8-data
+  labels: { app: cb8, role: data }
+spec:
+  capacity: { storage: 10Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: cb8-hostpath
+  hostPath:
+    path: /srv/cb8/data
+    type: DirectoryOrCreate
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: cb8-comics
+  labels: { app: cb8, role: comics }
+spec:
+  capacity: { storage: 1Ti }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: cb8-hostpath
+  hostPath:
+    path: /mnt/raid6/comics
+    type: Directory
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: cb8-ebooks
+  labels: { app: cb8, role: ebooks }
+spec:
+  capacity: { storage: 1Ti }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: cb8-hostpath
+  hostPath:
+    path: /mnt/raid6/ebooks
+    type: Directory
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cb8-data
+  namespace: cb8
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: cb8-hostpath
+  resources: { requests: { storage: 10Gi } }
+  selector:
+    matchLabels: { app: cb8, role: data }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cb8-comics
+  namespace: cb8
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: cb8-hostpath
+  resources: { requests: { storage: 1Ti } }
+  selector:
+    matchLabels: { app: cb8, role: comics }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cb8-ebooks
+  namespace: cb8
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: cb8-hostpath
+  resources: { requests: { storage: 1Ti } }
+  selector:
+    matchLabels: { app: cb8, role: ebooks }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cb8
+  namespace: cb8
+  labels: { app: cb8 }
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: cb8 }
+  template:
+    metadata:
+      labels: { app: cb8 }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      nodeSelector:
+        kubernetes.io/hostname: freya
+      containers:
+        - name: cb8
+          image: ghcr.io/s4njee/cb8:latest
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8008
+              protocol: TCP
+          env:
+            - name: CB8_DATA_DIR
+              value: /var/lib/cb8
+            - name: CB8_PORT
+              value: "8008"
+            - name: CB8_HOST
+              value: 0.0.0.0
+            - name: BETTER_AUTH_TRUSTED_ORIGINS
+              value: "http://192.168.1.248:4218,http://192.168.1.248:31456,http://freya.local:4218,http://freya.local:31456,http://freya:4218,http://freya:31456"
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cb8-secrets
+                  key: better-auth-secret
+                  optional: true
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "2000m", memory: "2Gi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/cb8
+            - name: comics
+              mountPath: /comics
+            - name: ebooks
+              mountPath: /ebooks
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: cb8-data }
+        - name: comics
+          persistentVolumeClaim: { claimName: cb8-comics }
+        - name: ebooks
+          persistentVolumeClaim: { claimName: cb8-ebooks }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cb8
+  namespace: cb8
+  labels: { app: cb8 }
+spec:
+  type: LoadBalancer
+  selector: { app: cb8 }
+  ports:
+    - name: http
+      port: 4218
+      targetPort: http
+      protocol: TCP

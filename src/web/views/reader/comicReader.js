@@ -103,6 +103,13 @@ export async function renderComicReader(el, record, initialPage, onBack) {
   readerBody.appendChild(tapPrev);
   readerBody.appendChild(tapNext);
 
+  const backBtn = document.createElement('a');
+  backBtn.className = 'reader-back-btn';
+  backBtn.href = '#/';
+  backBtn.textContent = '← Library';
+  backBtn.addEventListener('click', (e) => { e.preventDefault(); onBack(); });
+
+  el.appendChild(backBtn);
   el.appendChild(toolbar);
   el.appendChild(readerBody);
 
@@ -353,7 +360,35 @@ export async function renderComicReader(el, record, initialPage, onBack) {
     api.logHistory(record.id, 'closed', state.comicState?.currentPage ?? null).catch(() => {});
   };
 
-  img.addEventListener('click', () => toolbar.classList.toggle('hidden'));
+  // Auto-hide toolbar after 3s of inactivity; show on mouse/touch activity.
+  let hideTimer = null;
+  function showToolbar() {
+    toolbar.classList.remove('hidden');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => toolbar.classList.add('hidden'), 3000);
+  }
+  readerBody.addEventListener('mousemove', showToolbar);
+  // Show toolbar only on tap, not swipe — record start position and decide on touchend.
+  let _tapStartX = 0, _tapStartY = 0;
+  readerBody.addEventListener('touchstart', (e) => {
+    _tapStartX = e.touches[0].clientX;
+    _tapStartY = e.touches[0].clientY;
+  }, { passive: true });
+  readerBody.addEventListener('touchend', (e) => {
+    const dx = Math.abs(e.changedTouches[0].clientX - _tapStartX);
+    const dy = Math.abs(e.changedTouches[0].clientY - _tapStartY);
+    if (dx < 10 && dy < 10) showToolbar();
+  }, { passive: true });
+  toolbar.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+  toolbar.addEventListener('mouseleave', () => {
+    hideTimer = setTimeout(() => toolbar.classList.add('hidden'), 1000);
+  });
+  const prevCleanup = state.readerEl._cleanupKey;
+  state.readerEl._cleanupKey = () => {
+    clearTimeout(hideTimer);
+    prevCleanup?.();
+  };
+  showToolbar();
 
   acquireWakeLock();
   api.logHistory(record.id, 'opened', startPage).catch(() => {});

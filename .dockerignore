@@ -1,0 +1,13 @@
+node_modules
+.pnpm-store
+out
+dist
+.vite
+.git
+.github
+.idea
+.vscode
+*.log
+coverage
+.DS_Store
+packaging/k8s

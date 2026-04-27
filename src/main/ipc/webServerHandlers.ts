@@ -96,9 +96,7 @@ export function registerWebServerHandlers(
     const current = webServerRef.handle;
     const desiredHost = bindHostFor(mode, enabled);
     const portChanged = current?.port !== safePort;
-    const hostChanged = current?.lanUrl
-      ? (desiredHost !== '0.0.0.0')
-      : (desiredHost === '0.0.0.0');
+    const hostChanged = current?.host !== desiredHost;
 
     if (mode === 'desktop') {
       // The window depends on the server. Always end with a live handle.

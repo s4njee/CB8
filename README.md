@@ -77,6 +77,22 @@ journalctl --user -u cb8 -e   # the first-boot admin password is printed here
 
 To run as a system service instead, drop the unit at `/etc/systemd/system/cb8.service`, set `User=` and `Group=` to the account that should own the library, and use `systemctl` without `--user`.
 
+### In Kubernetes
+
+A Dockerfile and manifests live under [packaging/](packaging/):
+
+```sh
+docker build -f packaging/docker/Dockerfile -t ghcr.io/<you>/cb8:latest .
+docker push ghcr.io/<you>/cb8:latest
+
+cd packaging/k8s
+# Edit kustomization.yaml: image tag + hostPath locations.
+kubectl apply -k .
+kubectl -n cb8 logs deploy/cb8 | grep -A2 'Initial admin'
+```
+
+The Service is of type `LoadBalancer` on port `8008`. Storage is `hostPath` PVs (suitable for single-node / homelab clusters); on multi-node clusters add a `nodeSelector` so the pod lands where the directories actually exist. Because SQLite is the source of truth, the Deployment is pinned to `replicas: 1` with a `Recreate` strategy.
+
 ## Project Layout
 
 - `src/main/` — Electron main process, archive loading, scanning, SQLite, embedded HTTP server, IPC.
@@ -84,6 +100,8 @@ To run as a system service instead, drop the unit at `/etc/systemd/system/cb8.se
 - `src/shared/` — types and small utilities used by both sides.
 - `docs/` — internal planning notes, refactor logs, feature lists. Not load-bearing for users.
 - `packaging/systemd/` — systemd unit for headless mode.
+- `packaging/docker/` — Dockerfile for the headless image.
+- `packaging/k8s/` — Kubernetes manifests (Deployment + LoadBalancer + hostPath PVs) with a kustomization for per-cluster overrides.
 
 The root `CMakeLists.txt` is a leftover from an earlier Qt/C++ prototype and is unused.
 

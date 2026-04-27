@@ -148,7 +148,7 @@ export class FileScannerImpl implements FileScanner {
     try {
       if (ext === '.epub') {
         const coverImage = await withTimeout(extractEpubCover(filePath), COVER_EXTRACTION_TIMEOUT_MS);
-        return coverImage ? generateThumbnail(coverImage) : null;
+        return coverImage ? await generateThumbnail(coverImage) : null;
       }
       if (ext === '.pdf') {
         return withTimeout(renderPdfFirstPageCover(filePath), COVER_EXTRACTION_TIMEOUT_MS);

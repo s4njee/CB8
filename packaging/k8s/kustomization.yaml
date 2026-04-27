@@ -1,0 +1,51 @@
+# Edit the two `value:` fields below and run `kubectl apply -k .` to install
+# CB8 with your own hostPath locations and image tag, without touching
+# cb8.yaml. Anything you don't override falls back to the defaults baked
+# into cb8.yaml.
+
+resources:
+  - cb8.yaml
+
+# Override the image tag here.
+images:
+  - name: ghcr.io/s4njee/cb8
+    newName: cb8
+    newTag: local
+
+patches:
+  # ---- Host path for the SQLite DB / covers / uploads ----
+  - target:
+      kind: PersistentVolume
+      name: cb8-data
+    patch: |-
+      - op: replace
+        path: /spec/hostPath/path
+        value: /srv/cb8/data
+
+  # ---- Host path for your comic / book archives ----
+  - target:
+      kind: PersistentVolume
+      name: cb8-comics
+    patch: |-
+      - op: replace
+        path: /spec/hostPath/path
+        value: /mnt/raid6/comics
+
+  - target:
+      kind: PersistentVolume
+      name: cb8-ebooks
+    patch: |-
+      - op: replace
+        path: /spec/hostPath/path
+        value: /mnt/raid6/ebooks
+
+  # ---- Pin the pod to the node that owns those host paths (optional) ----
+  # Uncomment and set the hostname for multi-node clusters.
+  # - target:
+  #     kind: Deployment
+  #     name: cb8
+  #   patch: |-
+  #     - op: add
+  #       path: /spec/template/spec/nodeSelector
+  #       value:
+  #         kubernetes.io/hostname: my-storage-node

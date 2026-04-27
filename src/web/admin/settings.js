@@ -13,49 +13,68 @@
 import { closeModal } from './modal.js';
 import { showToast } from '../app/toast.js';
 import { getWebServerSettings, setWebServerSettings, isElectron } from '../host/index.js';
+import * as api from '../api.js';
 
-function renderUnavailable(body) {
-  body.innerHTML = `
-    <h2 class="admin-modal-title">Settings</h2>
-    <p style="margin: 0 0 12px 0; color: var(--text-dim);">
-      Web Server settings are only configurable from the desktop app.
-    </p>
-    <div class="admin-actions">
-      <button type="button" class="admin-btn-primary" data-action="close">Close</button>
-    </div>
-  `;
-  body.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+async function renderInitialPasswordSection(container) {
+  try {
+    const { password } = await api.fetchInitialCredentials();
+    if (!password) return;
+    const section = document.createElement('div');
+    section.className = 'settings-initial-password';
+    section.innerHTML = `
+      <div class="settings-initial-password-label">Temporary password</div>
+      <div class="settings-initial-password-row">
+        <code class="settings-initial-password-value">${password}</code>
+        <button type="button" class="admin-btn-secondary settings-initial-password-copy">Copy</button>
+        <button type="button" class="admin-btn-secondary settings-initial-password-clear">Clear</button>
+      </div>
+      <p class="settings-initial-password-hint">Change your password to invalidate this.</p>
+    `;
+    section.querySelector('.settings-initial-password-copy').addEventListener('click', () => {
+      navigator.clipboard?.writeText(password).catch(() => {});
+      showToast('Copied to clipboard');
+    });
+    section.querySelector('.settings-initial-password-clear').addEventListener('click', async () => {
+      try {
+        await api.clearInitialCredentials();
+        section.remove();
+        showToast('Temporary password cleared');
+      } catch (err) { showToast(err.message); }
+    });
+    container.prepend(section);
+  } catch { /* no initial password */ }
 }
 
-function renderForm(body, settings) {
-  body.innerHTML = `
-    <h2 class="admin-modal-title">Web Server</h2>
-    <form class="admin-form" autocomplete="off">
-      <label class="admin-label" style="display: flex; align-items: center; gap: 10px;">
-        <input id="ws-enabled" type="checkbox" />
-        <span>Expose to local network</span>
-      </label>
-      <p style="margin: -4px 0 4px 24px; color: var(--text-dim); font-size: 12px;">
-        When off, the server only listens on 127.0.0.1 (this machine).
-      </p>
+function renderWebServerForm(body, settings) {
+  const form = document.createElement('form');
+  form.className = 'admin-form';
+  form.autocomplete = 'off';
+  form.innerHTML = `
+    <label class="admin-label" style="display: flex; align-items: center; gap: 10px;">
+      <input id="ws-enabled" type="checkbox" />
+      <span>Expose to local network</span>
+    </label>
+    <p style="margin: -4px 0 4px 24px; color: var(--text-dim); font-size: 12px;">
+      When off, the server only listens on 127.0.0.1 (this machine).
+    </p>
 
-      <label class="admin-label" for="ws-port">Port</label>
-      <input id="ws-port" type="number" class="admin-input" min="1024" max="65535" step="1" />
+    <label class="admin-label" for="ws-port">Port</label>
+    <input id="ws-port" type="number" class="admin-input" min="1024" max="65535" step="1" />
 
-      <div id="ws-status" style="margin-top: 8px; font-size: 13px; color: var(--text-dim);"></div>
+    <div id="ws-status" style="margin-top: 8px; font-size: 13px; color: var(--text-dim);"></div>
 
-      <div class="admin-error" hidden></div>
-      <div class="admin-actions">
-        <button type="button" class="admin-btn-secondary" data-action="cancel">Close</button>
-        <button type="submit" class="admin-btn-primary" data-action="save">Apply</button>
-      </div>
-    </form>
+    <div class="admin-error" hidden></div>
+    <div class="admin-actions">
+      <button type="button" class="admin-btn-secondary" data-action="cancel">Close</button>
+      <button type="submit" class="admin-btn-primary" data-action="save">Apply</button>
+    </div>
   `;
-  const enabledInput = body.querySelector('#ws-enabled');
-  const portInput = body.querySelector('#ws-port');
-  const statusEl = body.querySelector('#ws-status');
-  const err = body.querySelector('.admin-error');
-  const form = body.querySelector('form');
+  body.appendChild(form);
+
+  const enabledInput = form.querySelector('#ws-enabled');
+  const portInput = form.querySelector('#ws-port');
+  const statusEl = form.querySelector('#ws-status');
+  const err = form.querySelector('.admin-error');
 
   function paint(s) {
     enabledInput.checked = s.enabled;
@@ -67,7 +86,7 @@ function renderForm(body, settings) {
   }
   paint(settings);
 
-  body.querySelector('[data-action="cancel"]').addEventListener('click', closeModal);
+  form.querySelector('[data-action="cancel"]').addEventListener('click', closeModal);
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -90,21 +109,24 @@ function renderForm(body, settings) {
 }
 
 export async function renderSettings(body) {
-  if (!isElectron()) {
-    renderUnavailable(body);
-    return;
+  body.innerHTML = `<h2 class="admin-modal-title">Settings</h2>`;
+
+  await renderInitialPasswordSection(body);
+
+  if (isElectron()) {
+    let settings;
+    try {
+      settings = await getWebServerSettings();
+    } catch { /* no web server settings */ }
+    if (settings) {
+      renderWebServerForm(body, settings);
+      return;
+    }
   }
-  body.innerHTML = `<p style="margin: 0; color: var(--text-dim);">Loading…</p>`;
-  let settings;
-  try {
-    settings = await getWebServerSettings();
-  } catch (err) {
-    body.innerHTML = `<p class="admin-error">${err.message || 'Failed to load settings.'}</p>`;
-    return;
-  }
-  if (!settings) {
-    renderUnavailable(body);
-    return;
-  }
-  renderForm(body, settings);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-actions';
+  actions.innerHTML = `<button type="button" class="admin-btn-primary" data-action="close">Close</button>`;
+  actions.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+  body.appendChild(actions);
 }

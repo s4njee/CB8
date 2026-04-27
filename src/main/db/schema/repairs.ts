@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { generateThumbnail } from '../../thumbnailGenerator';
 
-export function repairExistingThumbnails(db: Database.Database): void {
+export async function repairExistingThumbnails(db: Database.Database): Promise<void> {
   const repairKey = 'thumbnail_repair_v1';
   const completed = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(repairKey) as { value: string } | undefined;
   if (completed?.value === 'complete') return;
@@ -9,13 +9,18 @@ export function repairExistingThumbnails(db: Database.Database): void {
   try {
     const rows = db.prepare('SELECT id, cover_thumbnail FROM comics').all() as { id: number; cover_thumbnail: Buffer | null }[];
     if (rows.length > 0) {
+      // sharp is async, so resize all rows up-front and only then enter the
+      // sync transaction. Errors per-row fall back to the placeholder, which
+      // the resizer already returns on failure.
+      const resized: { id: number; thumb: Buffer }[] = [];
+      for (const row of rows) {
+        resized.push({ id: row.id, thumb: await generateThumbnail(row.cover_thumbnail) });
+      }
       const update = db.prepare('UPDATE comics SET cover_thumbnail = ? WHERE id = ?');
-      const tx = db.transaction((items: { id: number; cover_thumbnail: Buffer | null }[]) => {
-        for (const row of items) {
-          update.run(generateThumbnail(row.cover_thumbnail), row.id);
-        }
+      const tx = db.transaction((items: { id: number; thumb: Buffer }[]) => {
+        for (const item of items) update.run(item.thumb, item.id);
       });
-      tx(rows);
+      tx(resized);
     }
 
     db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(repairKey, 'complete');
@@ -82,8 +87,8 @@ export function backfillAccountFromPasswordHash(db: Database.Database): void {
   }
 }
 
-export function runRepairs(db: Database.Database): void {
-  repairExistingThumbnails(db);
+export async function runRepairs(db: Database.Database): Promise<void> {
+  await repairExistingThumbnails(db);
   backfillCompletedOnFinalPage(db);
   backfillAccountFromPasswordHash(db);
 }

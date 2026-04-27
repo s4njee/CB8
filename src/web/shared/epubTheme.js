@@ -39,6 +39,7 @@ export function getThemeColors(mode) {
  */
 export function buildEpubTheme(mode, fontFamily) {
   const colors = getThemeColors(mode);
+  const hPad = '2.75rem';
   const textRule = {
     color: `${colors.text} !important`,
     'background-color': 'transparent !important',
@@ -55,7 +56,7 @@ export function buildEpubTheme(mode, fontFamily) {
       'font-family': fontFamily,
       'line-height': '1.6',
       margin: '0',
-      padding: '2rem 2.75rem',
+      padding: `2rem ${hPad}`,
       'box-sizing': 'border-box',
     },
     'body *': textRule,

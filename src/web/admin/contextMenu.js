@@ -9,6 +9,7 @@ import * as api from '../api.js';
 import { showToast } from '../app.js';
 import { openModal, closeModal } from './modal.js';
 import { isAdmin } from './session.js';
+import { openFolderModal, openCollectionModal } from '../app/tabPanel.js';
 
 let _contextMenu = null;
 
@@ -187,13 +188,11 @@ export function openCardContextMenu(x, y, { targetId, targets, isSelected, grid,
       newBtn.type = 'button';
       newBtn.className = 'context-submenu-item';
       newBtn.textContent = '+ New collection…';
-      newBtn.addEventListener('click', () => {
+      newBtn.addEventListener('click', async () => {
         _closeContextMenu();
-        const name = window.prompt('Collection name:');
-        if (!name?.trim()) return;
-        const firstCard = grid?.querySelector(`.comic-card[data-id="${targets[0]}"]`);
-        const mediaType = firstCard?.querySelector('.card-badge.book') ? 'book' : 'comic';
-        api.createLibrary(name.trim(), mediaType)
+        const result = await openCollectionModal();
+        if (!result) return;
+        api.createLibrary(result.name, result.mediaType)
           .then((lib) => api.addComicsToLibrary(lib.id, targets).then(() => lib))
           .then((lib) => {
             const n = targets.length;
@@ -246,11 +245,11 @@ export function openCardContextMenu(x, y, { targetId, targets, isSelected, grid,
       newBtn.type = 'button';
       newBtn.className = 'context-submenu-item';
       newBtn.textContent = '+ New folder…';
-      newBtn.addEventListener('click', () => {
+      newBtn.addEventListener('click', async () => {
         _closeContextMenu();
-        const name = window.prompt('Folder name:');
-        if (!name?.trim()) return;
-        api.createFolder(name.trim(), targets)
+        const name = await openFolderModal();
+        if (!name) return;
+        api.createFolder(name, targets)
           .then((folder) => {
             showToast(`Created "${folder.name}" with ${targets.length} item${targets.length === 1 ? '' : 's'}`);
             window.dispatchEvent(new CustomEvent('cb8:library-changed'));
