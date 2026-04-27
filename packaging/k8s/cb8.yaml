@@ -143,6 +143,14 @@ spec:
               value: "8008"
             - name: CB8_HOST
               value: 0.0.0.0
+            - name: BETTER_AUTH_TRUSTED_ORIGINS
+              value: "http://192.168.1.248:4218,http://192.168.1.248:31456,http://freya.local:4218,http://freya.local:31456,http://freya:4218,http://freya:31456"
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cb8-secrets
+                  key: better-auth-secret
+                  optional: true
           readinessProbe:
             httpGet: { path: /, port: http }
             initialDelaySeconds: 5

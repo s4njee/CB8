@@ -90,6 +90,15 @@ function resolveTrustedOrigins(): string[] {
       }
     }
   } catch { /* fall back to BASE_URL only */ }
+  // Comma-separated extra origins for k8s/Ingress/cross-network deploys where
+  // the browser-facing host:port differs from the pod's view.
+  const extra = process.env.BETTER_AUTH_TRUSTED_ORIGINS;
+  if (extra) {
+    for (const origin of extra.split(',')) {
+      const trimmed = origin.trim();
+      if (trimmed) out.add(trimmed);
+    }
+  }
   return Array.from(out);
 }
 
