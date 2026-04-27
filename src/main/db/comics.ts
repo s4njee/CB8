@@ -69,6 +69,38 @@ export function rowToListRecord(row: ComicListRow): MediaRecord {
   };
 }
 
+/**
+ * Fast-path insert for the bulk ingest pipeline. Skips the post-insert
+ * SELECT round-trip and tag handling. Caller (flushBatch) runs this
+ * inside a single SQLite transaction across many rows.
+ */
+export function addComicFast(
+  db: Database.Database,
+  record: {
+    filePath: string;
+    title: string;
+    pageCount: number;
+    fileSize: number;
+    coverThumbnail: Buffer;
+    mediaType: 'comic' | 'book';
+  },
+): number {
+  db.prepare('DELETE FROM dismissed_paths WHERE file_path = ?').run(record.filePath);
+  const stmt = db.prepare(
+    `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, last_page, last_location, last_read, media_type)
+     VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`
+  );
+  const info = stmt.run(
+    record.filePath,
+    record.title,
+    record.pageCount,
+    record.fileSize,
+    record.coverThumbnail,
+    record.mediaType,
+  );
+  return info.lastInsertRowid as number;
+}
+
 export function addComic(db: Database.Database, record: Omit<MediaRecord, 'id' | 'dateAdded'>): MediaRecord {
   db.prepare('DELETE FROM dismissed_paths WHERE file_path = ?').run(record.filePath);
   const stmt = db.prepare(

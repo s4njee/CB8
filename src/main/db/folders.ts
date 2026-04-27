@@ -71,6 +71,21 @@ export function getAllFolders(
   });
 }
 
+/**
+ * Batched variant for the bulk ingest pipeline. Caller is already inside
+ * a transaction, so this skips the wrapper. Resolves the cover_comic_id
+ * once per call rather than once per row.
+ */
+export function addComicsToFolderRaw(db: Database.Database, folderId: number, comicIds: number[]): void {
+  if (comicIds.length === 0) return;
+  const stmt = db.prepare('INSERT OR IGNORE INTO folder_comics (folder_id, comic_id) VALUES (?, ?)');
+  for (const id of comicIds) stmt.run(folderId, id);
+  const folder = db.prepare('SELECT cover_comic_id FROM folders WHERE id = ?').get(folderId) as { cover_comic_id: number | null } | undefined;
+  if (folder && folder.cover_comic_id == null) {
+    db.prepare('UPDATE folders SET cover_comic_id = ? WHERE id = ?').run(comicIds[0], folderId);
+  }
+}
+
 export function addComicsToFolder(db: Database.Database, folderId: number, comicIds: number[]): void {
   const stmt = db.prepare('INSERT OR IGNORE INTO folder_comics (folder_id, comic_id) VALUES (?, ?)');
   const tx = db.transaction((ids: number[]) => {

@@ -62,7 +62,8 @@ COPY --from=builder /src/package.json      /app/package.json
 ENV NODE_ENV=production \
     CB8_DATA_DIR=/var/lib/cb8 \
     CB8_PORT=8008 \
-    CB8_HOST=0.0.0.0
+    CB8_HOST=0.0.0.0 \
+    UV_THREADPOOL_SIZE=64
 
 USER cb8
 EXPOSE 8008

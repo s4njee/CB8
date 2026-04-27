@@ -21,6 +21,10 @@ export function renderAddPath(body) {
         <input id="admin-path" type="text" class="admin-input" placeholder="Loading host path…" autocomplete="off" spellcheck="false" />
         <ul class="path-suggestions" hidden></ul>
       </div>
+      <label class="admin-label" for="admin-folder">Folder (optional)</label>
+      <input id="admin-folder" type="text" class="admin-input" list="admin-folder-options" placeholder="Leave empty to add to main library" autocomplete="off" spellcheck="false" />
+      <datalist id="admin-folder-options"></datalist>
+      <p class="admin-hint">Existing folders are suggested; a new name creates an empty folder. Foldered items don't appear in the main library view.</p>
       <div class="admin-error" hidden></div>
       <div class="admin-progress" hidden>
         <div class="admin-progress-phase"></div>
@@ -36,6 +40,8 @@ export function renderAddPath(body) {
   `;
   const form = body.querySelector('form');
   const input = body.querySelector('#admin-path');
+  const folderInput = body.querySelector('#admin-folder');
+  const folderOptions = body.querySelector('#admin-folder-options');
   const err = body.querySelector('.admin-error');
   const submit = form.querySelector('button[type="submit"]');
   const cancelBtn = body.querySelector('[data-action="cancel"]');
@@ -46,6 +52,14 @@ export function renderAddPath(body) {
   const progressFile = body.querySelector('.admin-progress-file');
 
   cancelBtn.addEventListener('click', () => openModal(renderMenu));
+
+  api.fetchFolders()
+    .then((folders) => {
+      folderOptions.innerHTML = (folders || [])
+        .map((f) => `<option value="${f.name.replace(/"/g, '&quot;')}"></option>`)
+        .join('');
+    })
+    .catch(() => { /* leave empty */ });
 
   api.adminHostInfo()
     .then(({ homePath }) => {
@@ -163,6 +177,7 @@ export function renderAddPath(body) {
     if (!p) return;
     submit.disabled = true;
     input.disabled = true;
+    folderInput.disabled = true;
     submit.textContent = 'Scanning…';
     progress.hidden = false;
     progressPhase.textContent = 'Starting…';
@@ -171,6 +186,7 @@ export function renderAddPath(body) {
     progressFile.textContent = '';
 
     try {
+      const folderName = folderInput.value.trim();
       const result = await api.adminAddPath(p, (msg) => {
         progressPhase.textContent = phaseLabel(msg.phase);
         const pct = msg.discovered > 0
@@ -181,7 +197,7 @@ export function renderAddPath(body) {
           ? `${msg.processed.toLocaleString()} / ${msg.discovered.toLocaleString()}`
           : 'Discovering files…';
         progressFile.textContent = msg.currentFile || '';
-      });
+      }, { folderName });
       const msg = result.added > 0
         ? `Added ${result.added.toLocaleString()} item${result.added === 1 ? '' : 's'}`
         : 'No new items found';
@@ -196,6 +212,7 @@ export function renderAddPath(body) {
     } finally {
       submit.disabled = false;
       input.disabled = false;
+      folderInput.disabled = false;
       submit.textContent = 'Add';
     }
   });

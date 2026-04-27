@@ -208,10 +208,21 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'POST' && pathname === '/api/admin/add-path') {
     if (!requireAdmin(ctx)) return true;
     const body = await readBody(req, 64 * 1024); // admin JSON: 64 KiB is plenty
-    let parsed: { path?: string };
+    let parsed: { path?: string; folderName?: string };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.path !== 'string' || !parsed.path.trim()) {
       sendError(res, 400, 'Provide "path" (string)'); return true;
+    }
+
+    // Resolve optional folder target. Implicit create-if-no-match: a name
+    // that doesn't case-insensitively match an existing folder creates one.
+    let folderId: number | undefined;
+    const folderName = typeof parsed.folderName === 'string' ? parsed.folderName.trim() : '';
+    if (folderName) {
+      const existing = db.getAllFolders().find(
+        (f) => f.name.toLowerCase() === folderName.toLowerCase(),
+      );
+      folderId = existing ? existing.id : db.createFolder(folderName, []).id;
     }
 
     res.writeHead(200, {
@@ -236,7 +247,7 @@ export const handle: RouteHandler = async (ctx) => {
     };
 
     try {
-      await ingestPathStreaming(db, parsed.path.trim(), emit);
+      await ingestPathStreaming(db, parsed.path.trim(), emit, folderId);
     } catch (err) {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
       emit({ type: 'done', added: 0 });

@@ -18,11 +18,13 @@ export interface FileScanner {
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
+    folderId?: number,
   ): Promise<number>;
   scanBooks(
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
+    folderId?: number,
   ): Promise<number>;
 }
 
@@ -37,66 +39,29 @@ export class FileScannerImpl implements FileScanner {
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
+    folderId?: number,
   ): Promise<number> {
-    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress, signal);
+    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress, signal, folderId);
   }
 
   async scanBooks(
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
+    folderId?: number,
   ): Promise<number> {
-    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress, signal);
+    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress, signal, folderId);
   }
 
   private async scanFiles(
     directoryPath: string,
-    extensions: Set<string>,
+    _extensions: Set<string>,
     mediaType: 'comic' | 'book',
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
+    folderId?: number,
   ): Promise<number> {
-    const progress: ScanProgress = {
-      discovered: 0,
-      processed: 0,
-      currentFile: '',
-    };
-
-    let newCount = 0;
-    const filesToProcess: string[] = [];
-
-    await this.discoverFiles(directoryPath, filesToProcess, extensions);
-    if (signal?.aborted) return newCount;
-    progress.discovered = filesToProcess.length;
-    onProgress({ ...progress });
-
-    for (const filePath of filesToProcess) {
-      if (signal?.aborted) break;
-      progress.currentFile = filePath;
-      onProgress({ ...progress });
-
-      try {
-        if (this.db.isDismissed(filePath)) {
-          // Skip: user previously removed this path from the library.
-        } else if (this.db.comicExistsByPath(filePath)) {
-          if (mediaType === 'book') {
-            await this.refreshBookMetadata(filePath);
-          }
-        } else {
-          const result = await this.ingestService.addFile(filePath);
-          if (result.added) newCount++;
-          else if (result.error) console.error(`Failed to process ${mediaType} at ${filePath}:`, result.error);
-        }
-      } catch (err) {
-        console.error(`Failed to process ${mediaType} at ${filePath}:`, err);
-      }
-
-      progress.processed++;
-      onProgress({ ...progress });
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-
-    return newCount;
+    return this.ingestService.scanDirectory(directoryPath, mediaType, onProgress, signal, folderId);
   }
 
   private async discoverFiles(dirPath: string, files: string[], extensions: Set<string>): Promise<void> {
