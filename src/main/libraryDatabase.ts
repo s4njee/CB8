@@ -33,12 +33,27 @@ export class LibraryDatabase {
   /** Raw better-sqlite3 handle — used by the better-auth adapter. */
   get raw(): Database.Database { return this.db; }
 
+  /**
+   * Run a synchronous block inside a single SQLite transaction. Used by
+   * the ingest pipeline to batch many small inserts into one commit,
+   * which avoids per-row WAL fsync cost.
+   */
+  runInTransaction(fn: () => void): void {
+    this.db.transaction(fn)();
+  }
+
   // --- app_meta ---
   getAppMeta(key: string): string | null { return appMeta.getAppMeta(this.db, key); }
   setAppMeta(key: string, value: string): void { appMeta.setAppMeta(this.db, key, value); }
 
   // --- comics ---
   addComic(record: Omit<MediaRecord, 'id' | 'dateAdded'>): MediaRecord { return comics.addComic(this.db, record); }
+  addComicFast(record: { filePath: string; title: string; pageCount: number; fileSize: number; coverThumbnail: Buffer; mediaType: 'comic' | 'book' }): number {
+    return comics.addComicFast(this.db, record);
+  }
+  addComicsToFolderRaw(folderId: number, comicIds: number[]): void {
+    folders.addComicsToFolderRaw(this.db, folderId, comicIds);
+  }
   removeComics(ids: number[]): void { comics.removeComics(this.db, ids); }
   isDismissed(filePath: string): boolean { return comics.isDismissed(this.db, filePath); }
   getComic(id: number): MediaRecord | null { return comics.getComic(this.db, id); }

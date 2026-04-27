@@ -22,6 +22,7 @@ export function openOrRecreate(dbPath: string): Database.Database {
   try {
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
     db.pragma('busy_timeout = 3000');
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA);
