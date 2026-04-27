@@ -137,14 +137,14 @@ jobs:
             ghcr.io/${{ steps.meta.outputs.repo }}:latest
 
   release:
-    needs: [build-electron]
-    if: always() && needs.build-electron.result != 'failure'
+    needs: [build-electron, build-standalone]
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: cb8-*
           merge-multiple: true
 
       - name: List artifacts
