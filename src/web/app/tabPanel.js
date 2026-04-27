@@ -183,7 +183,7 @@ export async function promptNewCollection() {
   } catch (err) { showToast(err.message); }
 }
 
-function openCollectionModal() {
+export function openCollectionModal() {
   return new Promise((resolve) => {
     const modal = document.createElement('div');
     modal.id = 'collection-modal';
@@ -247,13 +247,64 @@ function openCollectionModal() {
 }
 
 export async function promptNewFolder() {
-  const name = window.prompt('New folder name:');
-  if (!name?.trim()) return;
+  const name = await openFolderModal();
+  if (!name) return;
   try {
-    await api.createFolder(name.trim(), []);
-    showToast(`Created "${name.trim()}"`);
+    await api.createFolder(name, []);
+    showToast(`Created "${name}"`);
     window.dispatchEvent(new CustomEvent('cb8:library-changed'));
   } catch (err) { showToast(err.message); }
+}
+
+export function openFolderModal() {
+  return new Promise((resolve) => {
+    const modal = document.createElement('div');
+    modal.id = 'folder-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.innerHTML = `
+      <div class="admin-modal-backdrop"></div>
+      <div class="admin-modal-panel" role="document">
+        <h2 class="admin-modal-title">New folder</h2>
+        <form class="admin-form" autocomplete="off">
+          <label class="admin-label" for="folder-name">Name</label>
+          <input id="folder-name" type="text" class="admin-input" required />
+          <div class="admin-actions">
+            <button type="button" class="admin-btn-secondary" data-action="cancel">Cancel</button>
+            <button type="submit" class="admin-btn-primary">Create</button>
+          </div>
+        </form>
+      </div>
+    `;
+    Object.assign(modal.style, {
+      position: 'fixed', inset: '0', zIndex: '240',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    });
+    document.body.appendChild(modal);
+
+    const nameInput = modal.querySelector('#folder-name');
+    const form = modal.querySelector('form');
+
+    const close = (value) => {
+      document.removeEventListener('keydown', onKey);
+      modal.remove();
+      resolve(value);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(null); } };
+    document.addEventListener('keydown', onKey);
+
+    modal.querySelector('.admin-modal-backdrop').addEventListener('click', () => close(null));
+    modal.querySelector('[data-action="cancel"]').addEventListener('click', () => close(null));
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = nameInput.value.trim();
+      if (!name) { nameInput.focus(); return; }
+      close(name);
+    });
+
+    setTimeout(() => nameInput.focus(), 0);
+  });
 }
 
 export function closeTabPanel() {

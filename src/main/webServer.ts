@@ -15,12 +15,20 @@ import { buildServer } from './webServer/server';
 
 export { closeAllHandles } from './webServer/archiveCache';
 
-/** Returns the first non-loopback IPv4 address for display to the user. */
+/** Returns the first routable IPv4 address for display to the user. */
 export function getLanIp(): string {
   const ifaces = os.networkInterfaces();
   for (const list of Object.values(ifaces)) {
     for (const iface of list ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+      if (iface.family !== 'IPv4') continue;
+      if (iface.internal) continue;
+      const parts = iface.address.split('.').map(Number);
+      // Skip entire 127.0.0.0/8 loopback block (some virtual adapters mark
+      // themselves non-internal but still use a loopback address).
+      if (parts[0] === 127) continue;
+      // Skip link-local (169.254.x.x).
+      if (parts[0] === 169 && parts[1] === 254) continue;
+      return iface.address;
     }
   }
   return '127.0.0.1';
@@ -30,6 +38,7 @@ export interface WebServerHandle {
   server: http.Server;
   fastify: FastifyInstance;
   port: number;
+  host: string;
   url: string;
   lanUrl: string;
 }
@@ -54,6 +63,7 @@ export function startWebServer(db: LibraryDatabase, port = 8008, host = '0.0.0.0
     server: undefined as unknown as http.Server,
     fastify: undefined as unknown as FastifyInstance,
     port,
+    host,
     url: `http://localhost:${port}`,
     lanUrl: `http://${lan}:${port}`,
   };

@@ -50,7 +50,19 @@ export function isGuestAccessEnabled(db: LibraryDatabase): boolean {
 }
 
 export function ensureInitialAdmin(db: LibraryDatabase): void {
-  if (db.countUsers() > 0) return;
+  if (db.countUsers() === 0) {
+    _createInitialAdmin(db);
+    return;
+  }
+  // Migration: admin exists but initial_password was never stored (created
+  // before this feature). Reset the admin password so the client can auto-login.
+  const stored = db.getAppMeta('initial_password');
+  if (stored === null) {
+    _resetInitialPassword(db);
+  }
+}
+
+function _createInitialAdmin(db: LibraryDatabase): void {
   const password = generateInitialAdminPassword();
   const hash = bcrypt.hashSync(password, 10);
   const user = db.createUser('admin', hash, true);
@@ -67,16 +79,27 @@ export function ensureInitialAdmin(db: LibraryDatabase): void {
             updated_at = datetime('now')
       WHERE id = ?`
   ).run(user.id);
-  // Mirror the password into the `account` table so better-auth's credential
-  // provider can verify it. The backfill migration handles pre-existing rows;
-  // this covers the first-boot case where the migration runs against an empty
-  // table and then we immediately insert the admin.
   db.upsertCredentialAccount(user.id, 'admin', hash);
-  // Printed only here, only once. The plaintext is never persisted — if the
-  // operator misses this line they must reset via the CLI / DB directly.
+  db.setAppMeta('initial_password', password);
+  _printPasswordBanner(password, 'Initial admin account created.');
+}
+
+function _resetInitialPassword(db: LibraryDatabase): void {
+  const admin = db.getUserByUsername('admin');
+  if (!admin) return;
+  const password = generateInitialAdminPassword();
+  const hash = bcrypt.hashSync(password, 10);
+  db.raw.prepare(`UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`)
+    .run(hash, admin.id);
+  db.upsertCredentialAccount(admin.id, 'admin', hash);
+  db.setAppMeta('initial_password', password);
+  _printPasswordBanner(password, 'Admin password reset (initial_password not set).');
+}
+
+function _printPasswordBanner(password: string, headline: string): void {
   const banner = '='.repeat(60);
   console.log(`\n${banner}`);
-  console.log('[CB8] Initial admin account created.');
+  console.log(`[CB8] ${headline}`);
   console.log('      username: admin');
   console.log(`      password: ${password}`);
   console.log('      Sign in and change this password immediately.');

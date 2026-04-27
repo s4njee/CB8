@@ -20,19 +20,67 @@ import {
 const JSZIP_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
 const EPUBJS_CDN = 'https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js';
 
+function effectiveFontFamily() {
+  return epubPrefs.googleFont
+    ? `'${epubPrefs.googleFont}', serif`
+    : epubPrefs.fontFamily;
+}
+
+function googleFontUrl(name) {
+  return `https://fonts.googleapis.com/css2?family=${name.trim().replace(/ /g, '+')}&display=swap`;
+}
+
+function injectGoogleFont(doc, name) {
+  if (!doc || !name) return;
+  const existing = doc.getElementById('cb8-google-font');
+  if (existing) {
+    if (existing.dataset.font === name) return;
+    existing.remove();
+  }
+  const link = doc.createElement('link');
+  link.id = 'cb8-google-font';
+  link.rel = 'stylesheet';
+  link.href = googleFontUrl(name);
+  link.dataset.font = name;
+  (doc.head || doc.documentElement)?.appendChild(link);
+}
+
+function preloadGoogleFont(name, onReady) {
+  const id = 'cb8-gf-preload';
+  const existing = document.getElementById(id);
+  if (existing?.dataset.font === name) {
+    // Already loaded or loading; if sheet is present the font is ready
+    if (existing.sheet) onReady();
+    else existing.addEventListener('load', onReady, { once: true });
+    return;
+  }
+  existing?.remove();
+  const link = document.createElement('link');
+  link.id = id;
+  link.rel = 'stylesheet';
+  link.href = googleFontUrl(name);
+  link.dataset.font = name;
+  link.addEventListener('load', onReady, { once: true });
+  document.head.appendChild(link);
+}
+
 function reapplyTheme() {
   const rendition = state.epubRendition;
   if (!rendition) return;
-  try { rendition.themes.default(buildEpubTheme(epubPrefs.themeMode, epubPrefs.fontFamily)); }
+  const ff = effectiveFontFamily();
+  try { rendition.themes.default(buildEpubTheme(epubPrefs.themeMode, ff)); }
   catch (err) { console.warn('[CB8] themes.default failed:', err); }
-  try { rendition.themes.font(epubPrefs.fontFamily); }
+  try { rendition.themes.font(ff); }
   catch (err) { console.warn('[CB8] themes.font failed:', err); }
   try { rendition.themes.fontSize(toEpubFontSizePercent(epubPrefs.fontSize)); }
   catch (err) { console.warn('[CB8] themes.fontSize failed:', err); }
   try {
     const contentsList = rendition.getContents?.() ?? [];
     for (const c of contentsList) {
-      try { forceThemeOnContent(c, epubPrefs.themeMode, epubPrefs.fontFamily); }
+      try {
+        if (epubPrefs.googleFont) injectGoogleFont(c.document, epubPrefs.googleFont);
+        forceThemeOnContent(c, epubPrefs.themeMode, ff);
+      }
       catch (err) { console.warn('[CB8] forceTheme failed on view:', err); }
     }
   } catch (err) { console.warn('[CB8] getContents failed (non-fatal):', err); }
@@ -71,6 +119,8 @@ function makeToggleButton(label, isActive, onClick) {
 
 export async function renderEpubReader(el, record, onBack) {
   const toolbar = buildToolbar(record.title, onBack);
+  const slider = toolbar.querySelector('.reader-page-slider');
+  if (slider) { slider.min = 0; slider.max = 100; slider.value = 0; }
   const bookContainer = document.createElement('div');
   bookContainer.className = 'book-reader';
 
@@ -155,10 +205,125 @@ export async function renderEpubReader(el, record, onBack) {
   spreadForm.addEventListener('change', (e) => {
     epubPrefs.spread = (e.target.value === 'auto');
     saveEpubPrefs();
-    if (state.epubRendition) state.epubRendition.spread(epubPrefs.spread ? 'auto' : 'none');
+    if (state.epubRendition) {
+      state.epubRendition.spread(epubPrefs.spread ? 'auto' : 'none');
+      reapplyTheme();
+    }
   });
 
-  controlsRow.append(fontFamilyLabel, fontSizeLabel, themeRow, spreadForm);
+  // Google Font input with custom scrollable dropdown
+  const GOOGLE_FONTS = [
+    'Bitter', 'Cormorant Garamond', 'Crimson Pro', 'Crimson Text',
+    'EB Garamond', 'Fira Code', 'Fira Sans', 'Frank Ruhl Libre',
+    'Inter', 'JetBrains Mono', 'Josefin Sans', 'Lato',
+    'Libre Baskerville', 'Libre Franklin', 'Lora',
+    'Merriweather', 'Montserrat', 'Noto Sans', 'Noto Serif',
+    'Nunito', 'Open Sans', 'Playfair Display', 'PT Sans', 'PT Serif',
+    'Raleway', 'Roboto', 'Roboto Mono', 'Roboto Slab',
+    'Source Code Pro', 'Source Sans 3', 'Source Serif 4',
+    'Spectral', 'Ubuntu', 'Vollkorn', 'Work Sans',
+  ];
+
+  const googleFontLabel = document.createElement('label');
+  googleFontLabel.style.cssText = 'display:flex;align-items:center;gap:6px;position:relative;';
+  const googleFontSpan = document.createElement('span'); googleFontSpan.textContent = 'Google Font';
+
+  const googleFontInput = document.createElement('input');
+  googleFontInput.type = 'text';
+  googleFontInput.placeholder = 'e.g. Merriweather';
+  googleFontInput.value = epubPrefs.googleFont || '';
+  googleFontInput.style.cssText =
+    'padding:2px 6px;border:1px solid #333;border-radius:4px;color:#ddd;background:#1a1a1a;' +
+    'font-size:12px;width:130px;';
+
+  const fontDropdown = document.createElement('div');
+  fontDropdown.style.cssText =
+    'position:fixed;z-index:9999;background:#1a1a1a;border:1px solid #444;border-radius:6px;' +
+    'max-height:220px;overflow-y:auto;min-width:160px;display:none;box-shadow:0 4px 16px rgba(0,0,0,.5);';
+
+  let activeIdx = -1;
+
+  const renderDropdown = (filter) => {
+    const q = filter.toLowerCase();
+    const matches = q ? GOOGLE_FONTS.filter((f) => f.toLowerCase().includes(q)) : GOOGLE_FONTS;
+    fontDropdown.innerHTML = '';
+    activeIdx = -1;
+    matches.forEach((name, i) => {
+      const item = document.createElement('div');
+      item.textContent = name;
+      item.dataset.font = name;
+      item.style.cssText =
+        'padding:6px 12px;cursor:pointer;font-size:12px;color:#ddd;white-space:nowrap;';
+      item.addEventListener('mouseenter', () => {
+        fontDropdown.querySelectorAll('[data-font]').forEach((el) => el.style.background = '');
+        item.style.background = '#2a2a2a';
+        activeIdx = i;
+      });
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        selectFont(name);
+      });
+      fontDropdown.appendChild(item);
+    });
+    return matches;
+  };
+
+  const openDropdown = () => {
+    const rect = googleFontInput.getBoundingClientRect();
+    fontDropdown.style.left = `${rect.left}px`;
+    fontDropdown.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+    fontDropdown.style.display = 'block';
+    renderDropdown(googleFontInput.value);
+  };
+
+  const closeDropdown = () => { fontDropdown.style.display = 'none'; };
+
+  const applyAndPreload = (name) => {
+    epubPrefs.googleFont = name;
+    saveEpubPrefs();
+    reapplyTheme();
+    if (name) preloadGoogleFont(name, reapplyTheme);
+  };
+
+  const selectFont = (name) => {
+    googleFontInput.value = name;
+    applyAndPreload(name);
+    closeDropdown();
+  };
+
+  const applyGoogleFont = () => {
+    const name = googleFontInput.value.trim();
+    if (name !== epubPrefs.googleFont) applyAndPreload(name);
+    closeDropdown();
+  };
+
+  googleFontInput.addEventListener('focus', openDropdown);
+  googleFontInput.addEventListener('input', () => renderDropdown(googleFontInput.value));
+  googleFontInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); applyGoogleFont(); }
+    else if (e.key === 'Escape') { closeDropdown(); googleFontInput.blur(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const items = fontDropdown.querySelectorAll('[data-font]');
+      if (!items.length) return;
+      items[activeIdx]?.style && (items[activeIdx].style.background = '');
+      activeIdx = e.key === 'ArrowDown'
+        ? Math.min(activeIdx + 1, items.length - 1)
+        : Math.max(activeIdx - 1, 0);
+      const active = items[activeIdx];
+      if (active) {
+        active.style.background = '#2a2a2a';
+        active.scrollIntoView({ block: 'nearest' });
+        googleFontInput.value = active.dataset.font;
+      }
+    }
+  });
+  googleFontInput.addEventListener('blur', () => setTimeout(applyGoogleFont, 150));
+
+  document.body.appendChild(fontDropdown);
+  googleFontLabel.append(googleFontSpan, googleFontInput);
+
+  controlsRow.append(fontFamilyLabel, fontSizeLabel, googleFontLabel, themeRow, spreadForm);
   statusBar.append(statusPct, controlsRow);
 
   bookContainer.appendChild(epubContainer);
@@ -224,21 +389,27 @@ export async function renderEpubReader(el, record, onBack) {
       flow: 'paginated',
     });
 
-    try { state.epubRendition.themes.default(buildEpubTheme(epubPrefs.themeMode, epubPrefs.fontFamily)); }
+    try { state.epubRendition.themes.default(buildEpubTheme(epubPrefs.themeMode, effectiveFontFamily())); }
     catch (err) { console.warn('[CB8] themes.default (initial) failed:', err); }
-    try { state.epubRendition.themes.font(epubPrefs.fontFamily); } catch {}
+    try { state.epubRendition.themes.font(effectiveFontFamily()); } catch {}
     try { state.epubRendition.themes.fontSize(toEpubFontSizePercent(epubPrefs.fontSize)); } catch {}
 
     // Per-section: force theme colors inline, wire navigation keys (the
     // iframe steals focus on click so document-level keys stop firing).
     const onKey = (e) => {
       if (!state.epubRendition) return;
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); state.epubRendition.next(); }
       else if (e.key === 'ArrowLeft' || e.key === 'Backspace') { e.preventDefault(); state.epubRendition.prev(); }
     };
     state.epubRendition.on('rendered', (_section, view) => {
       try {
-        if (view?.contents) forceThemeOnContent(view.contents, epubPrefs.themeMode, epubPrefs.fontFamily);
+        const ff = effectiveFontFamily();
+        if (view?.contents) {
+          if (epubPrefs.googleFont) injectGoogleFont(view.contents.document, epubPrefs.googleFont);
+          forceThemeOnContent(view.contents, epubPrefs.themeMode, ff);
+        }
         // Paint the iframe element itself so the padding epubjs adds around
         // the page column doesn't show through the grey .epub-container bg.
         try {
@@ -296,6 +467,7 @@ export async function renderEpubReader(el, record, onBack) {
       if (!location?.start) return;
       const pct = Math.round((location.start.percentage ?? 0) * 100);
       statusPct.textContent = `${pct}%`;
+      if (slider) slider.value = pct;
       if (location.start.cfi) {
         api.updateLocation(record.id, location.start.cfi).catch(() => {});
       }

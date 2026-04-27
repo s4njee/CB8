@@ -214,7 +214,23 @@ function buildAuth(db: Database.Database) {
         maxUsernameLength: 30,
       }),
     ],
-    trustedOrigins: resolveTrustedOrigins(),
+    // Per-request trusted origins: always include the configured static set,
+    // and additionally trust the Origin header when it points at the same
+    // host as the incoming request (i.e. the SPA we just served). This makes
+    // NodePort/LoadBalancer/Ingress deploys work without curating every
+    // possible host:port pair in env vars.
+    trustedOrigins: (request) => {
+      const out = new Set<string>(resolveTrustedOrigins());
+      try {
+        const origin = request?.headers.get('origin');
+        const host = request?.headers.get('host');
+        if (origin && host) {
+          const o = new URL(origin);
+          if (o.host === host) out.add(origin);
+        }
+      } catch { /* ignore */ }
+      return Array.from(out);
+    },
   });
 }
 

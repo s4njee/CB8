@@ -126,6 +126,7 @@ async function dispatchApi(
 
   const publicEndpoints = new Set([
     '/api/auth/session', '/api/auth/login', '/api/admin/session', '/api/admin/login',
+    '/api/settings/initial-credentials',
   ]);
   const isPublic = publicEndpoints.has(pathname);
   const isReadOnly = method === 'GET';

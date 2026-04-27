@@ -271,6 +271,9 @@ export const applyMetadata = (comicId, metadata) =>
 export const setGuestAccess = (enabled) =>
   put('/api/settings/guest-access', { body: { enabled } });
 
+export const fetchInitialCredentials = () => get('/api/settings/initial-credentials');
+export const clearInitialCredentials = () => del('/api/settings/initial-credentials');
+
 // ---------------------------------------------------------------------------
 // Admin (legacy + host-only)
 // ---------------------------------------------------------------------------
@@ -302,11 +305,13 @@ export const adminListDir = (partialPath) =>
  * Streamed NDJSON response — handled directly because `request()` assumes
  * a single JSON body.
  */
-export async function adminAddPath(targetPath, onProgress) {
+export async function adminAddPath(targetPath, onProgress, opts = {}) {
+  const body = { path: targetPath };
+  if (opts.folderName) body.folderName = opts.folderName;
   const res = await fetch(`${API}/api/admin/add-path`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: targetPath }),
+    body: JSON.stringify(body),
   });
   if (!res.ok || !res.body) {
     throw new ApiError(await readErrorMessage(res, `HTTP ${res.status}`), { status: res.status });

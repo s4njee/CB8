@@ -8,6 +8,9 @@
  */
 
 import { isAuthenticated, bulkDeleteComics } from '../../admin.js';
+import * as api from '../../api.js';
+import { showToast } from '../../app.js';
+import { openFolderModal } from '../../app/tabPanel.js';
 
 const selection = new Set();
 const orderedIds = [];
@@ -134,10 +137,87 @@ export function openContextMenu(x, y, targetId) {
   });
 }
 
+let folderPicker = null;
+
+function closeFolderPicker() {
+  folderPicker?.remove();
+  folderPicker = null;
+}
+
+function openFolderPicker(anchorEl) {
+  closeFolderPicker();
+
+  const picker = document.createElement('div');
+  picker.className = 'selection-folder-picker';
+  picker.innerHTML = '<div class="selection-folder-picker-loading">Loading…</div>';
+  document.body.appendChild(picker);
+  folderPicker = picker;
+
+  const rect = anchorEl.getBoundingClientRect();
+  picker.style.left = `${rect.left}px`;
+  picker.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+
+  const closeOnOutside = (e) => {
+    if (!picker.contains(e.target) && e.target !== anchorEl) {
+      closeFolderPicker();
+      document.removeEventListener('click', closeOnOutside, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeOnOutside, true), 0);
+
+  api.fetchFolders().then((folders) => {
+    picker.innerHTML = '';
+
+    for (const folder of folders ?? []) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'selection-folder-picker-item';
+      btn.textContent = folder.name;
+      btn.addEventListener('click', async () => {
+        closeFolderPicker();
+        const ids = Array.from(selection);
+        try {
+          await api.addComicsToFolder(folder.id, ids);
+          showToast(`Added ${ids.length} item${ids.length === 1 ? '' : 's'} to "${folder.name}"`);
+          window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+        } catch (err) { showToast(err.message); }
+      });
+      picker.appendChild(btn);
+    }
+
+    if ((folders ?? []).length > 0) {
+      const sep = document.createElement('div');
+      sep.className = 'selection-folder-picker-sep';
+      picker.appendChild(sep);
+    }
+
+    const newBtn = document.createElement('button');
+    newBtn.type = 'button';
+    newBtn.className = 'selection-folder-picker-item';
+    newBtn.textContent = '+ New folder…';
+    newBtn.addEventListener('click', async () => {
+      closeFolderPicker();
+      const name = await openFolderModal();
+      if (!name) return;
+      const ids = Array.from(selection);
+      api.createFolder(name, ids)
+        .then((folder) => {
+          showToast(`Created "${folder.name}" with ${ids.length} item${ids.length === 1 ? '' : 's'}`);
+          window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+        })
+        .catch((err) => showToast(err.message));
+    });
+    picker.appendChild(newBtn);
+  }).catch(() => {
+    picker.innerHTML = '<div class="selection-folder-picker-loading">Failed to load</div>';
+  });
+}
+
 function updateSelectionBar() {
   if (selection.size === 0) {
     selectionBar?.remove();
     selectionBar = null;
+    closeFolderPicker();
     return;
   }
   if (!selectionBar) {
@@ -147,11 +227,15 @@ function updateSelectionBar() {
       <span class="selection-count"></span>
       <div class="selection-actions">
         <button type="button" class="selection-btn-secondary" data-action="clear">Cancel</button>
+        <button type="button" class="selection-btn-secondary" data-action="add-to-folder">Add to folder</button>
         <button type="button" class="selection-btn-danger" data-action="delete">Delete</button>
       </div>
     `;
     document.body.appendChild(selectionBar);
     selectionBar.querySelector('[data-action="clear"]').addEventListener('click', clearSelection);
+    selectionBar.querySelector('[data-action="add-to-folder"]').addEventListener('click', (e) => {
+      openFolderPicker(e.currentTarget);
+    });
     selectionBar.querySelector('[data-action="delete"]').addEventListener('click', async () => {
       const ids = Array.from(selection);
       const { removed } = await bulkDeleteComics(ids);
