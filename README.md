@@ -4,8 +4,9 @@ CB8 is a desktop comic and book reader. It is an Electron app that hosts an embe
 
 > Non-generated AI. I built this for myself because I couldn't find a manga reader I liked. There may be bugs — file an issue or send a PR. I'll fix what I run into.
 
-<img width="1152" height="907" alt="library view" src="https://github.com/user-attachments/assets/b1530423-9744-40ad-a74b-9fb1ea0664d7" />
-<img width="1152" height="907" alt="reader view" src="https://github.com/user-attachments/assets/7c66a69b-1859-4364-b4d6-d91992c5eacf" />
+<img width="1668" height="1312" alt="Screenshot_20260427_140312" src="https://github.com/user-attachments/assets/66bf41a4-d29f-4211-a596-3c0f12b5397b" />
+<img width="2542" height="1180" alt="Screenshot_20260427_140351" src="https://github.com/user-attachments/assets/f62c4768-8e72-4045-a862-d04ed7a8f6be" />
+
 
 ## Features
 
