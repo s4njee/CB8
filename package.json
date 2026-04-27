@@ -13,7 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "rebuild": "electron-rebuild -f -w better-sqlite3"
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "build:standalone": "node scripts/build-standalone.mjs",
+    "start:standalone": "node dist/standalone.mjs"
   },
   "license": "MIT",
   "author": "s4njee",
