@@ -58,8 +58,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cb8-${{ matrix.platform }}
-          path: out/make/**/*
-          if-no-files-found: error
+          path: |
+            out/make/**/*.deb
+            out/make/**/*.rpm
+            out/make/**/*.zip
+            out/make/**/*.dmg
+            out/make/**/*.exe
+            out/make/**/*.nupkg
+            out/make/**/*.AppImage
+          if-no-files-found: warn
+          compression-level: 0
 
   build-standalone:
     runs-on: ubuntu-latest
@@ -129,7 +137,8 @@ jobs:
             ghcr.io/${{ steps.meta.outputs.repo }}:latest
 
   release:
-    needs: [build-electron, build-standalone, build-docker]
+    needs: [build-electron]
+    if: always() && needs.build-electron.result != 'failure'
     runs-on: ubuntu-latest
 
     steps:
