@@ -52,11 +52,12 @@ export function openOrRecreate(dbPath: string): Database.Database {
     throw new DbStartupError('migration', 'Schema migration failed', err);
   }
 
-  try {
-    runRepairs(db);
-  } catch (err) {
+  // Repairs include async image work (sharp). Fire-and-forget — they're
+  // idempotent and gated by app_meta keys, so a missed run just retries
+  // on next startup. Errors are logged and never fatal.
+  void runRepairs(db).catch((err) => {
     console.warn('[CB8] Non-fatal repair error during DB startup:', err);
-  }
+  });
 
   return db;
 }

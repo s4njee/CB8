@@ -15,7 +15,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as url from 'node:url';
-import { app } from 'electron';
 import { toNodeHandler, fromNodeHeaders } from 'better-auth/node';
 import { LibraryDatabase } from './libraryDatabase';
 import {

@@ -7,12 +7,6 @@ const COVER_HEIGHT = 360;
 const JPEG_QUALITY = 82;
 const require = createRequire(import.meta.url);
 
-// Resolve the worker path once — pdfjs needs it even in Node.js "fake worker" mode.
-const WORKER_SRC = path.join(
-  path.dirname(require.resolve('pdfjs-dist/legacy/build/pdf.mjs')),
-  'pdf.worker.mjs',
-);
-
 interface CanvasSurface {
   width: number;
   height: number;
@@ -48,12 +42,26 @@ function loadCanvasModule(): CanvasModule {
   return require('@napi-rs/canvas') as CanvasModule;
 }
 
+async function loadPdfjs() {
+  const workerSrc = path.join(
+    path.dirname(require.resolve('pdfjs-dist/legacy/build/pdf.mjs')),
+    'pdf.worker.mjs',
+  );
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+  return pdfjs;
+}
+
 export async function renderPdfFirstPageCover(filePath: string): Promise<Buffer | null> {
   ensureUint8ArrayToHex();
 
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  // Point at the real worker file so the "fake worker" (same-thread) mode works in Node.js.
-  pdfjs.GlobalWorkerOptions.workerSrc = WORKER_SRC;
+  let pdfjs;
+  try {
+    pdfjs = await loadPdfjs();
+  } catch (error) {
+    console.warn('[pdfCoverExtractor] pdfjs unavailable, skipping PDF cover render:', error);
+    return null;
+  }
   const { createCanvas } = loadCanvasModule();
   const bytes = await fs.readFile(filePath);
   const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -88,8 +96,13 @@ export async function renderPdfFirstPageCover(filePath: string): Promise<Buffer 
 export async function getPdfPageCount(filePath: string): Promise<number> {
   ensureUint8ArrayToHex();
 
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  pdfjs.GlobalWorkerOptions.workerSrc = WORKER_SRC;
+  let pdfjs;
+  try {
+    pdfjs = await loadPdfjs();
+  } catch (error) {
+    console.warn('[pdfCoverExtractor] pdfjs unavailable, returning unknown PDF page count:', error);
+    return 0;
+  }
   const bytes = await fs.readFile(filePath);
   const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const loadingTask = pdfjs.getDocument({ data, useWorkerFetch: false, isEvalSupported: false } as Parameters<typeof pdfjs.getDocument>[0]);

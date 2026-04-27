@@ -244,7 +244,7 @@ export const handle: RouteHandler = async (ctx) => {
     if (typeof parsed.coverUrl === 'string' && parsed.coverUrl) {
       try {
         const buf = await safeFetchBuffer(parsed.coverUrl);
-        const thumb = generateThumbnail(buf);
+        const thumb = await generateThumbnail(buf);
         const record = db.getComic(id);
         if (record && thumb) db.updateCoverThumbnailByPath(record.filePath, thumb);
         invalidateCacheForComic(id);

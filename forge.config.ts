@@ -24,10 +24,12 @@ const nativeExternals = [
   '@napi-rs/canvas-win32-arm64-msvc',
   '@napi-rs/canvas-win32-x64-msvc',
   'bindings',
+  'bcryptjs',
   'file-uri-to-path',
   'prebuild-install',
   'node-abi',
   'node-unrar-js',
+  'pdfjs-dist',
   'yauzl',
   'fd-slicer',
   'pend',
@@ -48,7 +50,7 @@ function copyModules(appDir: string) {
 const config: ForgeConfig = {
   packagerConfig: {
     asar: {
-      unpack: '**/node_modules/{better-sqlite3,node-unrar-js,@napi-rs/canvas,@napi-rs/canvas-*}/**',
+      unpack: '**/node_modules/{better-sqlite3,node-unrar-js,pdfjs-dist,@napi-rs/canvas,@napi-rs/canvas-*}/**',
     },
     icon: 'book',
     executableName: 'cb8',

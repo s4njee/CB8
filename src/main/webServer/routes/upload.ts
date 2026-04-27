@@ -2,10 +2,39 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { app, dialog, BrowserWindow } from 'electron';
 import { sendJson, sendError, readBody, isHostConnection } from '../middleware';
 import { addSingleFile, ingestPathStreaming, COMIC_EXTS, BOOK_EXTS, type IngestEvent } from '../ingest';
 import { requireAdmin, type RouteHandler } from '../context';
+
+let uploadRootDir: string | null = null;
+
+/**
+ * Wire up where uploaded files land (typically `<userData>/web-uploads`).
+ * When unset, falls back to a tmpdir-scoped path so tests / standalone
+ * smoke tests don't crash.
+ */
+export function setUploadRoot(dir: string): void {
+  uploadRootDir = dir;
+}
+
+function uploadRoot(): string {
+  return path.join(uploadRootDir ?? path.join(os.tmpdir(), 'cb8'), 'web-uploads');
+}
+
+/**
+ * Best-effort load of Electron's native dialog APIs. Returns null when
+ * running outside Electron (standalone Node process), in which case the
+ * pick-path route returns 503 — there's no host UI to drive a picker.
+ */
+function loadElectronDialog(): { dialog: typeof import('electron').dialog; BrowserWindow: typeof import('electron').BrowserWindow } | null {
+  try {
+    const electron = require('electron') as typeof import('electron');
+    if (!electron?.dialog || !electron?.BrowserWindow) return null;
+    return { dialog: electron.dialog, BrowserWindow: electron.BrowserWindow };
+  } catch {
+    return null;
+  }
+}
 
 export const handle: RouteHandler = async (ctx) => {
   const { req, res, db, pathname, method, query } = ctx;
@@ -26,7 +55,12 @@ export const handle: RouteHandler = async (ctx) => {
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     const kind = parsed.kind === 'directory' ? 'directory' : 'file';
 
-    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+    const electron = loadElectronDialog();
+    if (!electron) {
+      sendError(res, 503, 'Native file picker is unavailable in this server build');
+      return true;
+    }
+    const win = electron.BrowserWindow.getFocusedWindow() ?? electron.BrowserWindow.getAllWindows()[0] ?? null;
     const properties: ('openFile' | 'openDirectory')[] = kind === 'directory' ? ['openDirectory'] : ['openFile'];
     const filters = kind === 'file'
       ? [{ name: 'Comics & Books', extensions: ['cbz', 'cbr', 'epub', 'pdf', 'mobi'] }]
@@ -34,8 +68,8 @@ export const handle: RouteHandler = async (ctx) => {
 
     try {
       const result = win
-        ? await dialog.showOpenDialog(win, { properties, filters })
-        : await dialog.showOpenDialog({ properties, filters });
+        ? await electron.dialog.showOpenDialog(win, { properties, filters })
+        : await electron.dialog.showOpenDialog({ properties, filters });
       if (result.canceled || result.filePaths.length === 0) {
         sendJson(res, 200, { path: null });
       } else {
@@ -81,7 +115,7 @@ export const handle: RouteHandler = async (ctx) => {
       sendError(res, 415, 'Unsupported file type'); return true;
     }
 
-    const baseDir = path.join(app.getPath('userData'), 'web-uploads');
+    const baseDir = uploadRoot();
     const destPath = path.resolve(baseDir, ...relParts);
     if (!destPath.startsWith(path.resolve(baseDir) + path.sep)) {
       sendError(res, 400, 'Resolved path escapes upload directory'); return true;

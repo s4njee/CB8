@@ -3,6 +3,8 @@ import path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import { registerIpcHandlers } from './ipcHandlers';
 import { closeAllHandles, startWebServer } from './webServer';
+import { setImageCacheRoot } from './imageResizer';
+import { setUploadRoot } from './webServer/routes/upload';
 import type { WebServerHandle } from './webServer';
 import { DbStartupError } from './db/schema';
 import { buildApplicationMenu, type MenuContext } from './menu';
@@ -99,6 +101,8 @@ const createWindow = (): void => {
   // still gets real "db unavailable"-style errors from the channels instead
   // of "No handler registered".
   const userDataPath = app.getPath('userData');
+  setImageCacheRoot(path.join(userDataPath, 'image-cache'));
+  setUploadRoot(userDataPath);
   const dbPath = path.join(userDataPath, 'library.db');
   try {
     db = new LibraryDatabase(dbPath);
@@ -159,10 +163,13 @@ function startHeadless(): void {
 
   try {
     const userDataPath = app.getPath('userData');
+    setImageCacheRoot(path.join(userDataPath, 'image-cache'));
+    setUploadRoot(userDataPath);
     const dbPath = path.join(userDataPath, 'library.db');
+    console.log(`[CB8] Headless startup: opening database at ${dbPath}`);
     db = new LibraryDatabase(dbPath);
     db.initialize();
-    registerIpcHandlers(db, webServerRef, 'headless');
+    console.log('[CB8] Headless startup: database ready');
   } catch (err) {
     console.error('[CB8] Failed to initialize database or IPC:', err);
     process.exit(1);
@@ -175,9 +182,11 @@ function startHeadless(): void {
     : 8008;
 
   try {
+    console.log(`[CB8] Headless startup: starting web server on port ${port}`);
     if (!webServerRef.handle) {
       webServerRef.handle = startWebServer(db!, port);
     }
+    console.log(`[CB8] Headless startup: web server handle ${webServerRef.handle ? 'created' : 'missing'}`);
   } catch (err) {
     console.error('[CB8] Failed to start web server in headless mode:', err);
     process.exit(1);

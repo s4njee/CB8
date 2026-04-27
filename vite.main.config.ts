@@ -15,7 +15,6 @@ const extraExternals = [
   'electron-squirrel-startup',
   'pdfjs-dist',
   'bindings',
-  'bcryptjs',
 ];
 
 /**

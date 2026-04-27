@@ -11,9 +11,20 @@
 
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { app } from 'electron';
+
+let cacheRootDir: string | null = null;
+
+/**
+ * Wire up the on-disk image cache location. Call once at startup with the
+ * desired directory (typically `<userData>/image-cache`). When unset, falls
+ * back to the OS temp dir so module-load and tests don't crash.
+ */
+export function setImageCacheRoot(dir: string): void {
+  cacheRootDir = dir;
+}
 
 let sharp: typeof import('sharp') | null = null;
 function getSharp(): typeof import('sharp') {
@@ -39,12 +50,7 @@ export function clampWidth(w: number): number {
 }
 
 function cacheRoot(): string {
-  try {
-    return path.join(app.getPath('userData'), 'image-cache');
-  } catch {
-    // Fallback during tests when app is unavailable
-    return path.join(require('node:os').tmpdir(), 'cb8-image-cache');
-  }
+  return cacheRootDir ?? path.join(os.tmpdir(), 'cb8-image-cache');
 }
 
 interface CachedFile {
