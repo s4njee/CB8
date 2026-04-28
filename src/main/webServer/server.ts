@@ -64,6 +64,9 @@ const API_ROUTES: RouteHandler[] = [
 function resolveStaticRoot(): string {
   const candidates = [
     path.join(__dirname, '../../src/web'),
+    // Packaged: main bundle lives at .vite/build/index.js inside app.asar,
+    // src/web is copied to /web at the asar root (see forge.config packageAfterCopy).
+    path.join(__dirname, '../../web'),
     path.join(__dirname, '../web'),
     path.join(process.resourcesPath ?? '', 'web'),
   ];
