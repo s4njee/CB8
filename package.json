@@ -1,7 +1,7 @@
 {
   "name": "cb8",
   "productName": "CB8",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "CB8 comic + book reader: Electron shell hosting an embedded HTTP server and a vanilla-JS SPA frontend",
   "main": ".vite/build/index.js",
   "scripts": {

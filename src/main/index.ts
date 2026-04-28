@@ -128,7 +128,9 @@ const createWindow = (): void => {
     width: 1024,
     height: 768,
     title: 'CB8',
-    icon: path.join(__dirname, '../../book.png'),
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'book.png')
+      : path.join(__dirname, '../../book.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

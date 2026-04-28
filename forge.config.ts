@@ -82,6 +82,7 @@ const config: ForgeConfig = {
     },
     icon: 'book',
     executableName: 'cb8',
+    extraResource: ['./book.png'],
   },
   hooks: {
     packageAfterCopy: async (_config, appDir) => {
