@@ -93,7 +93,10 @@ function menuContext(): MenuContext {
 
 const createWindow = (): void => {
   if (process.platform === 'darwin') {
-    app.dock?.setIcon(path.join(__dirname, '../../book.png'));
+    const dockIconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'book.png')
+      : path.join(__dirname, '../../book.png');
+    app.dock?.setIcon(dockIconPath);
   }
 
   // Open the database and register IPC handlers. Keep these independent so a
