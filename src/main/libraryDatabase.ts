@@ -18,6 +18,9 @@ import * as progress from './db/progress';
 import * as libraries from './db/libraries';
 import * as folders from './db/folders';
 import * as comics from './db/comics';
+import * as seriesRepoNs from './db/series';
+import * as volumeRepoNs from './db/volume';
+import * as searchNs from './db/search';
 
 export class LibraryDatabase {
   private db: Database.Database;
@@ -55,6 +58,15 @@ export class LibraryDatabase {
     folders.addComicsToFolderRaw(this.db, folderId, comicIds);
   }
   removeComics(ids: number[]): void { comics.removeComics(this.db, ids); }
+  /** R-8 soft-delete a comic by file_path (file disappeared on scan). */
+  softDeleteComicByPath(filePath: string, when?: string): number | null {
+    return comics.softDeleteByPath(this.db, filePath, when);
+  }
+  restoreComicByPath(filePath: string): number | null { return comics.restoreByPath(this.db, filePath); }
+  /** R-8 cascade soft-delete/restore on series + volume after chapter changes. */
+  cascadeSeriesVolumeDeletion(seriesIds: number[], when?: string): void {
+    comics.cascadeSeriesVolumeDeletion(this.db, seriesIds, when);
+  }
   isDismissed(filePath: string): boolean { return comics.isDismissed(this.db, filePath); }
   getComic(id: number): MediaRecord | null { return comics.getComic(this.db, id); }
   comicExistsByPath(filePath: string): boolean { return comics.comicExistsByPath(this.db, filePath); }
@@ -79,13 +91,33 @@ export class LibraryDatabase {
   getContinueReading(limit: number = 10, mediaType?: 'comic' | 'book'): MediaRecord[] {
     return comics.getContinueReading(this.db, limit, mediaType);
   }
-  setComicSeries(comicId: number, seriesName: string | null, volumeNumber: number | null, chapterNumber: number | null): void {
-    comics.setComicSeries(this.db, comicId, seriesName, volumeNumber, chapterNumber);
+  // setComicSeries / getAllSeries / getSeriesComics removed in v8 — use the
+  // hierarchy facade (db.series.* / db.volume.* / db.listChaptersForSeries
+  // / db.listChaptersForVolume) instead.
+  /** R-9 chapter listing for a v7 series id. */
+  listChaptersForSeries(seriesId: number, opts: { includeDeleted?: boolean; limit?: number; offset?: number } = {}): MediaRecord[] {
+    return comics.listForSeries(this.db, seriesId, opts);
   }
-  getAllSeries(): { name: string; count: number; coverComicId: number | null }[] {
-    return comics.getAllSeries(this.db);
+  /** R-9 chapter listing scoped to a single volume id. */
+  listChaptersForVolume(volumeId: number, opts: { includeDeleted?: boolean; limit?: number; offset?: number } = {}): MediaRecord[] {
+    return comics.listForVolume(this.db, volumeId, opts);
   }
-  getSeriesComics(name: string): MediaRecord[] { return comics.getSeriesComics(this.db, name); }
+  /** R-10 default cover comic id. */
+  defaultSeriesCover(seriesId: number): number | null { return comics.defaultSeriesCover(this.db, seriesId); }
+  defaultVolumeCover(volumeId: number): number | null { return comics.defaultVolumeCover(this.db, volumeId); }
+  /** R-11 cross-kind search returning series + chapter hits. */
+  unionSearch(query: string, opts?: searchNs.SearchOptions): searchNs.SearchHit[] {
+    return searchNs.unionSearch(this.db, query, opts);
+  }
+
+  /**
+   * Hierarchy repos (schema v7+). Exposed as namespace accessors instead of
+   * per-method facades because the surface is large; the proxy pattern keeps
+   * the facade thin and lets consumers call e.g. `db.series.getOrCreate(...)`.
+   * See `docs/hierarchy/design.md` §4.1.
+   */
+  get series(): SeriesFacade { return makeSeriesFacade(this.db); }
+  get volume(): VolumeFacade { return makeVolumeFacade(this.db); }
   updateComicMetadata(
     comicId: number,
     fields: Parameters<typeof comics.updateComicMetadata>[2],
@@ -116,6 +148,9 @@ export class LibraryDatabase {
   renameLibrary(id: number, newName: string): void { libraries.renameLibrary(this.db, id, newName); }
   deleteLibrary(id: number): void { libraries.deleteLibrary(this.db, id); }
   getAllLibraries(mediaType?: 'comic' | 'book') { return libraries.getAllLibraries(this.db, mediaType); }
+  /** R-6: Inbox is the catch-all for orphan ingests. */
+  getOrCreateInboxLibrary(): number { return libraries.getOrCreateInbox(this.db); }
+  getLibraryForFolder(folderId: number): number | null { return libraries.getLibraryForFolder(this.db, folderId); }
   addComicsToLibrary(libraryId: number, comicIds: number[]): void {
     libraries.addComicsToLibrary(this.db, libraryId, comicIds);
   }
@@ -205,4 +240,52 @@ export class LibraryDatabase {
   addFavorite(userId: number, comicId: number): void { favorites.addFavorite(this.db, userId, comicId); }
   removeFavorite(userId: number, comicId: number): void { favorites.removeFavorite(this.db, userId, comicId); }
   isFavorite(userId: number, comicId: number): boolean { return favorites.isFavorite(this.db, userId, comicId); }
+}
+
+// --- hierarchy facades (v7+) ---
+// db.series.getOrCreate(...) etc. The bind-the-handle pattern saves us from
+// adding a per-method wrapper for ~16 functions across two modules.
+type SeriesFacade = {
+  getOrCreate: (libraryId: number, name: string) => ReturnType<typeof seriesRepoNs.getOrCreate>;
+  get:         (id: number) => ReturnType<typeof seriesRepoNs.get>;
+  lookupByName:(libraryId: number, name: string) => ReturnType<typeof seriesRepoNs.lookupByName>;
+  listForLibrary: (libraryId: number, opts?: seriesRepoNs.ListOptions) =>
+    ReturnType<typeof seriesRepoNs.listForLibrary>;
+  update:     (id: number, fields: seriesRepoNs.UpdateFields) => ReturnType<typeof seriesRepoNs.update>;
+  softDelete: (id: number, when?: string) => void;
+  restore:    (id: number) => void;
+};
+function makeSeriesFacade(db: Database.Database): SeriesFacade {
+  return {
+    getOrCreate:    (libraryId, name)         => seriesRepoNs.getOrCreate(db, libraryId, name),
+    get:            (id)                      => seriesRepoNs.get(db, id),
+    lookupByName:   (libraryId, name)         => seriesRepoNs.lookupByName(db, libraryId, name),
+    listForLibrary: (libraryId, opts)         => seriesRepoNs.listForLibrary(db, libraryId, opts),
+    update:         (id, fields)              => seriesRepoNs.update(db, id, fields),
+    softDelete:     (id, when)                => seriesRepoNs.softDelete(db, id, when),
+    restore:        (id)                      => seriesRepoNs.restore(db, id),
+  };
+}
+
+type VolumeFacade = {
+  getOrCreate:        (seriesId: number, number: number, name?: string | null) =>
+    ReturnType<typeof volumeRepoNs.getOrCreate>;
+  getOrCreateImplicit:(seriesId: number) => ReturnType<typeof volumeRepoNs.getOrCreateImplicit>;
+  get:                (id: number) => ReturnType<typeof volumeRepoNs.get>;
+  listForSeries:      (seriesId: number, opts?: volumeRepoNs.ListOptions) =>
+    ReturnType<typeof volumeRepoNs.listForSeries>;
+  update:     (id: number, fields: volumeRepoNs.UpdateFields) => ReturnType<typeof volumeRepoNs.update>;
+  softDelete: (id: number, when?: string) => void;
+  restore:    (id: number) => void;
+};
+function makeVolumeFacade(db: Database.Database): VolumeFacade {
+  return {
+    getOrCreate:         (seriesId, number, name) => volumeRepoNs.getOrCreate(db, seriesId, number, name ?? null),
+    getOrCreateImplicit: (seriesId)               => volumeRepoNs.getOrCreateImplicit(db, seriesId),
+    get:                 (id)                     => volumeRepoNs.get(db, id),
+    listForSeries:       (seriesId, opts)         => volumeRepoNs.listForSeries(db, seriesId, opts),
+    update:              (id, fields)             => volumeRepoNs.update(db, id, fields),
+    softDelete:          (id, when)               => volumeRepoNs.softDelete(db, id, when),
+    restore:             (id)                     => volumeRepoNs.restore(db, id),
+  };
 }

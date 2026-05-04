@@ -4,11 +4,11 @@ import { LibraryDatabase } from './libraryDatabase';
 import { registerIpcHandlers } from './ipcHandlers';
 import { closeAllHandles, startWebServer } from './webServer';
 import { setImageCacheRoot } from './imageResizer';
-import { setUploadRoot } from './webServer/routes/upload';
 import type { WebServerHandle } from './webServer';
 import { DbStartupError } from './db/schema';
 import { buildApplicationMenu, type MenuContext } from './menu';
 import { IngestService } from './ingestService';
+import { sweepSoftDeleted, logSweeperResult } from './maintenance/softDeleteSweeper';
 
 const isHeadless =
   process.argv.includes('--headless') ||
@@ -33,6 +33,30 @@ try {
 let db: LibraryDatabase | null = null;
 let mainWindow: BrowserWindow | null = null;
 const pendingOpenFiles: string[] = [];
+let sweeperTimer: NodeJS.Timeout | null = null;
+
+const SWEEPER_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * R-8 maintenance: run the soft-delete sweeper at app start (covers the
+ * case where the app was idle for >24h and missed a tick) and once per
+ * 24h thereafter. Errors are logged and swallowed — a failed sweep is
+ * never fatal, the next tick will retry.
+ */
+function startSweeperSchedule(database: LibraryDatabase): void {
+  const run = (label: string): void => {
+    try {
+      const result = sweepSoftDeleted(database.raw);
+      logSweeperResult(`[CB8 sweeper:${label}]`, result);
+    } catch (err) {
+      console.warn('[CB8 sweeper] error:', err instanceof Error ? err.message : err);
+    }
+  };
+  run('start');
+  if (sweeperTimer) clearInterval(sweeperTimer);
+  sweeperTimer = setInterval(() => run('tick'), SWEEPER_INTERVAL_MS);
+  if (sweeperTimer.unref) sweeperTimer.unref();
+}
 
 /**
  * Shared mutable reference so registerIpcHandlers can update the active
@@ -67,6 +91,8 @@ async function resolveAndDispatchComic(filePath: string): Promise<void> {
     let record = db.getComicByPath(filePath);
     if (!record) {
       const ingest = new IngestService(db);
+      // No library context here (Finder drag-drop); IngestService falls back
+      // to the Inbox library per R-6 / Option B.
       const result = await ingest.addFile(filePath);
       if (!result.added && result.error) {
         console.warn(`[CB8] Cannot open file '${filePath}': ${result.error}`);
@@ -105,11 +131,11 @@ const createWindow = (): void => {
   // of "No handler registered".
   const userDataPath = app.getPath('userData');
   setImageCacheRoot(path.join(userDataPath, 'image-cache'));
-  setUploadRoot(userDataPath);
   const dbPath = path.join(userDataPath, 'library.db');
   try {
     db = new LibraryDatabase(dbPath);
     db.initialize();
+    startSweeperSchedule(db);
   } catch (err) {
     if (err instanceof DbStartupError) {
       console.error(`[CB8] DB startup failed (${err.category}): ${err.detail}`, err.cause);
@@ -169,11 +195,11 @@ function startHeadless(): void {
   try {
     const userDataPath = app.getPath('userData');
     setImageCacheRoot(path.join(userDataPath, 'image-cache'));
-    setUploadRoot(userDataPath);
     const dbPath = path.join(userDataPath, 'library.db');
     console.log(`[CB8] Headless startup: opening database at ${dbPath}`);
     db = new LibraryDatabase(dbPath);
     db.initialize();
+    startSweeperSchedule(db);
     console.log('[CB8] Headless startup: database ready');
   } catch (err) {
     console.error('[CB8] Failed to initialize database or IPC:', err);

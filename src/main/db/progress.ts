@@ -53,10 +53,11 @@ export function getRecentlyReadByUser(
   params.push(limit);
   const rows = db.prepare(
     `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added,
-            up.last_page, up.last_location, up.last_read, c.media_type
+            up.last_page, up.last_location, up.last_read, c.media_type,
+            c.chapter_number, c.series_id, c.volume_id
      FROM user_progress up
      JOIN comics c ON up.comic_id = c.id
-     WHERE up.user_id = ? ${where}
+     WHERE up.user_id = ? AND c.deleted_at IS NULL ${where}
      ORDER BY up.last_read DESC
      LIMIT ?`
   ).all(...params) as ComicRow[];
@@ -75,10 +76,11 @@ export function getContinueReadingByUser(
   params.push(limit);
   const rows = db.prepare(
     `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added,
-            up.last_page, up.last_location, up.last_read, c.media_type
+            up.last_page, up.last_location, up.last_read, c.media_type,
+            c.chapter_number, c.series_id, c.volume_id
      FROM user_progress up
      JOIN comics c ON up.comic_id = c.id
-     WHERE up.user_id = ? AND up.completed = 0 ${where}
+     WHERE up.user_id = ? AND up.completed = 0 AND c.deleted_at IS NULL ${where}
      ORDER BY up.last_read DESC
      LIMIT ?`
   ).all(...params) as ComicRow[];

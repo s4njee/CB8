@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { LibraryDatabase } from '../libraryDatabase';
 import { FileScannerImpl } from '../fileScanner';
-import { IngestService } from '../ingestService';
+import { IngestService, type IngestOptions } from '../ingestService';
 import { COMIC_EXTENSIONS, BOOK_EXTENSIONS } from '../../shared/mediaTypes';
 
 export const COMIC_EXTS = new Set([...COMIC_EXTENSIONS].map(e => `.${e}`));
@@ -11,9 +11,9 @@ export const BOOK_EXTS = new Set([...BOOK_EXTENSIONS].map(e => `.${e}`));
 export async function addSingleFile(
   db: LibraryDatabase,
   filePath: string,
-  folderId?: number,
+  opts: IngestOptions = {},
 ): Promise<{ added: boolean; error?: string }> {
-  return new IngestService(db).addFile(filePath, folderId);
+  return new IngestService(db).addFile(filePath, opts);
 }
 
 export type IngestEvent =
@@ -38,18 +38,19 @@ export async function ingestPathStreaming(
 
   if (stat.isDirectory()) {
     const scanner = new FileScannerImpl(db);
+    const opts: IngestOptions = { folderId, libraryRoot: targetPath };
     let added = 0;
     try {
       added += await scanner.scan(targetPath, (p) => {
         emit({ type: 'progress', phase: 'comics', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
-      }, undefined, folderId);
+      }, undefined, opts);
     } catch (err) {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     }
     try {
       added += await scanner.scanBooks(targetPath, (p) => {
         emit({ type: 'progress', phase: 'books', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
-      }, undefined, folderId);
+      }, undefined, opts);
     } catch (err) {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     }
@@ -59,7 +60,7 @@ export async function ingestPathStreaming(
 
   if (stat.isFile()) {
     emit({ type: 'progress', phase: 'file', discovered: 1, processed: 0, currentFile: path.basename(targetPath) });
-    const result = await addSingleFile(db, targetPath, folderId);
+    const result = await addSingleFile(db, targetPath, { folderId });
     emit({ type: 'progress', phase: 'file', discovered: 1, processed: 1, currentFile: path.basename(targetPath) });
     if (result.error) emit({ type: 'error', message: `${targetPath}: ${result.error}` });
     emit({ type: 'done', added: result.added ? 1 : 0 });

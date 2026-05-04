@@ -5,6 +5,7 @@
 
 import { renderLibrary } from '../views/library.js';
 import { renderReader, destroyReader } from '../views/reader.js';
+import { renderSeries } from '../views/series.js';
 import { state } from './state.js';
 import { closeTabPanel, updateTabBarActive, updateSidebarActive } from './tabPanel.js';
 import { closeSortSheet } from './sort.js';
@@ -37,6 +38,12 @@ export function parseRoute(hash) {
 
   const readM = path.match(/^\/read\/(\d+)(?:\/(\d+))?$/);
   if (readM) return { type: 'read', id: parseInt(readM[1], 10), page: readM[2] ? parseInt(readM[2], 10) : null };
+
+  // Series detail view (R-18). ID-based; the legacy name-based shape will
+  // 301-redirect through the lookup endpoint when Phase 8 ships any
+  // bookmarkable name URL.
+  const seriesM = path.match(/^\/series\/(\d+)$/);
+  if (seriesM) return { type: 'series', id: parseInt(seriesM[1], 10) };
 
   return { type: 'all' };
 }
@@ -71,6 +78,12 @@ export async function navigate() {
       route.page,
       () => { window.location.hash = '#/'; },
     );
+  } else if (route.type === 'series') {
+    destroyReader();
+    overlay.classList.add('hidden');
+    document.body.classList.remove('reader-open');
+    document.body.style.overflow = '';
+    await renderSeries(viewContainer, route.id);
   } else {
     destroyReader();
     overlay.classList.add('hidden');

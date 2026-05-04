@@ -13,6 +13,42 @@ export function createLibrary(
   return { id: info.lastInsertRowid as number, name, mediaType };
 }
 
+/**
+ * "Inbox" is the catch-all library for comics ingested without an explicit
+ * library context — e.g. files dragged into the app from Finder. R-6
+ * forbids silent insert into a default; this helper ensures the user's
+ * data still lands somewhere named, with the option to reassign later
+ * via the existing addComicsToLibrary flow.
+ *
+ * Idempotent: returns the existing Inbox library id on every call after
+ * the first.
+ */
+export const INBOX_LIBRARY_NAME = 'Inbox';
+
+export function getOrCreateInbox(db: Database.Database): number {
+  const existing = db.prepare(
+    'SELECT id FROM libraries WHERE name = ? COLLATE NOCASE'
+  ).get(INBOX_LIBRARY_NAME) as { id: number } | undefined;
+  if (existing) return existing.id;
+  const info = db.prepare(
+    "INSERT INTO libraries (name, media_type) VALUES (?, 'comic')"
+  ).run(INBOX_LIBRARY_NAME);
+  return Number(info.lastInsertRowid);
+}
+
+/**
+ * Find a library that contains the given folder. Folders can technically
+ * appear under multiple libraries via `library_folders`; for ingest we
+ * just need any one to scope the new series/volume rows. Returns null
+ * when the folder isn't attached to any library.
+ */
+export function getLibraryForFolder(db: Database.Database, folderId: number): number | null {
+  const r = db.prepare(
+    `SELECT library_id FROM library_folders WHERE folder_id = ? ORDER BY library_id LIMIT 1`
+  ).get(folderId) as { library_id: number } | undefined;
+  return r ? r.library_id : null;
+}
+
 export function renameLibrary(db: Database.Database, id: number, newName: string): void {
   db.prepare('UPDATE libraries SET name = ? WHERE id = ?').run(newName, id);
 }
@@ -87,6 +123,9 @@ export function queryComicsByLibrary(
   const conditions: string[] = ['c.id IN (SELECT comic_id FROM library_comics WHERE library_id = ?)'];
   const params: SqlParam[] = [libraryId];
 
+  // R-8: hide soft-deleted comics from the default library browse path.
+  conditions.push('c.deleted_at IS NULL');
+
   if (options.mediaType) {
     conditions.push('c.media_type = ?');
     params.push(options.mediaType);
@@ -129,7 +168,8 @@ export function queryComicsByLibrary(
     `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size,
             CASE WHEN c.cover_thumbnail IS NULL THEN 0 ELSE 1 END as has_thumbnail,
             COALESCE(length(c.cover_thumbnail), 0) as thumbnail_version,
-            c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
+            c.date_added, c.last_page, c.last_location, c.last_read, c.media_type,
+            c.chapter_number, c.series_id, c.volume_id
      FROM comics c ${where}
      ORDER BY ${sortCol} ${sortDir}
      LIMIT ? OFFSET ?`

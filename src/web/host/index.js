@@ -91,6 +91,25 @@ export async function pickDirectory() {
 }
 
 /**
+ * Resolve a dropped/picked browser File to its absolute path on the
+ * server host. Returns null in the browser, where path access is
+ * blocked by the sandbox.
+ *
+ * @param {File} file
+ * @returns {string | null}
+ */
+export function getPathForFile(file) {
+  const bridge = getBridge();
+  if (!bridge?.getPathForFile) return null;
+  try {
+    const p = bridge.getPathForFile(file);
+    return typeof p === 'string' && p ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Open a filesystem path in the OS file manager / default app.
  * No-op in the browser.
  *

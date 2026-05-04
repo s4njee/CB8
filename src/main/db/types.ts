@@ -12,6 +12,10 @@ export interface ComicRow {
   last_location: string | null;
   last_read: string | null;
   media_type: string;
+  /** v7+ intrinsic chapter/issue number; populated by every comic SELECT. */
+  chapter_number?: number | null;
+  series_id?: number | null;
+  volume_id?: number | null;
 }
 
 export interface ComicListRow extends Omit<ComicRow, 'cover_thumbnail'> {

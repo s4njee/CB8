@@ -1,5 +1,5 @@
 import { sendJson, sendError, readBody } from '../middleware';
-import { toWebRecord, overlayUserState } from '../mapping';
+import { toWebRecord } from '../mapping';
 import type { RouteHandler } from '../context';
 
 export const handle: RouteHandler = async (ctx) => {
@@ -114,24 +114,10 @@ export const handle: RouteHandler = async (ctx) => {
     return true;
   }
 
-  // Series
-  if (method === 'GET' && pathname === '/api/series') {
-    const series = db.getAllSeries().map((s) => ({
-      name: s.name,
-      count: s.count,
-      thumbnailUrl: s.coverComicId ? `/api/comics/${s.coverComicId}/thumbnail` : null,
-    }));
-    sendJson(res, 200, series);
-    return true;
-  }
-  const seriesComicsMatch = pathname.match(/^\/api\/series\/([^/]+)\/comics$/);
-  if (method === 'GET' && seriesComicsMatch) {
-    const name = decodeURIComponent(seriesComicsMatch[1]);
-    const records = db.getSeriesComics(name);
-    const uid = currentUser?.id ?? null;
-    sendJson(res, 200, records.map((r) => overlayUserState(toWebRecord(r)!, db, uid)));
-    return true;
-  }
+  // Legacy /api/series and /api/series/:name/comics routes were removed in v8.
+  // ID-based replacements live in routes/series.ts:
+  //   GET /api/libraries/:libId/series
+  //   GET /api/series/:id/chapters
 
   // Recently read
   if (method === 'GET' && pathname === '/api/recently-read') {

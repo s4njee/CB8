@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS comics (
   last_location TEXT,
   last_read TEXT,
   media_type TEXT NOT NULL DEFAULT 'comic',
-  series_name TEXT,
-  volume_number REAL,
+  -- chapter_number is intrinsic to the comic (the issue/chapter index),
+  -- distinct from series/volume which moved to series_id/volume_id FKs in v7.
   chapter_number REAL,
   completed INTEGER NOT NULL DEFAULT 0,
   author TEXT,
@@ -21,7 +21,14 @@ CREATE TABLE IF NOT EXISTS comics (
   year INTEGER,
   summary TEXT,
   external_id TEXT,
-  external_source TEXT
+  external_source TEXT,
+  series_id INTEGER REFERENCES series(id) ON DELETE SET NULL,
+  volume_id INTEGER REFERENCES volume(id) ON DELETE SET NULL,
+  deleted_at TEXT,
+  publication_year INTEGER,
+  publication_month INTEGER,
+  comicinfo_json TEXT,
+  user_edited_fields TEXT
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -186,4 +193,49 @@ CREATE TABLE IF NOT EXISTS dismissed_paths (
   file_path TEXT PRIMARY KEY NOT NULL,
   dismissed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS series (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  sort_name TEXT NOT NULL,
+  localized_name TEXT,
+  summary TEXT,
+  status TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (status IN ('unknown','ongoing','completed','hiatus','cancelled')),
+  age_rating TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (age_rating IN ('unknown','g','pg','teen','mature','adults_only')),
+  cover_comic_id INTEGER REFERENCES comics(id) ON DELETE SET NULL,
+  metadata_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_series_library_name
+  ON series(library_id, name COLLATE NOCASE)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_series_sort ON series(library_id, sort_name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS volume (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+  number REAL,
+  name TEXT,
+  cover_comic_id INTEGER REFERENCES comics(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_volume_series_number
+  ON volume(series_id, number)
+  WHERE number IS NOT NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_volume_series_implicit
+  ON volume(series_id)
+  WHERE number IS NULL AND deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_comics_series_id ON comics(series_id) WHERE series_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_comics_volume_id ON comics(volume_id) WHERE volume_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_comics_deleted ON comics(deleted_at) WHERE deleted_at IS NOT NULL;
 `;

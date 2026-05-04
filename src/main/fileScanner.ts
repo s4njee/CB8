@@ -6,7 +6,7 @@ import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
 import { generateThumbnail } from './thumbnailGenerator';
 import type { ScanProgress } from '../shared/types';
 import { COMIC_EXTENSIONS as COMIC_EXTS_BASE, BOOK_EXTENSIONS as BOOK_EXTS_BASE } from '../shared/mediaTypes';
-import { IngestService } from './ingestService';
+import { IngestService, type IngestOptions } from './ingestService';
 import { withTimeout } from './utils/timeout';
 
 const COMIC_EXTENSIONS = new Set([...COMIC_EXTS_BASE].map(e => `.${e}`));
@@ -18,13 +18,13 @@ export interface FileScanner {
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    folderId?: number,
+    opts?: IngestOptions,
   ): Promise<number>;
   scanBooks(
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    folderId?: number,
+    opts?: IngestOptions,
   ): Promise<number>;
 }
 
@@ -39,18 +39,18 @@ export class FileScannerImpl implements FileScanner {
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    folderId?: number,
+    opts: IngestOptions = {},
   ): Promise<number> {
-    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress, signal, folderId);
+    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress, signal, opts);
   }
 
   async scanBooks(
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    folderId?: number,
+    opts: IngestOptions = {},
   ): Promise<number> {
-    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress, signal, folderId);
+    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress, signal, opts);
   }
 
   private async scanFiles(
@@ -59,9 +59,9 @@ export class FileScannerImpl implements FileScanner {
     mediaType: 'comic' | 'book',
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    folderId?: number,
+    opts: IngestOptions = {},
   ): Promise<number> {
-    return this.ingestService.scanDirectory(directoryPath, mediaType, onProgress, signal, folderId);
+    return this.ingestService.scanDirectory(directoryPath, mediaType, onProgress, signal, opts);
   }
 
   private async discoverFiles(dirPath: string, files: string[], extensions: Set<string>): Promise<void> {

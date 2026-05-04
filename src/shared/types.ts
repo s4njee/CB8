@@ -30,6 +30,12 @@ export interface MediaRecord {
   lastLocation: string | null;
   lastRead: string | null;
   mediaType: 'comic' | 'book';
+  /** v7+: intrinsic chapter/issue number on the comic. Null when unknown. */
+  chapterNumber?: number | null;
+  /** v7+: FK to the series row this chapter belongs to. */
+  seriesId?: number | null;
+  /** v7+: FK to the volume row this chapter belongs to. */
+  volumeId?: number | null;
 }
 
 export interface QueryOptions {
@@ -43,6 +49,11 @@ export interface QueryOptions {
   mediaType?: 'comic' | 'book';
   fileExt?: string;
   readStatus?: 'unread' | 'in-progress' | 'completed';
+  /**
+   * R-8: include soft-deleted comics in the result. Defaults to false;
+   * admin/debug tooling sets this to surface hidden rows.
+   */
+  includeDeleted?: boolean;
 }
 
 export interface FilterPreset {

@@ -210,7 +210,9 @@ export const handle: RouteHandler = async (ctx) => {
       title?: string; author?: string | null; artist?: string | null;
       genre?: string | string[] | null; year?: number | null; summary?: string | null;
       externalId?: string | null; externalSource?: string | null;
-      seriesName?: string | null; volumeNumber?: number | null; chapterNumber?: number | null;
+      chapterNumber?: number | null;
+      // v8: direct FK setters replace seriesName / volumeNumber.
+      seriesId?: number | null; volumeId?: number | null;
       coverUrl?: string | null;
     };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
@@ -237,9 +239,9 @@ export const handle: RouteHandler = async (ctx) => {
       summary: parsed.summary,
       externalId: parsed.externalId,
       externalSource: parsed.externalSource,
-      seriesName: parsed.seriesName,
-      volumeNumber: parsed.volumeNumber,
       chapterNumber: parsed.chapterNumber,
+      seriesId: parsed.seriesId,
+      volumeId: parsed.volumeId,
     });
     if (typeof parsed.coverUrl === 'string' && parsed.coverUrl) {
       try {

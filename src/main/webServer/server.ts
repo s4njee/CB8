@@ -37,6 +37,8 @@ import * as folderRoutes from './routes/folders';
 import * as progressRoutes from './routes/progress';
 import * as comicRoutes from './routes/comics';
 import * as uploadRoutes from './routes/upload';
+import * as seriesRoutes from './routes/series';
+import * as searchRoutes from './routes/search';
 import { serveStatic } from './routes/staticFiles';
 import { loginLimiter, forgotPasswordLimiter } from './rateLimit';
 
@@ -55,6 +57,12 @@ const API_ROUTES: RouteHandler[] = [
   userRoutes.handle,
   uploadRoutes.handle,
   comicRoutes.handle,
+  // seriesRoutes is registered before progressRoutes so the new
+  // /api/series/:id-style endpoints take precedence over the legacy
+  // string-name shim (`/api/series/:name/comics`) still served from
+  // progressRoutes during the R-14 deprecation window.
+  seriesRoutes.handle,
+  searchRoutes.handle,
   progressRoutes.handle,
   tagRoutes.handle,
   libraryRoutes.handle,

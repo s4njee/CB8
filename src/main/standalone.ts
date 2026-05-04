@@ -5,7 +5,7 @@
  * Just opens the SQLite library and starts the Fastify web server.
  *
  * Configuration (env vars):
- *   CB8_DATA_DIR  Directory for library.db, image cache, uploads.
+ *   CB8_DATA_DIR  Directory for library.db and image cache.
  *                 Default: /var/lib/cb8.
  *   CB8_PORT      TCP port to listen on. Default: 8008.
  *   CB8_HOST      Bind address. Default: 0.0.0.0.
@@ -14,7 +14,6 @@
 import * as path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import { setImageCacheRoot } from './imageResizer';
-import { setUploadRoot } from './webServer/routes/upload';
 import { buildServer } from './webServer/server';
 
 async function main(): Promise<void> {
@@ -23,7 +22,6 @@ async function main(): Promise<void> {
   const host = process.env.CB8_HOST ?? '0.0.0.0';
 
   setImageCacheRoot(path.join(dataDir, 'image-cache'));
-  setUploadRoot(dataDir);
 
   const dbPath = path.join(dataDir, 'library.db');
   console.log(`[CB8] Standalone startup: opening database at ${dbPath}`);

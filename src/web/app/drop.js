@@ -1,16 +1,22 @@
 /**
- * app/drop.js — Window-level drag-and-drop for bulk upload.
+ * app/drop.js — Window-level drag-and-drop that routes through the
+ * server-path ingest flow.
  *
- * Only active when the current user is authenticated. Uses the admin
- * module's gatherFromDrop to walk webkitGetAsEntry dirs, then streams
- * each file via api.adminUploadFile.
+ * Only active inside the Electron host (the only context where dropped
+ * File objects expose a real filesystem path) and only for superadmins
+ * (the audience the /api/admin/add-path route is gated to). In a remote
+ * browser this module installs no listeners — drops fall through to the
+ * default browser behavior.
  */
 
 import * as api from '../api.js';
 import { showToast } from './toast.js';
-import { isAuthenticated, gatherFromDrop } from '../admin.js';
+import { isElectron, getPathForFile } from '../host/index.js';
+import { isAdmin } from '../admin.js';
 
 export function wireDrop() {
+  if (!isElectron()) return;
+
   const overlay = document.getElementById('drop-overlay') || (() => {
     const el = document.createElement('div');
     el.id = 'drop-overlay';
@@ -23,58 +29,61 @@ export function wireDrop() {
   let dragCounter = 0;
 
   document.addEventListener('dragenter', (e) => {
-    if (!isAuthenticated()) return;
+    if (!isAdmin()) return;
+    if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
     e.preventDefault();
     dragCounter++;
     overlay.hidden = false;
   });
 
   document.addEventListener('dragleave', () => {
-    if (!isAuthenticated()) return;
+    if (!isAdmin()) return;
     dragCounter--;
     if (dragCounter <= 0) { dragCounter = 0; overlay.hidden = true; }
   });
 
   document.addEventListener('dragover', (e) => {
-    if (!isAuthenticated()) return;
+    if (!isAdmin()) return;
+    if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
   });
 
   document.addEventListener('drop', async (e) => {
+    if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
     e.preventDefault();
     dragCounter = 0;
     overlay.hidden = true;
-    if (!isAuthenticated()) return;
+    if (!isAdmin()) return;
 
-    let items;
-    try {
-      items = await gatherFromDrop(e.dataTransfer);
-    } catch (err) {
-      showToast(`Drop failed: ${err.message}`);
-      return;
+    const paths = [];
+    for (const file of e.dataTransfer.files) {
+      const p = getPathForFile(file);
+      if (p) paths.push(p);
     }
-    if (items.length === 0) {
-      showToast('No supported files in drop (.cbz .cbr .epub .pdf .mobi)');
+    if (paths.length === 0) {
+      showToast('Could not resolve dropped paths');
       return;
     }
 
-    showToast(`Uploading ${items.length} file${items.length !== 1 ? 's' : ''}…`);
-    let added = 0;
+    showToast(`Scanning ${paths.length} path${paths.length !== 1 ? 's' : ''}…`);
+    let totalAdded = 0;
     let failed = 0;
-    for (const { file, relPath } of items) {
+    for (const p of paths) {
       try {
-        await api.adminUploadFile(file, relPath);
-        added++;
+        const result = await api.adminAddPath(p);
+        totalAdded += result.added || 0;
       } catch {
         failed++;
       }
     }
     if (failed === 0) {
-      showToast(`Added ${added} file${added !== 1 ? 's' : ''}`);
+      showToast(totalAdded > 0
+        ? `Added ${totalAdded.toLocaleString()} item${totalAdded === 1 ? '' : 's'}`
+        : 'No new items found');
     } else {
-      showToast(`Added ${added}, failed ${failed}`);
+      showToast(`Added ${totalAdded}, failed ${failed} of ${paths.length}`);
     }
-    if (added > 0) window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+    if (totalAdded > 0) window.dispatchEvent(new CustomEvent('cb8:library-changed'));
   });
 }

@@ -1,145 +1,63 @@
 import Database from 'better-sqlite3';
-import { backfillAccountFromPasswordHash } from './repairs';
-
-const CURRENT_VERSION = 6;
 
 /**
- * Read the stored schema version, or detect it from column presence for
- * databases that predate version tracking.
+ * Schema is green-field at v1. The full table layout lives in `create.ts`
+ * and is exec'd on every open via `db.exec(SCHEMA)` in `open.ts`. This
+ * module exists for two reasons:
+ *
+ *   1. To define `initializeVersion` — called by `open.ts` immediately after
+ *      `db.exec(SCHEMA)` on a fresh DB. It pins `app_meta.schema_version`
+ *      and ensures the FTS5 virtual tables + secondary indexes are present.
+ *      Both FTS helpers are idempotent (`IF NOT EXISTS` everywhere) so
+ *      calling them on every open is safe.
+ *
+ *   2. To define `migrateSchema` — also called on every open. With v1 as
+ *      the only version, the body is a no-op for fresh installs and a
+ *      defensive "make sure FTS + indexes exist" pass for any DB that
+ *      somehow lost them.
+ *
+ * Earlier development carried a v6 → v7 → v8 chain (legacy `series_name`
+ * column, hierarchy migration, drop-legacy migration). That history was
+ * collapsed once the project committed to a green-field deploy: there are
+ * no v6 or v7 databases in the wild, and `create.ts` already encodes the
+ * post-collapse shape.
  */
-function detectVersion(db: Database.Database): number {
-  const row = db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get() as { value: string } | undefined;
-  if (row) return parseInt(row.value, 10) || 0;
 
-  // Bootstrap: inspect columns to determine which migrations have already run.
-  const comicCols = new Set(
-    (db.prepare('PRAGMA table_info(comics)').all() as { name: string }[]).map((c) => c.name),
-  );
-  const userCols = new Set(
-    (db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((c) => c.name),
-  );
-
-  if (userCols.has('display_username')) return 3; // auth migration done; indexes will re-run (idempotent)
-  if (comicCols.has('external_source'))  return 2;
-  if (comicCols.has('media_type'))       return 1;
-  return 0;
-}
+const CURRENT_VERSION = 1;
 
 function setVersion(db: Database.Database, v: number): void {
   db.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('schema_version', ?)").run(String(v));
 }
 
+/**
+ * Run on every open after `db.exec(SCHEMA)`. Idempotent. Re-asserts that
+ * the FTS tables + secondary indexes exist; useful if a sibling tool has
+ * dropped them out-of-band, or if a future version bump needs to do
+ * something here.
+ */
 export function migrateSchema(db: Database.Database): void {
-  let version = detectVersion(db);
-
-  if (version < 1) {
-    db.prepare('ALTER TABLE comics ADD COLUMN last_page INTEGER DEFAULT NULL').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN last_location TEXT DEFAULT NULL').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN last_read TEXT DEFAULT NULL').run();
-    db.prepare("ALTER TABLE comics ADD COLUMN media_type TEXT NOT NULL DEFAULT 'comic'").run();
-    db.prepare('ALTER TABLE folders ADD COLUMN cover_comic_id INTEGER REFERENCES comics(id) ON DELETE SET NULL').run();
-    version = 1; setVersion(db, version);
-  }
-
-  if (version < 2) {
-    db.prepare("ALTER TABLE libraries ADD COLUMN media_type TEXT NOT NULL DEFAULT 'comic'").run();
-    db.prepare('ALTER TABLE comics ADD COLUMN series_name TEXT').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN volume_number REAL').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN chapter_number REAL').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN completed INTEGER NOT NULL DEFAULT 0').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN author TEXT').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN artist TEXT').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN genre TEXT').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN year INTEGER').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN summary TEXT').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN external_id TEXT').run();
-    db.prepare('ALTER TABLE comics ADD COLUMN external_source TEXT').run();
-    version = 2; setVersion(db, version);
-  }
-
-  if (version < 3) {
-    migrateAuthSchema(db);
-    version = 3; setVersion(db, version);
-  }
-
-  if (version < 4) {
-    ensurePostMigrationIndexes(db);
-    version = 4; setVersion(db, version);
-  }
-
-  if (version < 5) {
-    ensurePostMigrationIndexes(db);
-    version = 5; setVersion(db, version);
-  }
-
-  if (version < 6) {
-    ensureSearchIndex(db);
-    version = 6; setVersion(db, version);
-  }
+  ensurePostMigrationIndexes(db);
+  ensureSearchIndex(db);
+  ensureSeriesSearchIndex(db);
 }
 
 /**
- * FTS5 virtual table mirroring the searchable text columns of `comics`,
- * plus the triggers that keep it in sync. Idempotent — safe to run on
- * every migration pass and on fresh installs.
- *
- * `content='comics'` makes this an external-content table: FTS5 indexes
- * the text but doesn't store a second copy, so it adds essentially zero
- * disk cost over the comics table itself. `content_rowid='id'` aligns
- * the FTS rowid with the comic id.
+ * Called by `open.ts` immediately after `db.exec(SCHEMA)` on a fresh DB.
+ * Pins schema_version and ensures the FTS + index objects exist.
  */
-export function ensureSearchIndex(db: Database.Database): void {
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS comics_fts USING fts5(
-      title, file_path, series_name, author, summary,
-      content='comics',
-      content_rowid='id',
-      tokenize='unicode61 remove_diacritics 2'
-    );
-
-    CREATE TRIGGER IF NOT EXISTS comics_ai_fts AFTER INSERT ON comics BEGIN
-      INSERT INTO comics_fts(rowid, title, file_path, series_name, author, summary)
-      VALUES (new.id, new.title, new.file_path, new.series_name, new.author, new.summary);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS comics_ad_fts AFTER DELETE ON comics BEGIN
-      INSERT INTO comics_fts(comics_fts, rowid, title, file_path, series_name, author, summary)
-      VALUES ('delete', old.id, old.title, old.file_path, old.series_name, old.author, old.summary);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS comics_au_fts AFTER UPDATE ON comics BEGIN
-      INSERT INTO comics_fts(comics_fts, rowid, title, file_path, series_name, author, summary)
-      VALUES ('delete', old.id, old.title, old.file_path, old.series_name, old.author, old.summary);
-      INSERT INTO comics_fts(rowid, title, file_path, series_name, author, summary)
-      VALUES (new.id, new.title, new.file_path, new.series_name, new.author, new.summary);
-    END;
-  `);
-
-  // Backfill: only runs the first time the index is created (or after a
-  // user has rebuilt). Cheap to detect — if FTS is already populated, skip.
-  const ftsCount = (db.prepare('SELECT COUNT(*) AS cnt FROM comics_fts').get() as { cnt: number }).cnt;
-  const comicsCount = (db.prepare('SELECT COUNT(*) AS cnt FROM comics').get() as { cnt: number }).cnt;
-  if (ftsCount < comicsCount) {
-    db.exec(`
-      INSERT INTO comics_fts(comics_fts) VALUES ('rebuild');
-    `);
-  }
+export function initializeVersion(db: Database.Database): void {
+  ensurePostMigrationIndexes(db);
+  ensureSearchIndex(db);
+  ensureSeriesSearchIndex(db);
+  setVersion(db, CURRENT_VERSION);
 }
 
-function migrateAuthSchema(db: Database.Database): void {
-  db.prepare('ALTER TABLE users ADD COLUMN email TEXT').run();
-  db.prepare('ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0').run();
-  db.prepare('ALTER TABLE users ADD COLUMN name TEXT').run();
-  db.prepare('ALTER TABLE users ADD COLUMN image TEXT').run();
-  db.prepare('ALTER TABLE users ADD COLUMN updated_at TEXT').run();
-  db.prepare("UPDATE users SET updated_at = datetime('now') WHERE updated_at IS NULL").run();
-  db.prepare('ALTER TABLE users ADD COLUMN display_username TEXT').run();
-  backfillAccountFromPasswordHash(db);
-}
-
+/**
+ * Secondary indexes that aren't part of `create.ts`'s table-shape
+ * definitions but are still part of the standard schema. Idempotent.
+ */
 export function ensurePostMigrationIndexes(db: Database.Database): void {
   db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_comics_series ON comics(series_name COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_comics_last_read ON comics(last_read);
     CREATE INDEX IF NOT EXISTS idx_comics_media_title ON comics(media_type, title COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_comics_media_date_added ON comics(media_type, date_added);
@@ -148,9 +66,82 @@ export function ensurePostMigrationIndexes(db: Database.Database): void {
   `);
 }
 
-/** Called by open.ts on a freshly created DB to skip all migrations. */
-export function initializeVersion(db: Database.Database): void {
-  ensurePostMigrationIndexes(db);
-  ensureSearchIndex(db);
-  setVersion(db, CURRENT_VERSION);
+/**
+ * FTS5 virtual table mirroring the searchable text columns of `comics`,
+ * plus the triggers that keep it in sync. External-content table
+ * (`content='comics'`) so FTS5 indexes the text without a second copy on
+ * disk. Idempotent — safe to run on every open.
+ */
+export function ensureSearchIndex(db: Database.Database): void {
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS comics_fts USING fts5(
+      title, file_path, author, summary,
+      content='comics',
+      content_rowid='id',
+      tokenize='unicode61 remove_diacritics 2'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS comics_ai_fts AFTER INSERT ON comics BEGIN
+      INSERT INTO comics_fts(rowid, title, file_path, author, summary)
+      VALUES (new.id, new.title, new.file_path, new.author, new.summary);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS comics_ad_fts AFTER DELETE ON comics BEGIN
+      INSERT INTO comics_fts(comics_fts, rowid, title, file_path, author, summary)
+      VALUES ('delete', old.id, old.title, old.file_path, old.author, old.summary);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS comics_au_fts AFTER UPDATE ON comics BEGIN
+      INSERT INTO comics_fts(comics_fts, rowid, title, file_path, author, summary)
+      VALUES ('delete', old.id, old.title, old.file_path, old.author, old.summary);
+      INSERT INTO comics_fts(rowid, title, file_path, author, summary)
+      VALUES (new.id, new.title, new.file_path, new.author, new.summary);
+    END;
+  `);
+
+  // Rebuild the FTS index if it lags the source table. Cheap when up to date.
+  const ftsCount = (db.prepare('SELECT COUNT(*) AS cnt FROM comics_fts').get() as { cnt: number }).cnt;
+  const comicsCount = (db.prepare('SELECT COUNT(*) AS cnt FROM comics').get() as { cnt: number }).cnt;
+  if (ftsCount < comicsCount) {
+    db.exec(`INSERT INTO comics_fts(comics_fts) VALUES ('rebuild');`);
+  }
+}
+
+/**
+ * FTS5 virtual table over the `series` table for series-level search
+ * (R-11). External-content table — adds essentially zero disk cost over
+ * `series` itself. Idempotent; safe to call on every open.
+ */
+export function ensureSeriesSearchIndex(db: Database.Database): void {
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS series_fts USING fts5(
+      name, localized_name, summary,
+      content='series',
+      content_rowid='id',
+      tokenize='unicode61 remove_diacritics 2'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS series_ai_fts AFTER INSERT ON series BEGIN
+      INSERT INTO series_fts(rowid, name, localized_name, summary)
+      VALUES (new.id, new.name, COALESCE(new.localized_name,''), COALESCE(new.summary,''));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS series_ad_fts AFTER DELETE ON series BEGIN
+      INSERT INTO series_fts(series_fts, rowid, name, localized_name, summary)
+      VALUES ('delete', old.id, old.name, COALESCE(old.localized_name,''), COALESCE(old.summary,''));
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS series_au_fts AFTER UPDATE ON series BEGIN
+      INSERT INTO series_fts(series_fts, rowid, name, localized_name, summary)
+      VALUES ('delete', old.id, old.name, COALESCE(old.localized_name,''), COALESCE(old.summary,''));
+      INSERT INTO series_fts(rowid, name, localized_name, summary)
+      VALUES (new.id, new.name, COALESCE(new.localized_name,''), COALESCE(new.summary,''));
+    END;
+  `);
+
+  const ftsCount = (db.prepare('SELECT COUNT(*) AS cnt FROM series_fts').get() as { cnt: number }).cnt;
+  const seriesCount = (db.prepare('SELECT COUNT(*) AS cnt FROM series').get() as { cnt: number }).cnt;
+  if (ftsCount < seriesCount) {
+    db.exec(`INSERT INTO series_fts(series_fts) VALUES ('rebuild');`);
+  }
 }

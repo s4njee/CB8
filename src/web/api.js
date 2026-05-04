@@ -249,8 +249,31 @@ export const logHistory = (comicId, action, page = null) =>
 export const getHistory = (offset = 0, limit = 50) =>
   get('/api/history', { query: { offset, limit } });
 
-export const getSeries = () => get('/api/series');
-export const getSeriesComics = (name) => get(`/api/series/${encodeURIComponent(name)}/comics`);
+// v7+ hierarchy API — see `docs/hierarchy/design.md` §6.1.
+// (Legacy `getSeries` and `getSeriesComics` were removed in v8.)
+export const fetchLibrarySeries = (libraryId, options = {}) =>
+  get(`/api/libraries/${libraryId}/series`, { query: options });
+export const fetchSeries = (id) => get(`/api/series/${id}`);
+export const fetchSeriesVolumes = (id, options = {}) =>
+  get(`/api/series/${id}/volumes`, { query: options });
+export const fetchSeriesChapters = (id, options = {}) =>
+  get(`/api/series/${id}/chapters`, { query: options });
+export const fetchVolumeChapters = (id, options = {}) =>
+  get(`/api/volumes/${id}/chapters`, { query: options });
+export const lookupSeriesByName = (libraryId, name) =>
+  get('/api/series/lookup', { query: { libraryId, name } });
+export const seriesCoverUrl = (id) => `/api/series/${id}/cover`;
+export const volumeCoverUrl = (id) => `/api/volumes/${id}/cover`;
+
+/**
+ * Cross-kind search (R-11). Returns a flat array of
+ *   { kind: 'series' | 'chapter', id, title, libraryId, seriesId }
+ * with series hits ranked above chapter hits when both match.
+ *
+ * Pass `libraryId` to scope results to one library.
+ */
+export const searchAll = (q, options = {}) =>
+  get('/api/search', { query: { q, ...options } });
 
 export const addFavorite = (comicId) =>
   post(`/api/comics/${comicId}/favorite`, { parse: 'none' });
@@ -339,36 +362,4 @@ export async function adminAddPath(targetPath, onProgress, opts = {}) {
     }
   }
   return { added, errors };
-}
-
-/**
- * Upload a single file with a raw-body POST. Uses XHR for upload-progress
- * events (fetch can't report those in browsers).
- *
- * `relPath` may include forward-slash-separated subdirs (folder drops).
- * Returns `{ added, skipped?, reason?, filePath }` on success.
- */
-export function adminUploadFile(file, relPath, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API}/api/admin/upload`);
-    xhr.responseType = 'json';
-    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-    xhr.setRequestHeader('X-CB8-Filename', encodeURIComponent(file.name));
-    xhr.setRequestHeader('X-CB8-Relpath', encodeURIComponent(relPath || file.name));
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.response || {});
-      } else {
-        reject(new ApiError(xhr.response?.error || `HTTP ${xhr.status}`, { status: xhr.status }));
-      }
-    };
-    xhr.onerror = () => reject(new Error('Network error'));
-    xhr.onabort = () => reject(new Error('Upload aborted'));
-    xhr.send(file);
-  });
 }

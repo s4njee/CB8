@@ -3,7 +3,7 @@
  *
  * Re-exports the surface that app.js (and any future caller) imports.
  * The implementation lives under admin/ — see individual modules for
- * login, menu, upload, add-path, bulk delete, and the card context menu.
+ * login, menu, add-path, bulk delete, and the card context menu.
  */
 
 export {
@@ -16,7 +16,6 @@ export {
   refreshSession,
 } from './admin/session.js';
 
-export { gatherFromDrop } from './admin/drop.js';
 export { toggleAdminPanel, openAddComic } from './admin/menu.js';
 export { bulkDeleteComics } from './admin/bulkDelete.js';
 export { openCardContextMenu } from './admin/contextMenu.js';

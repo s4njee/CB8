@@ -113,6 +113,8 @@ export function getFolderComics(
 ): QueryResult {
   const conditions: string[] = ['c.id IN (SELECT comic_id FROM folder_comics WHERE folder_id = ?)'];
   const params: SqlParam[] = [folderId];
+  // R-8: hide soft-deleted comics from folder browse.
+  conditions.push('c.deleted_at IS NULL');
   if (options.mediaType) {
     conditions.push('c.media_type = ?');
     params.push(options.mediaType);
@@ -143,7 +145,8 @@ export function getFolderComics(
     `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size,
             CASE WHEN c.cover_thumbnail IS NULL THEN 0 ELSE 1 END as has_thumbnail,
             COALESCE(length(c.cover_thumbnail), 0) as thumbnail_version,
-            c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
+            c.date_added, c.last_page, c.last_location, c.last_read, c.media_type,
+            c.chapter_number, c.series_id, c.volume_id
      FROM comics c ${where}
      ORDER BY ${sortCol} ${sortDir}
      LIMIT ? OFFSET ?`

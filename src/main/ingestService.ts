@@ -7,7 +7,8 @@ import * as ArchiveLoader from './archiveLoader';
 import { extractEpubCover } from './epubCoverExtractor';
 import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
 import { generateThumbnail } from './thumbnailGenerator';
-import { parseSeriesFromFilename, type SeriesInfo } from './seriesParser';
+import { resolve as resolveMetadata, type ResolvedMetadata } from './metadataResolver';
+import { FolderGroupingResolver } from './folderGroupingResolver';
 import { detectMediaType, COMIC_EXTENSIONS, BOOK_EXTENSIONS } from '../shared/mediaTypes';
 import type { ScanProgress } from '../shared/types';
 import { withTimeout } from './utils/timeout';
@@ -82,10 +83,39 @@ interface PreparedInsert {
   fileSize: number;
   coverThumbnail: Buffer;
   mediaType: 'comic' | 'book';
-  seriesInfo: SeriesInfo;
+  /** Result of the v7 precedence chain (R-6, R-16, R-17, R-19, R-20, R-21). */
+  metadata: ResolvedMetadata;
+}
+
+/**
+ * Per-call options threaded through the ingest pipeline. R-6 requires a
+ * library context for every comic; if `libraryId` is omitted, it is
+ * resolved at flush time from `folderId` (folder→library lookup) or
+ * falls back to the Inbox library (Option B for orphan ingests, e.g.
+ * drag-drop a CBZ from Finder). The library is set on `library_comics`
+ * inline, so callers do not need to call `addComicsToLibrary` separately
+ * after ingest.
+ */
+export interface IngestOptions {
+  libraryId?: number;
+  folderId?: number;
+  /**
+   * Tree root of this ingest run, used by `metadataResolver` for the
+   * one-shot ancestor guard (R-19). Defaults to the file's parent
+   * directory for single-file ingests; directory scans pass the scan
+   * root.
+   */
+  libraryRoot?: string;
 }
 
 export class IngestService {
+  /**
+   * Per-run cache of folder-grouping decisions (R-17). Created lazily on
+   * first `prepareInsert`; reused across the run so a 50-file folder is
+   * only scanned once for its recurring base name.
+   */
+  private folderGrouping = new FolderGroupingResolver();
+
   constructor(private db: LibraryDatabase) {}
 
   /**
@@ -96,7 +126,7 @@ export class IngestService {
    * Pure async work — does not write to the DB. The caller is responsible
    * for batching the resulting payloads through `flushBatch`.
    */
-  async prepareInsert(filePath: string): Promise<PreparedInsert | null> {
+  async prepareInsert(filePath: string, libraryRoot?: string): Promise<PreparedInsert | null> {
     const mediaType = detectMediaType(filePath);
     if (!mediaType) return null;
     if (this.db.isDismissed(filePath)) return null;
@@ -105,7 +135,11 @@ export class IngestService {
     const ext = path.extname(filePath).toLowerCase();
     const stats = fs.statSync(filePath);
     const title = path.basename(filePath, ext);
-    const seriesInfo = parseSeriesFromFilename(path.basename(filePath));
+    const root = libraryRoot ?? path.dirname(filePath);
+    const metadata = await resolveMetadata(filePath, {
+      libraryRoot: root,
+      folderGrouping: this.folderGrouping,
+    });
 
     if (mediaType === 'book') {
       let pageCount = 0;
@@ -125,7 +159,7 @@ export class IngestService {
       } catch {
         coverThumbnail = await generateThumbnail(null);
       }
-      return { filePath, title, pageCount, fileSize: stats.size, coverThumbnail, mediaType: 'book', seriesInfo };
+      return { filePath, title, pageCount, fileSize: stats.size, coverThumbnail, mediaType: 'book', metadata };
     }
 
     // Comic archive
@@ -136,7 +170,7 @@ export class IngestService {
       const coverThumbnail = await generateThumbnail(coverImage);
       return {
         filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
-        coverThumbnail, mediaType: 'comic', seriesInfo,
+        coverThumbnail, mediaType: 'comic', metadata,
       };
     } finally {
       await ArchiveLoader.close(handle);
@@ -148,41 +182,176 @@ export class IngestService {
    * Returns the rowids of the inserted records (in input order).
    *
    * Synchronous: better-sqlite3 transactions cannot await. All async
-   * work must already be done in `prepareInsert`.
+   * work (including the metadata precedence chain) must already be
+   * done in `prepareInsert`.
+   *
+   * For each prepared insert this:
+   *   1. Inserts the comic row.
+   *   2. Upserts the series/volume rows under the resolved libraryId
+   *      (R-6 / R-1 / R-2). Run-detection by chapter-number collision
+   *      (R-17) splits same-numbered files across distinct volumes.
+   *   3. Sets `comics.series_id` and `comics.volume_id`.
+   *   4. Sets `comics.chapter_number` (intrinsic to the comic).
+   *   5. Persists `publication_year`/`publication_month`/`comicinfo_json`.
+   *   6. Attaches the comic to `library_comics` (inline, R-6).
+   *   7. Attaches to the folder if one was given.
    */
-  flushBatch(batch: PreparedInsert[], folderId?: number): number[] {
+  flushBatch(batch: PreparedInsert[], opts: IngestOptions = {}): number[] {
     if (batch.length === 0) return [];
     const ids: number[] = [];
+    const libraryId = this.resolveLibraryId(opts);
+
+    // R-17 run detection: when same-numbered chapters appear within a series,
+    // assign each file a distinct volume number derived from publication
+    // year (or a placeholder integer). Mutates `m.volumeNumber` /
+    // `m.volumeLabel` on the prepared inserts in place.
+    this.applyRunDetection(batch);
+
     this.db.runInTransaction(() => {
       for (const p of batch) {
+        const m = p.metadata;
         const id = this.db.addComicFast({
           filePath: p.filePath, title: p.title, pageCount: p.pageCount, fileSize: p.fileSize,
           coverThumbnail: p.coverThumbnail, mediaType: p.mediaType,
         });
-        if (p.seriesInfo.seriesName) {
-          this.db.setComicSeries(id, p.seriesInfo.seriesName, p.seriesInfo.volumeNumber, p.seriesInfo.chapterNumber);
+
+        // Hierarchy upsert + comic FK.
+        if (m.seriesName && !m.isStandalone) {
+          const series = this.db.series.getOrCreate(libraryId, m.seriesName);
+          const volume = m.volumeNumber != null
+            ? this.db.volume.getOrCreate(series.id, m.volumeNumber, m.volumeLabel)
+            : this.db.volume.getOrCreateImplicit(series.id);
+          this.db.raw.prepare('UPDATE comics SET series_id = ?, volume_id = ? WHERE id = ?')
+            .run(series.id, volume.id, id);
         }
+
+        // chapter_number stays intrinsic to the comic — write it whether or
+        // not the file has a series, so standalone "Volume 5" books still
+        // sort correctly inside their library view.
+        if (m.chapterNumber != null) {
+          this.db.raw.prepare('UPDATE comics SET chapter_number = ? WHERE id = ?')
+            .run(m.chapterNumber, id);
+        }
+
+        // Publication metadata + raw ComicInfo.
+        if (m.publicationYear != null || m.publicationMonth != null || m.comicinfoJson != null) {
+          this.db.raw.prepare(
+            `UPDATE comics SET publication_year = ?, publication_month = ?, comicinfo_json = ? WHERE id = ?`
+          ).run(m.publicationYear, m.publicationMonth, m.comicinfoJson, id);
+        }
+
         ids.push(id);
       }
-      if (folderId != null && ids.length > 0) {
-        this.db.addComicsToFolderRaw(folderId, ids);
+
+      // (6) attach to the resolved library inline. R-6.
+      if (ids.length > 0) {
+        const stmt = this.db.raw.prepare(
+          'INSERT OR IGNORE INTO library_comics (library_id, comic_id) VALUES (?, ?)'
+        );
+        for (const id of ids) stmt.run(libraryId, id);
+      }
+
+      // (7) folder attachment, if requested.
+      if (opts.folderId != null && ids.length > 0) {
+        this.db.addComicsToFolderRaw(opts.folderId, ids);
       }
     });
     return ids;
   }
 
   /**
+   * Resolve the effective library for a batch:
+   *   1. explicit `libraryId` from caller
+   *   2. derive from `folderId` via `library_folders`
+   *   3. fall back to the Inbox library (R-6 Option B for orphan ingests)
+   */
+  private resolveLibraryId(opts: IngestOptions): number {
+    if (opts.libraryId != null) return opts.libraryId;
+    if (opts.folderId != null) {
+      const lib = this.db.getLibraryForFolder(opts.folderId);
+      if (lib != null) return lib;
+    }
+    return this.db.getOrCreateInboxLibrary();
+  }
+
+  /**
+   * R-17 run detection. Group prepared inserts by series; if the same
+   * chapter_number appears more than once, assign each file a distinct
+   * volume number so the volume row partial-unique index doesn't reject
+   * the upsert.
+   *
+   * Number assignment precedence:
+   *   1. If volumeNumber is already set on the metadata (ComicInfo
+   *      `<Volume>` or folder `vN`), keep it.
+   *   2. Else, if publicationYear is set, use the year as the volume
+   *      number — matches user intent for Marvel-style year-tag runs
+   *      (Darth Vader 2015 vs 2017 each map to volume.number = 2015 / 2017).
+   *   3. Else, allocate sequential placeholder numbers starting at a
+   *      high base so they don't collide with normal volume indices.
+   *
+   * The label is set alongside for display: explicit volumeLabel kept if
+   * present, otherwise `vN` for ComicInfo/folder vN, year string for
+   * year-tag runs, "Run A/B/..." for placeholders.
+   */
+  private applyRunDetection(batch: PreparedInsert[]): void {
+    const bySeries = new Map<string, PreparedInsert[]>();
+    for (const p of batch) {
+      const key = p.metadata.seriesName?.toLowerCase();
+      if (!key) continue;
+      const arr = bySeries.get(key) ?? [];
+      arr.push(p);
+      bySeries.set(key, arr);
+    }
+    for (const [, items] of bySeries) {
+      // Detect chapter-number collisions.
+      const byChapter = new Map<number, PreparedInsert[]>();
+      for (const p of items) {
+        const ch = p.metadata.chapterNumber;
+        if (ch == null) continue;
+        const arr = byChapter.get(ch) ?? [];
+        arr.push(p);
+        byChapter.set(ch, arr);
+      }
+      const hasCollision = [...byChapter.values()].some((a) => a.length > 1);
+      if (!hasCollision) continue;
+
+      // Allocate placeholder numbers for run buckets that have no year/volume.
+      const PLACEHOLDER_BASE = 9_000_000;
+      let nextPlaceholder = 0;
+      const placeholderByLabel = new Map<string, number>();
+
+      for (const p of items) {
+        const m = p.metadata;
+        if (m.volumeNumber != null) continue; // already pinned by ComicInfo/folder vN
+        if (m.publicationYear != null) {
+          m.volumeNumber = m.publicationYear;
+          m.volumeLabel ??= String(m.publicationYear);
+          continue;
+        }
+        // No year — bucket files by an existing label (if any) or an auto label.
+        const labelKey = m.volumeLabel ?? `Run ${String.fromCharCode(0x41 + nextPlaceholder)}`;
+        if (!placeholderByLabel.has(labelKey)) {
+          placeholderByLabel.set(labelKey, PLACEHOLDER_BASE + nextPlaceholder);
+          nextPlaceholder++;
+        }
+        m.volumeNumber = placeholderByLabel.get(labelKey)!;
+        m.volumeLabel ??= labelKey;
+      }
+    }
+  }
+
+  /**
    * Single-file ingest used by the upload route. Wraps prepare + flush
    * for one file; returns added/comicId/error in the original shape.
    */
-  async addFile(filePath: string, folderId?: number): Promise<IngestResult> {
+  async addFile(filePath: string, opts: IngestOptions = {}): Promise<IngestResult> {
     try {
-      const prepared = await this.prepareInsert(filePath);
+      const prepared = await this.prepareInsert(filePath, opts.libraryRoot);
       if (!prepared) {
         if (!detectMediaType(filePath)) return { added: false, error: 'Unsupported file type' };
         return { added: false };
       }
-      const [id] = this.flushBatch([prepared], folderId);
+      const [id] = this.flushBatch([prepared], opts);
       return { added: true, comicId: id };
     } catch (err) {
       return { added: false, error: err instanceof Error ? err.message : String(err) };
@@ -203,25 +372,26 @@ export class IngestService {
     filePaths: string[],
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    folderId?: number,
+    opts: IngestOptions = {},
   ): Promise<number> {
     const queue = new IngestQueue();
     queue.pushMany(filePaths);
     queue.complete();
-    return this.runWorkers(queue, onProgress, signal, folderId);
+    return this.runWorkers(queue, onProgress, signal, opts);
   }
 
   private async runWorkers(
     queue: IngestQueue,
     onProgress: (progress: ScanProgress) => void,
     signal: AbortSignal | undefined,
-    folderId: number | undefined,
+    opts: IngestOptions,
   ): Promise<number> {
     const progress: ScanProgress = { discovered: 0, processed: 0, currentFile: '' };
     const pending: PreparedInsert[] = [];
     const existingForFolder: number[] = [];
     let added = 0;
     let lastEmit = 0;
+    const folderId = opts.folderId;
 
     const emit = (force = false): void => {
       progress.discovered = queue.totalSeen();
@@ -233,7 +403,7 @@ export class IngestService {
 
     const flushIfFull = (): void => {
       if (pending.length >= FLUSH_BATCH_SIZE) {
-        added += this.flushBatch(pending.splice(0, pending.length), folderId).length;
+        added += this.flushBatch(pending.splice(0, pending.length), opts).length;
       }
       if (folderId != null && existingForFolder.length >= FLUSH_BATCH_SIZE) {
         const ids = existingForFolder.splice(0, existingForFolder.length);
@@ -254,7 +424,7 @@ export class IngestService {
               if (existing) existingForFolder.push(existing.id);
             }
           } else {
-            const prep = await this.prepareInsert(filePath);
+            const prep = await this.prepareInsert(filePath, opts.libraryRoot);
             if (prep) pending.push(prep);
           }
           flushIfFull();
@@ -271,7 +441,7 @@ export class IngestService {
     await Promise.all(workers);
 
     if (pending.length > 0) {
-      added += this.flushBatch(pending.splice(0, pending.length), folderId).length;
+      added += this.flushBatch(pending.splice(0, pending.length), opts).length;
     }
     if (folderId != null && existingForFolder.length > 0) {
       this.db.runInTransaction(() => this.db.addComicsToFolderRaw(folderId, existingForFolder));
@@ -285,7 +455,7 @@ export class IngestService {
     mediaType: 'comic' | 'book',
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
-    folderId?: number,
+    opts: IngestOptions = {},
   ): Promise<number> {
     const extensions = mediaType === 'comic'
       ? new Set([...COMIC_EXTENSIONS].map(e => `.${e}`))
@@ -294,7 +464,9 @@ export class IngestService {
     const files: string[] = [];
     await this.discoverFiles(dirPath, files, extensions, signal);
     if (signal?.aborted) return 0;
-    return this.ingestParallel(files, onProgress, signal, folderId);
+    // Use the scan root as libraryRoot for the one-shot guard (R-19) so a
+    // file at <scanRoot>/one-shot/Foo/foo.cbz is correctly recognised.
+    return this.ingestParallel(files, onProgress, signal, { ...opts, libraryRoot: opts.libraryRoot ?? dirPath });
   }
 
   private async discoverFiles(dirPath: string, files: string[], extensions: Set<string>, signal?: AbortSignal): Promise<void> {

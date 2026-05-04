@@ -16,6 +16,12 @@ export interface WebComicRecord {
   thumbnailUrl: string;
   /** File extension without the dot: 'epub' | 'pdf' | 'mobi' | 'cbz' | 'cbr' */
   fileExt: string;
+  /** v7+: intrinsic chapter/issue number on the comic. Null when unknown. */
+  chapterNumber: number | null;
+  /** v7+: FK to the parent series row (null for standalone). */
+  seriesId: number | null;
+  /** v7+: FK to the parent volume row (null for standalone or unresolved). */
+  volumeId: number | null;
 }
 
 export function toWebRecord(record: ReturnType<LibraryDatabase['getComic']>): WebComicRecord | null {
@@ -39,6 +45,9 @@ export function toWebRecord(record: ReturnType<LibraryDatabase['getComic']>): We
     mediaType: record.mediaType,
     thumbnailUrl: `/api/comics/${record.id}/thumbnail?v=${vParam}`,
     fileExt: path.extname(record.filePath).toLowerCase().replace(/^\./, ''),
+    chapterNumber: record.chapterNumber ?? null,
+    seriesId: record.seriesId ?? null,
+    volumeId: record.volumeId ?? null,
   };
 }
 
