@@ -26,9 +26,9 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'DELETE' && deleteMatch) {
     if (!requireAdmin(ctx)) return true;
     const id = parseInt(deleteMatch[1], 10);
-    if (!db.getComic(id)) { sendError(res, 404, 'Comic not found'); return true; }
+    if (!db.comics.getComic(id)) { sendError(res, 404, 'Comic not found'); return true; }
     await evictFromCache(id);
-    db.removeComics([id]);
+    db.comics.removeComics([id]);
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -41,7 +41,7 @@ export const handle: RouteHandler = async (ctx) => {
       opts.readStatus = query.readStatus;
     }
     if (query.favorites === 'true') opts.favorites = true;
-    const result = db.queryComicsForUser(currentUser?.id ?? null, opts);
+    const result = db.comics.queryComicsForUser(currentUser?.id ?? null, opts);
     sendJson(res, 200, {
       records: result.records.map((r) => ({ ...toWebRecord(r)!, favorited: r.favorited ?? false })),
       totalCount: result.totalCount,
@@ -53,7 +53,7 @@ export const handle: RouteHandler = async (ctx) => {
   const comicMatch = pathname.match(/^\/api\/comics\/(\d+)$/);
   if (method === 'GET' && comicMatch) {
     const id = parseInt(comicMatch[1], 10);
-    const record = db.getComic(id);
+    const record = db.comics.getComic(id);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     sendJson(res, 200, overlayUserState(toWebRecord(record)!, db, currentUser?.id ?? null));
     return true;
@@ -63,7 +63,7 @@ export const handle: RouteHandler = async (ctx) => {
   const thumbMatch = pathname.match(/^\/api\/comics\/(\d+)\/thumbnail$/);
   if (method === 'GET' && thumbMatch) {
     const id = parseInt(thumbMatch[1], 10);
-    const record = db.getComic(id);
+    const record = db.comics.getComic(id);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     const thumb = record.coverThumbnail;
     if (!thumb || thumb.length === 0) {
@@ -104,7 +104,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'GET' && pageMatch) {
     const comicId = parseInt(pageMatch[1], 10);
     const pageIndex = parseInt(pageMatch[2], 10);
-    const record = db.getComic(comicId);
+    const record = db.comics.getComic(comicId);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     if (record.mediaType !== 'comic') { sendError(res, 400, 'Not a comic archive'); return true; }
     try {
@@ -154,7 +154,7 @@ export const handle: RouteHandler = async (ctx) => {
   const fileMatch = pathname.match(/^\/api\/comics\/(\d+)\/file$/);
   if (method === 'GET' && fileMatch) {
     const id = parseInt(fileMatch[1], 10);
-    const record = db.getComic(id);
+    const record = db.comics.getComic(id);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     if (record.mediaType !== 'book') { sendError(res, 400, 'Not a book'); return true; }
     const ext = path.extname(record.filePath).toLowerCase();
@@ -204,7 +204,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'PUT' && metadataPutMatch) {
     if (!requireAdmin(ctx)) return true;
     const id = parseInt(metadataPutMatch[1], 10);
-    if (!db.getComic(id)) { sendError(res, 404, 'Comic not found'); return true; }
+    if (!db.comics.getComic(id)) { sendError(res, 404, 'Comic not found'); return true; }
     const body = await readBody(req);
     let parsed: {
       title?: string; author?: string | null; artist?: string | null;
@@ -230,7 +230,7 @@ export const handle: RouteHandler = async (ctx) => {
         sendError(res, 400, '"genre" must be string, array, or null'); return true;
       }
     }
-    db.updateComicMetadata(id, {
+    db.comics.updateComicMetadata(id, {
       title: parsed.title,
       author: parsed.author,
       artist: parsed.artist,
@@ -247,8 +247,8 @@ export const handle: RouteHandler = async (ctx) => {
       try {
         const buf = await safeFetchBuffer(parsed.coverUrl);
         const thumb = await generateThumbnail(buf);
-        const record = db.getComic(id);
-        if (record && thumb) db.updateCoverThumbnailByPath(record.filePath, thumb);
+        const record = db.comics.getComic(id);
+        if (record && thumb) db.comics.updateCoverThumbnailByPath(record.filePath, thumb);
         invalidateCacheForComic(id);
       } catch (err) {
         if (err instanceof SafeFetchError) {
@@ -269,7 +269,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'POST' && refreshMatch) {
     if (!requireAdmin(ctx)) return true;
     const id = parseInt(refreshMatch[1], 10);
-    const record = db.getComic(id);
+    const record = db.comics.getComic(id);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     if (record.mediaType !== 'book') {
       sendJson(res, 200, overlayUserState(toWebRecord(record)!, db, currentUser?.id ?? null));
@@ -283,7 +283,7 @@ export const handle: RouteHandler = async (ctx) => {
         console.warn(`[webServer] refreshBookMetadata failed for comic=${id}:`, err);
       }
     }
-    const fresh = db.getComic(id);
+    const fresh = db.comics.getComic(id);
     if (!fresh) { sendError(res, 404, 'Comic not found'); return true; }
     sendJson(res, 200, overlayUserState(toWebRecord(fresh)!, db, currentUser?.id ?? null));
     return true;

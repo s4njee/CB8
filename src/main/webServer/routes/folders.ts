@@ -8,7 +8,7 @@ export const handle: RouteHandler = async (ctx) => {
 
   // List folders
   if (method === 'GET' && pathname === '/api/folders') {
-    const folders = db.getAllFolders();
+    const folders = db.folders.getAllFolders();
     const safe = folders.map((f) => ({
       id: f.id,
       name: f.name,
@@ -28,7 +28,7 @@ export const handle: RouteHandler = async (ctx) => {
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.name !== 'string' || !parsed.name.trim()) { sendError(res, 400, 'Provide "name" (string)'); return true; }
     const ids = Array.isArray(parsed.comicIds) ? parsed.comicIds.map(Number) : [];
-    sendJson(res, 201, db.createFolder(parsed.name.trim(), ids));
+    sendJson(res, 201, db.folders.createFolder(parsed.name.trim(), ids));
     return true;
   }
 
@@ -41,7 +41,7 @@ export const handle: RouteHandler = async (ctx) => {
     let parsed: { name?: string };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.name !== 'string' || !parsed.name.trim()) { sendError(res, 400, 'Provide "name" (string)'); return true; }
-    db.renameFolder(id, parsed.name.trim());
+    db.folders.renameFolder(id, parsed.name.trim());
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -50,7 +50,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'DELETE' && folderIdMatch) {
     if (!requireAdmin(ctx)) return true;
     const id = parseInt(folderIdMatch[1], 10);
-    db.deleteFolder(id);
+    db.folders.deleteFolder(id);
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -66,8 +66,8 @@ export const handle: RouteHandler = async (ctx) => {
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) { sendError(res, 400, 'Provide "comicIds" (non-empty array)'); return true; }
     const ids = parsed.comicIds.map(Number);
-    if (method === 'POST') db.addComicsToFolder(folderId, ids);
-    else db.removeComicsFromFolder(folderId, ids);
+    if (method === 'POST') db.folders.addComicsToFolder(folderId, ids);
+    else db.folders.removeComicsFromFolder(folderId, ids);
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -76,7 +76,7 @@ export const handle: RouteHandler = async (ctx) => {
   const folderThumbMatch = pathname.match(/^\/api\/folders\/(\d+)\/thumbnail$/);
   if (method === 'GET' && folderThumbMatch) {
     const folderId = parseInt(folderThumbMatch[1], 10);
-    const folders = db.getAllFolders();
+    const folders = db.folders.getAllFolders();
     const folder = folders.find((f) => f.id === folderId);
     const thumb = folder?.coverThumbnail;
     if (!thumb || thumb.length === 0) {
@@ -103,7 +103,7 @@ export const handle: RouteHandler = async (ctx) => {
       opts.readStatus = query.readStatus;
     }
     if (query.favorites === 'true') opts.favorites = true;
-    const result = db.queryComicsForUser(currentUser?.id ?? null, opts);
+    const result = db.comics.queryComicsForUser(currentUser?.id ?? null, opts);
     sendJson(res, 200, {
       records: result.records.map((r) => ({ ...toWebRecord(r)!, favorited: r.favorited ?? false })),
       totalCount: result.totalCount,

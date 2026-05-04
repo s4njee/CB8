@@ -18,7 +18,7 @@
 import { sendJson, sendError } from '../middleware';
 import { toWebRecord, overlayUserState } from '../mapping';
 import type { RouteHandler } from '../context';
-import type { MediaRecord } from '../../../shared/types';
+import type { ComicDetail } from '../../../shared/types';
 
 function clampLimit(raw: string | undefined, dflt = 50, max = 200): number {
   const n = raw ? parseInt(raw, 10) : dflt;
@@ -57,7 +57,7 @@ export const handle: RouteHandler = async (ctx) => {
         summary: r.summary,
         status: r.status,
         ageRating: r.ageRating,
-        coverComicId: r.coverComicId ?? db.defaultSeriesCover(r.id),
+        coverComicId: r.coverComicId ?? db.comics.defaultSeriesCover(r.id),
         chapterCount: r.chapterCount,
         lastChapterAddedAt: r.lastChapterAddedAt,
       })),
@@ -98,7 +98,7 @@ export const handle: RouteHandler = async (ctx) => {
       summary: s.summary,
       status: s.status,
       ageRating: s.ageRating,
-      coverComicId: s.coverComicId ?? db.defaultSeriesCover(id),
+      coverComicId: s.coverComicId ?? db.comics.defaultSeriesCover(id),
       volumeCount: volumes.filter((v) => v.number !== null).length,
       hasImplicitVolume: volumes.some((v) => v.number === null),
       chapterCount,
@@ -123,7 +123,7 @@ export const handle: RouteHandler = async (ctx) => {
       seriesId: v.seriesId,
       number: v.number,
       name: v.name,
-      coverComicId: v.coverComicId ?? db.defaultVolumeCover(v.id),
+      coverComicId: v.coverComicId ?? db.comics.defaultVolumeCover(v.id),
       chapterCount: v.chapterCount,
       deletedAt: v.deletedAt,
     })));
@@ -137,7 +137,7 @@ export const handle: RouteHandler = async (ctx) => {
     const limit = clampLimit(query.limit, 50, 500);
     const offset = query.offset ? parseInt(query.offset, 10) : 0;
     const inc = parseInclude(query, isAdmin);
-    const records = db.listChaptersForSeries(id, { includeDeleted: inc.includeDeleted, limit, offset });
+    const records = db.comics.listForSeries(id, { includeDeleted: inc.includeDeleted, limit, offset });
     sendJson(res, 200, mapChapters(records, db, currentUser?.id ?? null));
     return true;
   }
@@ -149,7 +149,7 @@ export const handle: RouteHandler = async (ctx) => {
     const limit = clampLimit(query.limit, 50, 500);
     const offset = query.offset ? parseInt(query.offset, 10) : 0;
     const inc = parseInclude(query, isAdmin);
-    const records = db.listChaptersForVolume(id, { includeDeleted: inc.includeDeleted, limit, offset });
+    const records = db.comics.listForVolume(id, { includeDeleted: inc.includeDeleted, limit, offset });
     sendJson(res, 200, mapChapters(records, db, currentUser?.id ?? null));
     return true;
   }
@@ -162,7 +162,7 @@ export const handle: RouteHandler = async (ctx) => {
     const id = parseInt(seriesCoverMatch[1], 10);
     const s = db.series.get(id);
     if (!s) { sendError(res, 404, 'Not found'); return true; }
-    const cid = s.coverComicId ?? db.defaultSeriesCover(id);
+    const cid = s.coverComicId ?? db.comics.defaultSeriesCover(id);
     if (cid == null) { sendError(res, 404, 'No cover available'); return true; }
     res.writeHead(302, { Location: `/api/comics/${cid}/thumbnail` });
     res.end();
@@ -175,7 +175,7 @@ export const handle: RouteHandler = async (ctx) => {
     const id = parseInt(volumeCoverMatch[1], 10);
     const v = db.volume.get(id);
     if (!v) { sendError(res, 404, 'Not found'); return true; }
-    const cid = v.coverComicId ?? db.defaultVolumeCover(id);
+    const cid = v.coverComicId ?? db.comics.defaultVolumeCover(id);
     if (cid == null) { sendError(res, 404, 'No cover available'); return true; }
     res.writeHead(302, { Location: `/api/comics/${cid}/thumbnail` });
     res.end();
@@ -185,6 +185,6 @@ export const handle: RouteHandler = async (ctx) => {
   return false;
 };
 
-function mapChapters(records: MediaRecord[], db: import('../../libraryDatabase').LibraryDatabase, uid: number | null): unknown[] {
+function mapChapters(records: ComicDetail[], db: import('../../libraryDatabase').LibraryDatabase, uid: number | null): unknown[] {
   return records.map((r) => overlayUserState(toWebRecord(r)!, db, uid));
 }

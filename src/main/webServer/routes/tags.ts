@@ -6,7 +6,7 @@ export const handle: RouteHandler = async (ctx) => {
 
   // List all tags
   if (method === 'GET' && pathname === '/api/tags') {
-    sendJson(res, 200, db.getAllTags());
+    sendJson(res, 200, db.tags.getAllTags());
     return true;
   }
 
@@ -15,7 +15,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'PUT' && comicTagsMatch) {
     if (!requireAdmin(ctx)) return true;
     const id = parseInt(comicTagsMatch[1], 10);
-    const record = db.getComic(id);
+    const record = db.comics.getComic(id);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     const body = await readBody(req);
     let parsed: { tags?: string[] };
@@ -26,8 +26,8 @@ export const handle: RouteHandler = async (ctx) => {
       .filter((t) => t.length > 0);
     const current = new Set(record.tags);
     const next = new Set(nextTags);
-    for (const t of current) if (!next.has(t)) db.removeTag(id, t);
-    for (const t of next) if (!current.has(t)) db.addTag(id, t);
+    for (const t of current) if (!next.has(t)) db.tags.removeTag(id, t);
+    for (const t of next) if (!current.has(t)) db.tags.addTag(id, t);
     sendJson(res, 200, { ok: true, tags: Array.from(next) });
     return true;
   }
@@ -47,8 +47,8 @@ export const handle: RouteHandler = async (ctx) => {
       sendError(res, 400, 'Provide "comicIds" (non-empty array)'); return true;
     }
     const ids = parsed.comicIds.map(Number);
-    if (method === 'POST') db.addTagBulk(ids, tag);
-    else db.removeTagBulk(ids, tag);
+    if (method === 'POST') db.tags.addTagBulk(ids, tag);
+    else db.tags.removeTagBulk(ids, tag);
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -62,7 +62,7 @@ export const handle: RouteHandler = async (ctx) => {
     let parsed: { newName?: string };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.newName !== 'string' || !parsed.newName.trim()) { sendError(res, 400, 'Provide "newName" (string)'); return true; }
-    db.renameTag(oldName, parsed.newName.trim());
+    db.tags.renameTag(oldName, parsed.newName.trim());
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -71,7 +71,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'DELETE' && tagNameMatch) {
     if (!requireAdmin(ctx)) return true;
     const name = decodeURIComponent(tagNameMatch[1]);
-    db.deleteTag(name);
+    db.tags.deleteTag(name);
     sendJson(res, 200, { ok: true });
     return true;
   }

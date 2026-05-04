@@ -9,6 +9,6 @@ import type { LibraryDatabase } from '../libraryDatabase';
  */
 export function registerReadingHandlers(db: LibraryDatabase | null): void {
   ipcMain.handle('reading:get-comic-by-path', (_e, filePath: string) => {
-    return db?.getComicByPath(filePath) ?? null;
+    return db?.comics.getComicByPath(filePath) ?? null;
   });
 }

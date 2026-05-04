@@ -55,10 +55,10 @@ export const handle: RouteHandler = async (ctx) => {
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.username !== 'string' || !parsed.username.trim()) { sendError(res, 400, 'Provide "username" (string)'); return true; }
     if (typeof parsed.password !== 'string' || parsed.password.length < 1) { sendError(res, 400, 'Provide "password" (string)'); return true; }
-    if (db.getUserByUsername(parsed.username.trim())) { sendError(res, 409, 'Username already exists'); return true; }
+    if (db.users.getUserByUsername(parsed.username.trim())) { sendError(res, 409, 'Username already exists'); return true; }
     const hash = await bcrypt.hash(parsed.password, 10);
-    const user = db.createUser(parsed.username.trim(), hash, parsed.isAdmin === true);
-    db.upsertCredentialAccount(user.id, parsed.username.trim(), hash);
+    const user = db.users.createUser(parsed.username.trim(), hash, parsed.isAdmin === true);
+    db.users.upsertCredentialAccount(user.id, parsed.username.trim(), hash);
     sendJson(res, 201, user);
     return true;
   }
@@ -81,7 +81,7 @@ export const handle: RouteHandler = async (ctx) => {
 
   // Initial credentials — public, used for first-boot auto-login and settings display.
   if (method === 'GET' && pathname === '/api/settings/initial-credentials') {
-    const password = db.getAppMeta('initial_password') || null;
+    const password = db.appMeta.getAppMeta('initial_password') || null;
     sendJson(res, 200, { username: 'admin', password });
     return true;
   }
@@ -89,7 +89,7 @@ export const handle: RouteHandler = async (ctx) => {
   // Clear initial password (admin only — called after the admin has set a real password)
   if (method === 'DELETE' && pathname === '/api/settings/initial-credentials') {
     if (!requireAdmin(ctx)) return true;
-    db.setAppMeta('initial_password', '');
+    db.appMeta.setAppMeta('initial_password', '');
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -100,7 +100,7 @@ export const handle: RouteHandler = async (ctx) => {
     const body = await readBody(req);
     let parsed: { enabled?: boolean };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
-    db.setAppMeta(GUEST_ACCESS_KEY, parsed.enabled === true ? 'true' : 'false');
+    db.appMeta.setAppMeta(GUEST_ACCESS_KEY, parsed.enabled === true ? 'true' : 'false');
     sendJson(res, 200, { ok: true, enabled: parsed.enabled === true });
     return true;
   }

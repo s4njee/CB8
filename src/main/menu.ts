@@ -35,7 +35,7 @@ export interface MenuContext {
 
 function buildRecentMenuItems(ctx: MenuContext): MenuItemConstructorOptions[] {
   const db = ctx.getDb();
-  const recentRecords = db?.getRecentlyRead(RECENT_FILE_LIMIT) ?? [];
+  const recentRecords = db?.comics.getRecentlyRead(RECENT_FILE_LIMIT) ?? [];
   const existingRecords = recentRecords.filter((record) => fs.existsSync(record.filePath));
 
   if (existingRecords.length === 0) {

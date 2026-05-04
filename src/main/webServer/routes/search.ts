@@ -19,7 +19,7 @@ export const handle: RouteHandler = async (ctx) => {
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
   const libraryId = query.libraryId ? parseInt(query.libraryId, 10) : undefined;
 
-  const hits = db.unionSearch(q, { limit, libraryId: Number.isFinite(libraryId) ? libraryId : undefined });
+  const hits = db.search.unionSearch(q, { limit, libraryId: Number.isFinite(libraryId) ? libraryId : undefined });
   sendJson(res, 200, hits);
   return true;
 };

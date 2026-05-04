@@ -21,10 +21,10 @@ export interface AdminResetResult {
 
 export async function resetDefaultAdmin(db: LibraryDatabase): Promise<AdminResetResult> {
   const hash = await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10);
-  const existing = db.getUserByUsername(DEFAULT_ADMIN_USERNAME);
+  const existing = db.users.getUserByUsername(DEFAULT_ADMIN_USERNAME);
   if (!existing) {
-    const created = db.createUser(DEFAULT_ADMIN_USERNAME, hash, true);
-    db.upsertCredentialAccount(created.id, DEFAULT_ADMIN_USERNAME, hash);
+    const created = db.users.createUser(DEFAULT_ADMIN_USERNAME, hash, true);
+    db.users.upsertCredentialAccount(created.id, DEFAULT_ADMIN_USERNAME, hash);
     return { username: DEFAULT_ADMIN_USERNAME, password: DEFAULT_ADMIN_PASSWORD, created: true };
   }
 
@@ -41,6 +41,6 @@ export async function resetDefaultAdmin(db: LibraryDatabase): Promise<AdminReset
      WHERE id = ?`
   ).run(hash, `${DEFAULT_ADMIN_USERNAME}@localhost`, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME, existing.id);
 
-  db.upsertCredentialAccount(existing.id, DEFAULT_ADMIN_USERNAME, hash);
+  db.users.upsertCredentialAccount(existing.id, DEFAULT_ADMIN_USERNAME, hash);
   return { username: DEFAULT_ADMIN_USERNAME, password: DEFAULT_ADMIN_PASSWORD, created: false };
 }

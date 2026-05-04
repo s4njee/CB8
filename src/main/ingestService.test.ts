@@ -136,7 +136,7 @@ describe('IngestService — full v7 pipeline', () => {
     const result = await ingest.addFile(file);
     expect(result.added).toBe(true);
 
-    const libs = db.getAllLibraries();
+    const libs = db.libraries.getAllLibraries();
     expect(libs.find((l) => l.name === 'Inbox')).toBeTruthy();
     const inbox = libs.find((l) => l.name === 'Inbox')!;
     const inLib = (db as unknown as { raw: { prepare: (s: string) => { all: (...a: unknown[]) => unknown[] } } }).raw
@@ -150,7 +150,7 @@ describe('IngestService — full v7 pipeline', () => {
     await placeCbz(path.join(libRoot, 'Avengers v2', '199601 Avengers v2 001.cbz'));
     await placeCbz(path.join(libRoot, 'Avengers v3', '199801 Avengers v3 003.cbz'));
     await placeCbz(path.join(libRoot, 'Avengers v3', '199802 Avengers v3 004.cbz'));
-    const lib = db.createLibrary('Marvel');
+    const lib = db.libraries.createLibrary('Marvel');
     const ingest = new IngestService(db);
     await ingest.scanDirectory(libRoot, 'comic', () => {}, undefined, { libraryId: lib.id });
 
@@ -170,7 +170,7 @@ describe('IngestService — full v7 pipeline', () => {
     await placeCbz(path.join(dir, 'Darth Vader 002 (2015) (Digital).cbz'));
     await placeCbz(path.join(dir, 'Darth Vader 001 (2017) (Digital).cbz'));
     await placeCbz(path.join(dir, 'Darth Vader 002 (2017) (Digital).cbz'));
-    const lib = db.createLibrary('Marvel');
+    const lib = db.libraries.createLibrary('Marvel');
     const ingest = new IngestService(db);
     await ingest.scanDirectory(libRoot, 'comic', () => {}, undefined, { libraryId: lib.id });
 
@@ -189,7 +189,7 @@ describe('IngestService — full v7 pipeline', () => {
     await placeCbz(path.join(libRoot, 'one-shot', 'Aero', 'Aero 001.cbz'));
     await placeCbz(path.join(libRoot, 'one-shot', '100th Anniversary Special - X-Men',
       '100th Anniversary Special - X-Men 001.cbz'));
-    const lib = db.createLibrary('Marvel');
+    const lib = db.libraries.createLibrary('Marvel');
     const ingest = new IngestService(db);
     await ingest.scanDirectory(libRoot, 'comic', () => {}, undefined, { libraryId: lib.id });
 
@@ -204,7 +204,7 @@ describe('IngestService — full v7 pipeline', () => {
   it('populates series_id, volume_id, chapter_number and publication date on the comic row', async () => {
     await placeCbz(path.join(libRoot, 'Avengers v1', '198001 Avengers v1 191.cbz'));
     await placeCbz(path.join(libRoot, 'Avengers v1', '198002 Avengers v1 192.cbz'));
-    const lib = db.createLibrary('Marvel');
+    const lib = db.libraries.createLibrary('Marvel');
     const ingest = new IngestService(db);
     await ingest.scanDirectory(libRoot, 'comic', () => {}, undefined, { libraryId: lib.id });
 
@@ -222,7 +222,7 @@ describe('IngestService — full v7 pipeline', () => {
   it('no foreign-key violations after ingest', async () => {
     await placeCbz(path.join(libRoot, 'Foo Bar', 'Foo Bar 001.cbz'));
     await placeCbz(path.join(libRoot, 'Foo Bar', 'Foo Bar 002.cbz'));
-    const lib = db.createLibrary('Test');
+    const lib = db.libraries.createLibrary('Test');
     const ingest = new IngestService(db);
     await ingest.scanDirectory(libRoot, 'comic', () => {}, undefined, { libraryId: lib.id });
 

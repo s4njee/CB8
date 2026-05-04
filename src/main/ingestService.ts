@@ -129,8 +129,8 @@ export class IngestService {
   async prepareInsert(filePath: string, libraryRoot?: string): Promise<PreparedInsert | null> {
     const mediaType = detectMediaType(filePath);
     if (!mediaType) return null;
-    if (this.db.isDismissed(filePath)) return null;
-    if (this.db.comicExistsByPath(filePath)) return null;
+    if (this.db.comics.isDismissed(filePath)) return null;
+    if (this.db.comics.comicExistsByPath(filePath)) return null;
 
     const ext = path.extname(filePath).toLowerCase();
     const stats = fs.statSync(filePath);
@@ -210,7 +210,7 @@ export class IngestService {
     this.db.runInTransaction(() => {
       for (const p of batch) {
         const m = p.metadata;
-        const id = this.db.addComicFast({
+        const id = this.db.comics.addComicFast({
           filePath: p.filePath, title: p.title, pageCount: p.pageCount, fileSize: p.fileSize,
           coverThumbnail: p.coverThumbnail, mediaType: p.mediaType,
         });
@@ -253,7 +253,7 @@ export class IngestService {
 
       // (7) folder attachment, if requested.
       if (opts.folderId != null && ids.length > 0) {
-        this.db.addComicsToFolderRaw(opts.folderId, ids);
+        this.db.folders.addComicsToFolderRaw(opts.folderId, ids);
       }
     });
     return ids;
@@ -268,10 +268,10 @@ export class IngestService {
   private resolveLibraryId(opts: IngestOptions): number {
     if (opts.libraryId != null) return opts.libraryId;
     if (opts.folderId != null) {
-      const lib = this.db.getLibraryForFolder(opts.folderId);
+      const lib = this.db.libraries.getLibraryForFolder(opts.folderId);
       if (lib != null) return lib;
     }
-    return this.db.getOrCreateInboxLibrary();
+    return this.db.libraries.getOrCreateInbox();
   }
 
   /**
@@ -407,7 +407,7 @@ export class IngestService {
       }
       if (folderId != null && existingForFolder.length >= FLUSH_BATCH_SIZE) {
         const ids = existingForFolder.splice(0, existingForFolder.length);
-        this.db.runInTransaction(() => this.db.addComicsToFolderRaw(folderId, ids));
+        this.db.runInTransaction(() => this.db.folders.addComicsToFolderRaw(folderId, ids));
       }
     };
 
@@ -418,9 +418,9 @@ export class IngestService {
         if (filePath === null) return; // queue closed and drained
         progress.currentFile = filePath;
         try {
-          if (this.db.comicExistsByPath(filePath)) {
+          if (this.db.comics.comicExistsByPath(filePath)) {
             if (folderId != null) {
-              const existing = this.db.getComicByPath(filePath);
+              const existing = this.db.comics.getComicByPath(filePath);
               if (existing) existingForFolder.push(existing.id);
             }
           } else {
@@ -444,7 +444,7 @@ export class IngestService {
       added += this.flushBatch(pending.splice(0, pending.length), opts).length;
     }
     if (folderId != null && existingForFolder.length > 0) {
-      this.db.runInTransaction(() => this.db.addComicsToFolderRaw(folderId, existingForFolder));
+      this.db.runInTransaction(() => this.db.folders.addComicsToFolderRaw(folderId, existingForFolder));
     }
     emit(true);
     return added;

@@ -88,7 +88,7 @@ async function resolveAndDispatchComic(filePath: string): Promise<void> {
   const win = mainWindow;
   if (!win || win.isDestroyed() || !db) return;
   try {
-    let record = db.getComicByPath(filePath);
+    let record = db.comics.getComicByPath(filePath);
     if (!record) {
       const ingest = new IngestService(db);
       // No library context here (Finder drag-drop); IngestService falls back
@@ -98,7 +98,7 @@ async function resolveAndDispatchComic(filePath: string): Promise<void> {
         console.warn(`[CB8] Cannot open file '${filePath}': ${result.error}`);
         return;
       }
-      record = db.getComicByPath(filePath);
+      record = db.comics.getComicByPath(filePath);
     }
     if (!record) return;
     if (win.isDestroyed()) return;
@@ -206,7 +206,7 @@ function startHeadless(): void {
     process.exit(1);
   }
 
-  const rawPort = db!.getAppMeta('web_server_port');
+  const rawPort = db!.appMeta.getAppMeta('web_server_port');
   const parsed = rawPort ? parseInt(rawPort, 10) : NaN;
   const port = Number.isFinite(parsed)
     ? Math.max(1024, Math.min(65535, parsed))

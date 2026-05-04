@@ -86,12 +86,12 @@ export class FileScannerImpl implements FileScanner {
   async refreshBookMetadata(filePath: string): Promise<void> {
     const pageCount = await this.getBookPageCount(filePath);
     if (pageCount > 0) {
-      this.db.updatePageCountByPath(filePath, pageCount);
+      this.db.comics.updatePageCountByPath(filePath, pageCount);
     }
 
     const coverThumbnail = await this.getBookCoverThumbnail(filePath);
     if (coverThumbnail) {
-      this.db.updateCoverThumbnailByPath(filePath, coverThumbnail);
+      this.db.comics.updateCoverThumbnailByPath(filePath, coverThumbnail);
     }
   }
 

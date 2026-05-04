@@ -1,4 +1,4 @@
-import type { MediaRecord } from './types';
+import type { ComicDetail } from './types';
 
 // ---------------------------------------------------------------------------
 // Channel registries
@@ -27,7 +27,7 @@ const phantom = null! as never;
 export const IpcInvokeMap = {
   'dialog:open-file':              phantom as Spec<[], string | null>,
   'dialog:open-directory':         phantom as Spec<[], string | null>,
-  'reading:get-comic-by-path':     phantom as Spec<[filePath: string], MediaRecord | null>,
+  'reading:get-comic-by-path':     phantom as Spec<[filePath: string], ComicDetail | null>,
   'shell:open-path':               phantom as Spec<[filePath: string], string>,
   'window:toggle-fullscreen':      phantom as Spec<[], void>,
   'window:exit-fullscreen':        phantom as Spec<[], void>,

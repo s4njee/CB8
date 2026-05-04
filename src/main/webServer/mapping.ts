@@ -24,7 +24,7 @@ export interface WebComicRecord {
   volumeId: number | null;
 }
 
-export function toWebRecord(record: ReturnType<LibraryDatabase['getComic']>): WebComicRecord | null {
+export function toWebRecord(record: ReturnType<LibraryDatabase['comics']['getComic']>): WebComicRecord | null {
   if (!record) return null;
   // Version the thumbnail URL with a stable per-row value so the browser
   // evicts its cache whenever the underlying record changes. Without this,
@@ -64,12 +64,12 @@ export function overlayUserState(
   if (userId == null) {
     return { ...base, lastPage: null, lastLocation: null, lastRead: null, favorited: false };
   }
-  const up = db.getUserProgress(userId, base.id);
+  const up = db.progress.getUserProgress(userId, base.id);
   return {
     ...base,
     lastPage: up?.lastPage ?? null,
     lastLocation: up?.lastLocation ?? null,
     lastRead: up?.lastRead ?? null,
-    favorited: db.isFavorite(userId, base.id),
+    favorited: db.favorites.isFavorite(userId, base.id),
   };
 }

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { MediaRecord, QueryOptions, QueryResult } from '../../shared/types';
+import type { ComicDetail, ComicListItem, QueryOptions, QueryResult } from '../../shared/types';
 import type { SqlParam, ComicRow, ComicListRow, CountRow, TagNameRow } from './types';
 import { SORT_COLUMN_MAP } from './types';
 import { addTag } from './tags';
@@ -29,7 +29,7 @@ export function buildFtsQuery(raw: string): string | null {
   return tokens.map((t) => `${t}*`).join(' ');
 }
 
-export function rowToRecord(db: Database.Database, row: ComicRow): MediaRecord {
+export function rowToRecord(db: Database.Database, row: ComicRow): ComicDetail {
   const tags = db.prepare(
     `SELECT t.name FROM tags t JOIN comic_tags ct ON t.id = ct.tag_id WHERE ct.comic_id = ?`
   ).all(row.id) as TagNameRow[];
@@ -53,14 +53,13 @@ export function rowToRecord(db: Database.Database, row: ComicRow): MediaRecord {
   };
 }
 
-export function rowToListRecord(row: ComicListRow): MediaRecord {
+export function rowToListRecord(row: ComicListRow): ComicListItem {
   return {
     id: row.id,
     filePath: row.file_path,
     title: row.title,
     pageCount: row.page_count,
     fileSize: row.file_size,
-    coverThumbnail: null,
     hasThumbnail: row.has_thumbnail === 1,
     thumbnailVersion: row.thumbnail_version,
     dateAdded: row.date_added,
@@ -107,7 +106,7 @@ export function addComicFast(
   return info.lastInsertRowid as number;
 }
 
-export function addComic(db: Database.Database, record: Omit<MediaRecord, 'id' | 'dateAdded'>): MediaRecord {
+export function addComic(db: Database.Database, record: Omit<ComicDetail, 'id' | 'dateAdded'>): ComicDetail {
   db.prepare('DELETE FROM dismissed_paths WHERE file_path = ?').run(record.filePath);
   const stmt = db.prepare(
     `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, last_page, last_location, last_read, media_type)
@@ -228,7 +227,7 @@ export function isDismissed(db: Database.Database, filePath: string): boolean {
   return db.prepare('SELECT 1 FROM dismissed_paths WHERE file_path = ?').get(filePath) !== undefined;
 }
 
-export function getComic(db: Database.Database, id: number): MediaRecord | null {
+export function getComic(db: Database.Database, id: number): ComicDetail | null {
   const row = db.prepare(
     `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type, chapter_number, series_id, volume_id
      FROM comics WHERE id = ?`
@@ -250,7 +249,7 @@ export function updatePageCountByPath(db: Database.Database, filePath: string, p
   db.prepare('UPDATE comics SET page_count = ? WHERE file_path = ?').run(pageCount, filePath);
 }
 
-export function getComicByPath(db: Database.Database, filePath: string): MediaRecord | null {
+export function getComicByPath(db: Database.Database, filePath: string): ComicDetail | null {
   const row = db.prepare(
     `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type, chapter_number, series_id, volume_id
      FROM comics WHERE file_path = ?`
@@ -367,7 +366,7 @@ export function getRecentlyRead(
   db: Database.Database,
   limit: number = 10,
   mediaType?: 'comic' | 'book',
-): MediaRecord[] {
+): ComicDetail[] {
   const rows = mediaType
     ? db.prepare(
         `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type, chapter_number, series_id, volume_id
@@ -386,7 +385,7 @@ export function getContinueReading(
   db: Database.Database,
   limit: number = 10,
   mediaType?: 'comic' | 'book',
-): MediaRecord[] {
+): ComicDetail[] {
   const rows = mediaType
     ? db.prepare(
         `SELECT id, file_path, title, page_count, file_size, cover_thumbnail, date_added, last_page, last_location, last_read, media_type, chapter_number, series_id, volume_id
@@ -418,7 +417,7 @@ export function listForSeries(
   db: Database.Database,
   seriesId: number,
   opts: { includeDeleted?: boolean; limit?: number; offset?: number } = {},
-): MediaRecord[] {
+): ComicDetail[] {
   const limit = opts.limit ?? 200;
   const offset = opts.offset ?? 0;
   const deletedFilter = opts.includeDeleted ? '' : 'AND c.deleted_at IS NULL';
@@ -440,7 +439,7 @@ export function listForVolume(
   db: Database.Database,
   volumeId: number,
   opts: { includeDeleted?: boolean; limit?: number; offset?: number } = {},
-): MediaRecord[] {
+): ComicDetail[] {
   const limit = opts.limit ?? 200;
   const offset = opts.offset ?? 0;
   const deletedFilter = opts.includeDeleted ? '' : 'AND c.deleted_at IS NULL';
@@ -596,7 +595,7 @@ export function queryComicsForUser(
   db: Database.Database,
   userId: number | null,
   options: QueryOptions & { readStatus?: 'unread' | 'in-progress' | 'completed'; favorites?: boolean; libraryId?: number; folderId?: number },
-): { records: (MediaRecord & { favorited?: boolean })[]; totalCount: number } {
+): { records: (ComicDetail & { favorited?: boolean })[]; totalCount: number } {
   const conditions: string[] = [];
   const params: SqlParam[] = [];
 

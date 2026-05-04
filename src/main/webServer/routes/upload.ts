@@ -125,10 +125,10 @@ export const handle: RouteHandler = async (ctx) => {
     let folderId: number | undefined;
     const folderName = typeof parsed.folderName === 'string' ? parsed.folderName.trim() : '';
     if (folderName) {
-      const existing = db.getAllFolders().find(
+      const existing = db.folders.getAllFolders().find(
         (f) => f.name.toLowerCase() === folderName.toLowerCase(),
       );
-      folderId = existing ? existing.id : db.createFolder(folderName, []).id;
+      folderId = existing ? existing.id : db.folders.createFolder(folderName, []).id;
     }
 
     res.writeHead(200, {

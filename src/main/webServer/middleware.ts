@@ -45,18 +45,18 @@ export interface ResolvedUser {
 
 export function isGuestAccessEnabled(db: LibraryDatabase): boolean {
   // Default: guests can read. Only disabled if an admin explicitly sets 'false'.
-  const v = db.getAppMeta(GUEST_ACCESS_KEY);
+  const v = db.appMeta.getAppMeta(GUEST_ACCESS_KEY);
   return v !== 'false';
 }
 
 export function ensureInitialAdmin(db: LibraryDatabase): void {
-  if (db.countUsers() === 0) {
+  if (db.users.countUsers() === 0) {
     _createInitialAdmin(db);
     return;
   }
   // Migration: admin exists but initial_password was never stored (created
   // before this feature). Reset the admin password so the client can auto-login.
-  const stored = db.getAppMeta('initial_password');
+  const stored = db.appMeta.getAppMeta('initial_password');
   if (stored === null) {
     _resetInitialPassword(db);
   }
@@ -65,7 +65,7 @@ export function ensureInitialAdmin(db: LibraryDatabase): void {
 function _createInitialAdmin(db: LibraryDatabase): void {
   const password = generateInitialAdminPassword();
   const hash = bcrypt.hashSync(password, 10);
-  const user = db.createUser('admin', hash, true);
+  const user = db.users.createUser('admin', hash, true);
   // better-auth's username plugin validates the returned user shape on
   // sign-in and rejects rows where email / display_username / name are null.
   // Populate them up front so /api/auth/sign-in/username succeeds without
@@ -79,20 +79,20 @@ function _createInitialAdmin(db: LibraryDatabase): void {
             updated_at = datetime('now')
       WHERE id = ?`
   ).run(user.id);
-  db.upsertCredentialAccount(user.id, 'admin', hash);
-  db.setAppMeta('initial_password', password);
+  db.users.upsertCredentialAccount(user.id, 'admin', hash);
+  db.appMeta.setAppMeta('initial_password', password);
   _printPasswordBanner(password, 'Initial admin account created.');
 }
 
 function _resetInitialPassword(db: LibraryDatabase): void {
-  const admin = db.getUserByUsername('admin');
+  const admin = db.users.getUserByUsername('admin');
   if (!admin) return;
   const password = generateInitialAdminPassword();
   const hash = bcrypt.hashSync(password, 10);
   db.raw.prepare(`UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`)
     .run(hash, admin.id);
-  db.upsertCredentialAccount(admin.id, 'admin', hash);
-  db.setAppMeta('initial_password', password);
+  db.users.upsertCredentialAccount(admin.id, 'admin', hash);
+  db.appMeta.setAppMeta('initial_password', password);
   _printPasswordBanner(password, 'Admin password reset (initial_password not set).');
 }
 

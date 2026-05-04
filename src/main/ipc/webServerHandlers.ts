@@ -22,14 +22,14 @@ function bindHostFor(mode: WebServerMode, enabled: boolean): string {
 }
 
 function readPort(db: LibraryDatabase | null): number {
-  const raw = db ? db.getAppMeta(WEB_PORT_KEY) : null;
+  const raw = db ? db.appMeta.getAppMeta(WEB_PORT_KEY) : null;
   const parsed = raw ? parseInt(raw, 10) : DEFAULT_PORT;
   const safe = isNaN(parsed) ? DEFAULT_PORT : parsed;
   return Math.max(1024, Math.min(65535, safe));
 }
 
 function readEnabled(db: LibraryDatabase | null): boolean {
-  return db?.getAppMeta(WEB_ENABLED_KEY) === 'true';
+  return db?.appMeta.getAppMeta(WEB_ENABLED_KEY) === 'true';
 }
 
 /**
@@ -90,8 +90,8 @@ export function registerWebServerHandlers(
     if (!db) return getWebSettings();
 
     const safePort = Math.max(1024, Math.min(65535, Math.floor(port)));
-    db.setAppMeta(WEB_ENABLED_KEY, String(enabled));
-    db.setAppMeta(WEB_PORT_KEY, String(safePort));
+    db.appMeta.setAppMeta(WEB_ENABLED_KEY, String(enabled));
+    db.appMeta.setAppMeta(WEB_PORT_KEY, String(safePort));
 
     const current = webServerRef.handle;
     const desiredHost = bindHostFor(mode, enabled);

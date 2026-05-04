@@ -15,15 +15,22 @@ export interface ArchiveHandle {
   pageCount: number;
 }
 
-export interface MediaRecord {
+/**
+ * Common fields on every comic-shaped record. The concrete shapes are
+ * `ComicDetail` (single-record fetches; carries the cover bytes) and
+ * `ComicListItem` (list/grid queries; carries the has-thumbnail flag
+ * and a stable version int instead of the bytes themselves).
+ *
+ * `MediaRecord` is kept as a discriminator-free alias for
+ * `ComicDetail | ComicListItem` for code that doesn't care about the
+ * cover representation, but new code should prefer the specific types.
+ */
+export interface ComicBase {
   id: number;
   filePath: string;
   title: string;
   pageCount: number;
   fileSize: number;
-  coverThumbnail: Buffer | null;
-  hasThumbnail?: boolean;
-  thumbnailVersion?: number;
   dateAdded: string;
   tags: string[];
   lastPage: number | null;
@@ -37,6 +44,26 @@ export interface MediaRecord {
   /** v7+: FK to the volume row this chapter belongs to. */
   volumeId?: number | null;
 }
+
+/** Detail shape: returned by single-row reads (`getComic`, `getComicByPath`,
+ * the listForSeries / listForVolume / getRecentlyRead family). Carries the
+ * full cover thumbnail bytes inline. */
+export interface ComicDetail extends ComicBase {
+  coverThumbnail: Buffer | null;
+}
+
+/** List shape: returned by paginated queries (`queryComics`, library/folder
+ * browse, search results). Sends a stable thumbnail version so the SPA can
+ * cache-bust the `/api/comics/:id/thumbnail` URL when the cover changes,
+ * but does not embed the bytes — those come back from the thumbnail route. */
+export interface ComicListItem extends ComicBase {
+  hasThumbnail: boolean;
+  thumbnailVersion: number;
+}
+
+/** Discriminator-free union for code that doesn't care about the cover
+ * representation. Prefer `ComicDetail` or `ComicListItem` in new code. */
+export type MediaRecord = ComicDetail | ComicListItem;
 
 export interface QueryOptions {
   search?: string;
@@ -65,7 +92,7 @@ export interface FilterPreset {
 }
 
 export interface QueryResult {
-  records: MediaRecord[];
+  records: ComicListItem[];
   totalCount: number;
 }
 

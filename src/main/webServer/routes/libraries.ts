@@ -9,7 +9,7 @@ export const handle: RouteHandler = async (ctx) => {
   // List libraries
   if (method === 'GET' && pathname === '/api/libraries') {
     const mediaType = query.mediaType as 'comic' | 'book' | undefined;
-    sendJson(res, 200, db.getAllLibraries(mediaType));
+    sendJson(res, 200, db.libraries.getAllLibraries(mediaType));
     return true;
   }
 
@@ -22,7 +22,7 @@ export const handle: RouteHandler = async (ctx) => {
     if (typeof parsed.name !== 'string' || !parsed.name.trim()) { sendError(res, 400, 'Provide "name" (string)'); return true; }
     const mediaType = parsed.mediaType === 'book' ? 'book' : 'comic';
     try {
-      sendJson(res, 201, db.createLibrary(parsed.name.trim(), mediaType));
+      sendJson(res, 201, db.libraries.createLibrary(parsed.name.trim(), mediaType));
     } catch {
       sendError(res, 409, 'A collection with that name already exists');
     }
@@ -39,7 +39,7 @@ export const handle: RouteHandler = async (ctx) => {
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.name !== 'string' || !parsed.name.trim()) { sendError(res, 400, 'Provide "name" (string)'); return true; }
     try {
-      db.renameLibrary(id, parsed.name.trim());
+      db.libraries.renameLibrary(id, parsed.name.trim());
       sendJson(res, 200, { ok: true });
     } catch {
       sendError(res, 409, 'A collection with that name already exists');
@@ -51,7 +51,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'DELETE' && libRenameMatch) {
     if (!requireAdmin(ctx)) return true;
     const id = parseInt(libRenameMatch[1], 10);
-    db.deleteLibrary(id);
+    db.libraries.deleteLibrary(id);
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -66,7 +66,7 @@ export const handle: RouteHandler = async (ctx) => {
     let parsed: { comicIds?: number[] };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) { sendError(res, 400, 'Provide "comicIds" (non-empty array)'); return true; }
-    db.removeComicsFromLibrary(libId, parsed.comicIds.map(Number));
+    db.libraries.removeComicsFromLibrary(libId, parsed.comicIds.map(Number));
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -79,7 +79,7 @@ export const handle: RouteHandler = async (ctx) => {
     let parsed: { comicIds?: number[] };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (!Array.isArray(parsed.comicIds) || parsed.comicIds.length === 0) { sendError(res, 400, 'Provide "comicIds" (non-empty array)'); return true; }
-    db.addComicsToLibrary(libId, parsed.comicIds.map(Number));
+    db.libraries.addComicsToLibrary(libId, parsed.comicIds.map(Number));
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -95,7 +95,7 @@ export const handle: RouteHandler = async (ctx) => {
     if (!Array.isArray(parsed.folderIds) || parsed.folderIds.length === 0) {
       sendError(res, 400, 'Provide "folderIds" (non-empty array)'); return true;
     }
-    db.addFoldersToLibrary(libId, parsed.folderIds.map(Number));
+    db.libraries.addFoldersToLibrary(libId, parsed.folderIds.map(Number));
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -110,7 +110,7 @@ export const handle: RouteHandler = async (ctx) => {
       opts.readStatus = query.readStatus;
     }
     if (query.favorites === 'true') opts.favorites = true;
-    const result = db.queryComicsForUser(currentUser?.id ?? null, opts);
+    const result = db.comics.queryComicsForUser(currentUser?.id ?? null, opts);
     sendJson(res, 200, {
       records: result.records.map((r) => ({ ...toWebRecord(r)!, favorited: r.favorited ?? false })),
       totalCount: result.totalCount,
