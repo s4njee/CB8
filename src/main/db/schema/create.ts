@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS comics (
   page_count INTEGER NOT NULL,
   file_size INTEGER NOT NULL,
   cover_thumbnail BLOB,
+  thumbnail_status TEXT NOT NULL DEFAULT 'ready'
+    CHECK (thumbnail_status IN ('ready','pending','failed')),
   date_added TEXT NOT NULL DEFAULT (datetime('now')),
   last_page INTEGER,
   last_location TEXT,
@@ -188,6 +190,21 @@ CREATE TABLE IF NOT EXISTS library_folders (
 
 CREATE INDEX IF NOT EXISTS idx_library_folders_library ON library_folders(library_id);
 CREATE INDEX IF NOT EXISTS idx_library_folders_folder ON library_folders(folder_id);
+
+CREATE TABLE IF NOT EXISTS library_watch_roots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  root_path TEXT NOT NULL,
+  library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_library_watch_roots_unique
+  ON library_watch_roots(root_path, library_id, COALESCE(folder_id, -1));
+CREATE INDEX IF NOT EXISTS idx_library_watch_roots_enabled
+  ON library_watch_roots(enabled);
 
 CREATE TABLE IF NOT EXISTS dismissed_paths (
   file_path TEXT PRIMARY KEY NOT NULL,

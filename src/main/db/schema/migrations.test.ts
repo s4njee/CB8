@@ -38,6 +38,7 @@ describe('schema bootstrap', () => {
     ).all() as { name: string }[]).map((r) => r.name);
     expect(tables).toContain('series');
     expect(tables).toContain('volume');
+    expect(tables).toContain('library_watch_roots');
 
     const comicCols = (db.prepare('PRAGMA table_info(comics)').all() as { name: string }[]).map((c) => c.name);
     expect(comicCols).not.toContain('series_name');
@@ -46,6 +47,22 @@ describe('schema bootstrap', () => {
     expect(comicCols).toContain('series_id');
     expect(comicCols).toContain('volume_id');
     expect(comicCols).toContain('deleted_at');
+    expect(comicCols).toContain('thumbnail_status');
+  });
+
+  it('adds thumbnail_status to already-created comics tables', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    db.exec(SCHEMA.replace(
+      "  thumbnail_status TEXT NOT NULL DEFAULT 'ready'\n    CHECK (thumbnail_status IN ('ready','pending','failed')),\n",
+      '',
+    ));
+    migrateSchema(db);
+    const comicCols = (db.prepare('PRAGMA table_info(comics)').all() as { name: string }[]).map((c) => c.name);
+    expect(comicCols).toContain('thumbnail_status');
+    db.prepare(`INSERT INTO comics (file_path, title, page_count, file_size) VALUES ('/a.cbz', 'A', 1, 1)`).run();
+    const row = db.prepare(`SELECT thumbnail_status FROM comics WHERE file_path = '/a.cbz'`).get() as { thumbnail_status: string };
+    expect(row.thumbnail_status).toBe('ready');
   });
 
   it('sets up the partial unique indexes that gate volume uniqueness', () => {

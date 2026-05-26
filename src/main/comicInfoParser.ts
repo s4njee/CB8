@@ -22,8 +22,10 @@ import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as yauzl from 'yauzl';
-import { createExtractorFromData, createExtractorFromFile } from 'node-unrar-js';
+import { createExtractorFromFile } from 'node-unrar-js';
 import { XMLParser } from 'fast-xml-parser';
+import * as ArchiveCli from './archiveCli';
+import { sniffFormat } from './archiveLoader';
 
 export type AgeRating = 'unknown' | 'g' | 'pg' | 'teen' | 'mature' | 'adults_only';
 
@@ -60,7 +62,29 @@ export interface ComicInfo {
 
 const CBZ_EXTS = new Set(['.cbz', '.zip']);
 const CBR_EXTS = new Set(['.cbr', '.rar']);
-const HUGE_ARCHIVE_THRESHOLD = 1024 * 1024 * 1024 * 2; // 2 GiB — match archiveLoader
+const CB7_EXTS = new Set(['.cb7', '.cbt']);
+// node-unrar-js shares one wasm heap for the process. During large imports,
+// repeatedly slurping CBRs into that heap just to look for ComicInfo.xml can
+// fragment memory badly. Prefer the external CLI when available, and keep a
+// circuit breaker for systems that have to use wasm.
+const WASM_FAILURE_THRESHOLD = 3;
+let cbrComicInfoWasmFailures = 0;
+let cbrComicInfoWasmDisabled = false;
+
+function noteCbrComicInfoWasmFailure(filePath: string): void {
+  cbrComicInfoWasmFailures++;
+  if (!cbrComicInfoWasmDisabled && cbrComicInfoWasmFailures >= WASM_FAILURE_THRESHOLD) {
+    cbrComicInfoWasmDisabled = true;
+    console.warn(
+      `[CB8 ComicInfo] node-unrar-js wasm path failed ${cbrComicInfoWasmFailures}x ` +
+      `(latest: ${filePath}); switching CBR ComicInfo reads to unar CLI for the rest of this process.`
+    );
+  }
+}
+
+function noteCbrComicInfoWasmSuccess(): void {
+  if (cbrComicInfoWasmFailures > 0) cbrComicInfoWasmFailures = 0;
+}
 
 /**
  * fast-xml-parser configured for ComicInfo's quirks. We lowercase tag names
@@ -212,13 +236,26 @@ function findFirstObjectChild(o: Record<string, unknown>): Record<string, unknow
  */
 export async function readFromArchive(filePath: string): Promise<ComicInfo | null> {
   const ext = path.extname(filePath).toLowerCase();
+  // Trust the file signature over the extension — mislabeled .cbr/.cbz are
+  // common. Fall back to the extension when the magic is unrecognised.
+  const sniffed = await sniffFormat(filePath);
+  const isCbz = sniffed === 'cbz' || (sniffed === null && CBZ_EXTS.has(ext));
+  const isCbr = sniffed === 'cbr' || (sniffed === null && CBR_EXTS.has(ext));
+  // CB7 / CBT: unar handles 7z and tar — route straight to the CLI path.
+  const isCb7 = sniffed === 'cb7' || (sniffed === null && CB7_EXTS.has(ext));
   try {
-    if (CBZ_EXTS.has(ext)) {
+    if (isCbz) {
       const bytes = await readComicInfoFromCbz(filePath);
       return bytes ? parseComicInfoXml(bytes) : null;
     }
-    if (CBR_EXTS.has(ext)) {
+    if (isCbr) {
       const bytes = await readComicInfoFromCbr(filePath);
+      return bytes ? parseComicInfoXml(bytes) : null;
+    }
+    if (isCb7) {
+      const cliBins = ArchiveCli.detect();
+      if (!cliBins) return null; // no unar, skip ComicInfo for this archive
+      const bytes = await readComicInfoFromCbrViaCli(filePath, cliBins);
       return bytes ? parseComicInfoXml(bytes) : null;
     }
     return null;
@@ -276,42 +313,70 @@ async function readComicInfoFromCbz(filePath: string): Promise<Buffer | null> {
 }
 
 async function readComicInfoFromCbr(filePath: string): Promise<Buffer | null> {
-  // Re-derive the data-mode/file-mode split that archiveLoader uses for
-  // page extraction. ComicInfo.xml is small, so always favour data mode
-  // unless the archive is very large.
-  let size = Infinity;
-  try { size = (await fsp.stat(filePath)).size; } catch { /* fall through */ }
-
-  if (size > HUGE_ARCHIVE_THRESHOLD) {
-    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cb8-cinfo-'));
+  // Prefer a fresh CLI subprocess over node-unrar-js's shared wasm heap.
+  // This path runs for every CBR during ingest, often only to discover that
+  // ComicInfo.xml is absent, so heap stability matters more than avoiding a
+  // fork. If the CLI is unavailable, fall back to wasm with a circuit breaker.
+  const cliBins = ArchiveCli.detect();
+  if (cliBins) {
+    if (cbrComicInfoWasmDisabled) return readComicInfoFromCbrViaCli(filePath, cliBins);
     try {
-      const extractor = await createExtractorFromFile({ filepath: filePath, targetPath: tempDir });
-      const list = extractor.getFileList();
-      const target = pickRootComicInfoHeader(list.fileHeaders);
-      if (!target) return null;
-      const extracted = extractor.extract({ files: [target.name] });
-      // Drain the iterator so the archive actually unpacks the file to disk.
-      for (const _ of extracted.files) { /* consume */ }
-      const onDiskPath = path.join(tempDir, target.name);
-      return await fsp.readFile(onDiskPath);
-    } finally {
-      // Best-effort cleanup; do not throw on rmdir failures.
-      try { await fsp.rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      return await readComicInfoFromCbrViaCli(filePath, cliBins);
+    } catch (cliErr) {
+      // Some installations have partial/broken The Unarchiver binaries. Try
+      // wasm before treating the archive as unreadable.
+      try {
+        const bytes = await readComicInfoFromCbrViaWasm(filePath);
+        noteCbrComicInfoWasmSuccess();
+        return bytes;
+      } catch {
+        throw cliErr;
+      }
     }
   }
 
-  const bytes = await fsp.readFile(filePath);
-  const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  const extractor = await createExtractorFromData({ data });
-  const list = extractor.getFileList();
-  const target = pickRootComicInfoHeader(list.fileHeaders);
-  if (!target) return null;
-  const extracted = extractor.extract({ files: [target.name] });
-  for (const file of extracted.files) {
-    if (file.fileHeader.name !== target.name) continue;
-    const ext = file.extraction;
-    if (!ext) continue;
-    return Buffer.from(ext);
+  try {
+    const bytes = await readComicInfoFromCbrViaWasm(filePath);
+    noteCbrComicInfoWasmSuccess();
+    return bytes;
+  } catch (err) {
+    noteCbrComicInfoWasmFailure(filePath);
+    throw err;
+  }
+}
+
+async function readComicInfoFromCbrViaWasm(filePath: string): Promise<Buffer | null> {
+  if (cbrComicInfoWasmDisabled) {
+    throw new Error('CBR ComicInfo wasm path disabled after repeated failures');
+  }
+
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cb8-cinfo-'));
+  try {
+    // File-mode avoids copying the whole archive into the shared wasm heap.
+    const extractor = await createExtractorFromFile({ filepath: filePath, targetPath: tempDir });
+    const list = extractor.getFileList();
+    const target = pickRootComicInfoHeader(list.fileHeaders);
+    if (!target) return null;
+    const extracted = extractor.extract({ files: [target.name] });
+    // Drain the iterator so the archive actually unpacks the file to disk.
+    for (const _ of extracted.files) { /* consume */ }
+    const onDiskPath = path.join(tempDir, target.name);
+    return await fsp.readFile(onDiskPath);
+  } finally {
+    // Best-effort cleanup; do not throw on rmdir failures.
+    try { await fsp.rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+async function readComicInfoFromCbrViaCli(filePath: string, bins: ArchiveCli.CliBins): Promise<Buffer | null> {
+  const entries = await ArchiveCli.listArchive(bins, filePath);
+  // Match the same R-16 root-only, case-insensitive lookup the wasm
+  // path uses. `pickRootComicInfoHeader` walks fileHeaders; here we
+  // walk CLI entries with the same `isRootComicInfo` predicate.
+  for (const entry of entries) {
+    if (entry.isDirectory) continue;
+    if (!isRootComicInfo(entry.name)) continue;
+    return ArchiveCli.extractToBuffer(bins, filePath, entry.name);
   }
   return null;
 }

@@ -16,7 +16,7 @@ FROM node:22-bookworm AS builder
 
 WORKDIR /src
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 # Native build deps for better-sqlite3, sharp, @napi-rs/canvas.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -41,9 +41,12 @@ FROM node:22-bookworm-slim
 
 # sharp + better-sqlite3 native deps. Most are bundled into their .node files
 # already; libstdc++/glibc come from the slim base. tini for proper signal
-# handling.
+# handling. unar (The Unarchiver — `unar` + `lsar` binaries) is the CLI
+# fallback archiveLoader and comicInfoParser use when node-unrar-js's
+# wasm heap fragments during bulk ingest. unar is in Debian main, free,
+# and handles RAR3/RAR5/ZIP/7z natively without a non-free plugin.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates tini \
+      ca-certificates tini unar \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --create-home --home-dir /var/lib/cb8 --uid 10001 cb8

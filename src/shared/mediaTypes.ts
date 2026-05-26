@@ -1,5 +1,5 @@
 // Sets WITHOUT leading dots (matches filename.split('.').pop() pattern)
-export const COMIC_EXTENSIONS = new Set(['cbz', 'cbr']);
+export const COMIC_EXTENSIONS = new Set(['cbz', 'cbr', 'cb7', 'cbt']);
 export const BOOK_EXTENSIONS = new Set(['pdf', 'epub', 'mobi']);
 export const ALL_EXTENSIONS = new Set([...COMIC_EXTENSIONS, ...BOOK_EXTENSIONS]);
 
@@ -8,6 +8,8 @@ export const ALL_EXTENSIONS_ARRAY = Array.from(ALL_EXTENSIONS);
 export const EXTENSION_LABELS: Record<string, string> = {
   cbz: 'Comic Archive (CBZ)',
   cbr: 'Comic Archive (CBR)',
+  cb7: 'Comic Archive (CB7)',
+  cbt: 'Comic Archive (CBT)',
   pdf: 'PDF Document',
   epub: 'EPUB Book',
   mobi: 'MOBI Book',

@@ -253,6 +253,8 @@ export const getHistory = (offset = 0, limit = 50) =>
 // (Legacy `getSeries` and `getSeriesComics` were removed in v8.)
 export const fetchLibrarySeries = (libraryId, options = {}) =>
   get(`/api/libraries/${libraryId}/series`, { query: options });
+export const fetchFolderSeries = (folderId, options = {}) =>
+  get(`/api/folders/${folderId}/series`, { query: options });
 export const fetchSeries = (id) => get(`/api/series/${id}`);
 export const fetchSeriesVolumes = (id, options = {}) =>
   get(`/api/series/${id}/volumes`, { query: options });
@@ -296,6 +298,7 @@ export const setGuestAccess = (enabled) =>
 
 export const fetchInitialCredentials = () => get('/api/settings/initial-credentials');
 export const clearInitialCredentials = () => del('/api/settings/initial-credentials');
+export const clearLibrary = () => del('/api/admin/library');
 
 // ---------------------------------------------------------------------------
 // Admin (legacy + host-only)
@@ -331,6 +334,8 @@ export const adminListDir = (partialPath) =>
 export async function adminAddPath(targetPath, onProgress, opts = {}) {
   const body = { path: targetPath };
   if (opts.folderName) body.folderName = opts.folderName;
+  if (opts.skipComicInfo) body.skipComicInfo = true;
+  if (opts.skipThumbnails) body.skipThumbnails = true;
   const res = await fetch(`${API}/api/admin/add-path`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

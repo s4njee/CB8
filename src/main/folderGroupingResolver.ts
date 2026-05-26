@@ -19,7 +19,7 @@
  */
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
-import { stripDatePrefix } from './seriesParser';
+import { chronologyGroupingName, stripDatePrefix } from './seriesParser';
 
 const COMIC_EXTS = new Set(['.cbz', '.cbr', '.cb7', '.cbt']);
 const MIN_PREFIX_LEN = 3;
@@ -28,12 +28,16 @@ const MIN_FILES_FOR_GROUPING = 2;
 export interface FolderGrouping {
   /** Lowercased prefix shared by at least 2 sibling comic files. */
   recurringPrefix: string;
+  /** Display series name derived from the recurring prefix. */
+  seriesName: string;
   /** True iff this filename's normalised key starts with `recurringPrefix`. */
   matches(filename: string): boolean;
 }
 
 /** Drop extension and YYYYMM date prefix, lowercase, collapse whitespace. */
 export function comparisonKey(filename: string): string {
+  const grouped = chronologyGroupingName(filename);
+  if (grouped) return grouped.toLocaleLowerCase('en-US');
   const noExt = filename.replace(/\.[^./\\]+$/, '');
   const stripped = stripDatePrefix(noExt).stripped;
   return stripped.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
@@ -179,8 +183,21 @@ function computeFromFilenames(filenames: readonly string[]): FolderGrouping | nu
   if (prefix.length < MIN_PREFIX_LEN) return null;
   return {
     recurringPrefix: prefix,
+    seriesName: normalizeDisplayName(prefix),
     matches(filename: string): boolean {
       return comparisonKey(filename).startsWith(prefix);
     },
   };
+}
+
+function normalizeDisplayName(prefix: string): string {
+  return prefix
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => {
+      if (/^[ivxlcdm]+$/i.test(word)) return word.toUpperCase();
+      if (/^[a-z]\.?$/i.test(word)) return word.toUpperCase().replace(/\.$/, '.');
+      return word.charAt(0).toLocaleUpperCase('en-US') + word.slice(1);
+    })
+    .join(' ');
 }

@@ -117,6 +117,34 @@ function makeToggleButton(label, isActive, onClick) {
   return btn;
 }
 
+/**
+ * Reliable tap binding for reader controls stacked above the section iframe.
+ * iOS Safari frequently drops the synthesized `click` on elements layered
+ * over an <iframe>, so detect the tap from touch events directly (ignoring
+ * scroll drags) and keep `click` for mouse/desktop input. The `touchend`
+ * preventDefault suppresses the duplicate compatibility click.
+ */
+function bindTap(el, handler) {
+  let live = false;
+  let sx = 0;
+  let sy = 0;
+  el.addEventListener('touchstart', (e) => {
+    const t = e.changedTouches[0];
+    live = true; sx = t.clientX; sy = t.clientY;
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    const t = e.changedTouches[0];
+    if (Math.abs(t.clientX - sx) > 12 || Math.abs(t.clientY - sy) > 12) live = false;
+  }, { passive: true });
+  el.addEventListener('touchend', (e) => {
+    if (!live) return;
+    live = false;
+    e.preventDefault();
+    handler();
+  });
+  el.addEventListener('click', handler);
+}
+
 export async function renderEpubReader(el, record, onBack) {
   const toolbar = buildToolbar(record.title, onBack);
   const slider = toolbar.querySelector('.reader-page-slider');
@@ -128,6 +156,112 @@ export async function renderEpubReader(el, record, onBack) {
   epubContainer.className = 'epub-container';
   epubContainer.id = 'epub-container';
   epubContainer.style.cssText = 'flex:1;overflow:hidden;width:100%;';
+
+  // --- Table of contents sidebar -------------------------------------------
+  const tocToggleBtn = document.createElement('button');
+  tocToggleBtn.type = 'button';
+  tocToggleBtn.className = 'epub-toc-toggle';
+  tocToggleBtn.title = 'Table of contents';
+  tocToggleBtn.setAttribute('aria-label', 'Table of contents');
+  tocToggleBtn.textContent = '☰';
+  tocToggleBtn.style.display = 'none'; // revealed once we know the book has a TOC
+  toolbar.querySelector('.toolbar-back')?.after(tocToggleBtn);
+
+  const tocBackdrop = document.createElement('div');
+  tocBackdrop.className = 'epub-toc-backdrop';
+
+  const tocSidebar = document.createElement('aside');
+  tocSidebar.className = 'epub-toc-sidebar';
+  const tocHeaderRow = document.createElement('div');
+  tocHeaderRow.className = 'epub-toc-header';
+  const tocHeading = document.createElement('span');
+  tocHeading.textContent = 'Contents';
+  const tocCloseBtn = document.createElement('button');
+  tocCloseBtn.type = 'button';
+  tocCloseBtn.className = 'epub-toc-close';
+  tocCloseBtn.setAttribute('aria-label', 'Close contents');
+  tocCloseBtn.textContent = '✕';
+  tocHeaderRow.append(tocHeading, tocCloseBtn);
+  const tocListEl = document.createElement('nav');
+  tocListEl.className = 'epub-toc-list';
+  tocSidebar.append(tocHeaderRow, tocListEl);
+
+  const setTocOpen = (open) => {
+    tocSidebar.classList.toggle('open', open);
+    tocBackdrop.classList.toggle('open', open);
+    tocToggleBtn.classList.toggle('active', open);
+  };
+  tocToggleBtn.addEventListener('click', () => setTocOpen(!tocSidebar.classList.contains('open')));
+  bindTap(tocCloseBtn, () => setTocOpen(false));
+  bindTap(tocBackdrop, () => setTocOpen(false));
+
+  // Resolve a TOC href to a real spine section. epub.js stores TOC hrefs
+  // verbatim from the nav document's <a href>, and display() only matches an
+  // exact spine href — these diverge when the nav doc and the OPF live in
+  // different folders. Fall back to matching on the file name.
+  const resolveTocHref = (href) => {
+    const book = state.epubBook;
+    const path = (href || '').split('#')[0];
+    if (!path || !book?.spine) return null;
+    const items = book.spine.spineItems || [];
+    const tail = (s) => {
+      const last = (s || '').split('#')[0].split('/').pop() || '';
+      try { return decodeURIComponent(last); } catch { return last; }
+    };
+    const want = tail(path);
+    if (!want) return null;
+    const hit = items.find((it) => tail(it.href) === want);
+    return hit ? hit.href : null;
+  };
+
+  // Jump to a TOC target. Try the raw href first, then a filename-resolved
+  // spine href if epub.js can't match it.
+  const navigateToc = (href) => {
+    const rendition = state.epubRendition;
+    if (!href || !rendition) return;
+    setTocOpen(false);
+    const hash = href.includes('#') ? href.slice(href.indexOf('#')) : '';
+    Promise.resolve(rendition.display(href))
+      .catch(() => {
+        const resolved = resolveTocHref(href);
+        if (resolved) return rendition.display(resolved + hash);
+        throw new Error('no matching spine section');
+      })
+      .catch((e) => {
+        console.warn('[CB8] TOC navigation failed:', href, e);
+        showToast('Could not open that section');
+      });
+  };
+
+  // Render nested TOC entries; subitems indent one step further.
+  const buildTocEntries = (items, container, depth) => {
+    for (const item of items) {
+      const entry = document.createElement('button');
+      entry.type = 'button';
+      entry.className = 'epub-toc-entry';
+      entry.style.paddingLeft = `${14 + depth * 14}px`;
+      entry.textContent = (item.label || '').trim() || 'Untitled';
+      entry.dataset.href = item.href || '';
+      bindTap(entry, () => navigateToc(item.href));
+      container.appendChild(entry);
+      if (item.subitems?.length) buildTocEntries(item.subitems, container, depth + 1);
+    }
+  };
+
+  // Mark the entry for the section currently on screen.
+  const highlightCurrentToc = (href) => {
+    if (!href) return;
+    const base = href.split('#')[0];
+    let match = null;
+    for (const entry of tocListEl.querySelectorAll('.epub-toc-entry')) {
+      entry.classList.remove('current');
+      const h = (entry.dataset.href || '').split('#')[0];
+      if (!match && h && (h === base || base.endsWith('/' + h) || h.endsWith('/' + base))) {
+        match = entry;
+      }
+    }
+    match?.classList.add('current');
+  };
 
   const statusBar = document.createElement('div');
   statusBar.className = 'reader-toolbar';
@@ -400,6 +534,9 @@ export async function renderEpubReader(el, record, onBack) {
       if (!state.epubRendition) return;
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'Escape' && tocSidebar.classList.contains('open')) {
+        e.preventDefault(); setTocOpen(false); return;
+      }
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); state.epubRendition.next(); }
       else if (e.key === 'ArrowLeft' || e.key === 'Backspace') { e.preventDefault(); state.epubRendition.prev(); }
     };
@@ -430,6 +567,9 @@ export async function renderEpubReader(el, record, onBack) {
         // Tap-on-thirds inside the iframe.
         iframeDoc.addEventListener('click', (e) => {
           if (!state.epubRendition) return;
+          // A click on a link / control belongs to the content; epub.js wires
+          // each <a> with its own navigation handler — don't also turn the page.
+          if (e.target?.closest?.('a[href], button, input, select, textarea, label')) return;
           const w = iframeDoc.documentElement?.clientWidth || iframeDoc.body?.clientWidth || 0;
           if (!w) return;
           const x = e.clientX;
@@ -468,6 +608,7 @@ export async function renderEpubReader(el, record, onBack) {
       const pct = Math.round((location.start.percentage ?? 0) * 100);
       statusPct.textContent = `${pct}%`;
       if (slider) slider.value = pct;
+      highlightCurrentToc(location.start.href);
       if (location.start.cfi) {
         api.updateLocation(record.id, location.start.cfi).catch(() => {});
       }
@@ -488,14 +629,41 @@ export async function renderEpubReader(el, record, onBack) {
     midZone.style.cssText = 'flex:1;pointer-events:none;';
     const rightZone = document.createElement('div');
     rightZone.style.cssText = 'width:33.333%;pointer-events:auto;cursor:pointer;';
-    leftZone.addEventListener('click', () => state.epubRendition?.prev());
-    rightZone.addEventListener('click', () => state.epubRendition?.next());
+    // The tap-zone overlay sits above the section iframe, so taps in the side
+    // thirds never reach the content's links. Hit-test the iframe at the tap
+    // point: if a link is there, click it (epub.js gave every <a> an onclick
+    // that performs the navigation); otherwise turn the page.
+    const linkUnderTap = (clientX, clientY) => {
+      const rendition = state.epubRendition;
+      if (!rendition) return null;
+      let contentsList = [];
+      try { contentsList = rendition.getContents?.() ?? []; } catch { return null; }
+      for (const c of contentsList) {
+        const iframe = c?.window?.frameElement;
+        const doc = c?.document;
+        if (!iframe || !doc) continue;
+        const r = iframe.getBoundingClientRect();
+        if (clientX < r.left || clientX >= r.right || clientY < r.top || clientY >= r.bottom) continue;
+        const hit = doc.elementFromPoint(clientX - r.left, clientY - r.top);
+        const link = hit?.closest?.('a[href]');
+        if (link) return link;
+      }
+      return null;
+    };
+    const zoneTap = (e, turnPage) => {
+      const link = linkUnderTap(e.clientX, e.clientY);
+      if (link) { link.click(); return; }
+      turnPage();
+    };
+    leftZone.addEventListener('click', (e) => zoneTap(e, () => state.epubRendition?.prev()));
+    rightZone.addEventListener('click', (e) => zoneTap(e, () => state.epubRendition?.next()));
     overlay.append(leftZone, midZone, rightZone);
     // epubContainer needs to be positioned so the absolute overlay anchors.
     if (getComputedStyle(epubContainer).position === 'static') {
       epubContainer.style.position = 'relative';
     }
     epubContainer.appendChild(overlay);
+    epubContainer.append(tocBackdrop, tocSidebar);
 
     // Horizontal swipe on the overlay zones (iPadOS: treats taps reliably).
     const attachSwipe = (zone) => {
@@ -518,6 +686,20 @@ export async function renderEpubReader(el, record, onBack) {
     // Keep the outer container background in sync with the theme toggle.
     blackBtn.addEventListener('click', applyContainerBg);
     whiteBtn.addEventListener('click', applyContainerBg);
+
+    // Populate the table of contents from the EPUB navigation document.
+    try {
+      const nav = await state.epubBook.loaded.navigation;
+      const toc = nav?.toc ?? [];
+      if (toc.length) {
+        buildTocEntries(toc, tocListEl, 0);
+        tocToggleBtn.style.display = '';
+        const here = state.epubRendition?.currentLocation?.()?.start?.href;
+        if (here) highlightCurrentToc(here);
+      }
+    } catch (navErr) {
+      console.warn('[CB8] EPUB navigation unavailable:', navErr);
+    }
   } catch (err) {
     console.error('[CB8] EPUB render error:', err);
     epubContainer.innerHTML = `<div class="empty-state"><p>Failed to render EPUB: ${err?.message ?? err}</p></div>`;

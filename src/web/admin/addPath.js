@@ -25,6 +25,10 @@ export function renderAddPath(body) {
       <input id="admin-folder" type="text" class="admin-input" list="admin-folder-options" placeholder="Leave empty to add to main library" autocomplete="off" spellcheck="false" />
       <datalist id="admin-folder-options"></datalist>
       <p class="admin-hint">Existing folders are suggested; a new name creates an empty folder. Foldered items don't appear in the main library view.</p>
+      <div class="admin-checks">
+        <label class="admin-check"><input id="admin-skip-comicinfo" type="checkbox" /> <span>Skip ComicInfo metadata</span></label>
+        <label class="admin-check"><input id="admin-skip-thumbnails" type="checkbox" /> <span>Defer thumbnails</span></label>
+      </div>
       <div class="admin-error" hidden></div>
       <div class="admin-progress" hidden>
         <div class="admin-progress-phase"></div>
@@ -41,6 +45,8 @@ export function renderAddPath(body) {
   const form = body.querySelector('form');
   const input = body.querySelector('#admin-path');
   const folderInput = body.querySelector('#admin-folder');
+  const skipComicInfoInput = body.querySelector('#admin-skip-comicinfo');
+  const skipThumbnailsInput = body.querySelector('#admin-skip-thumbnails');
   const folderOptions = body.querySelector('#admin-folder-options');
   const err = body.querySelector('.admin-error');
   const submit = form.querySelector('button[type="submit"]');
@@ -165,9 +171,11 @@ export function renderAddPath(body) {
   });
 
   const phaseLabel = (phase) => {
-    if (phase === 'books') return 'Scanning books…';
     if (phase === 'file') return 'Adding file…';
-    return 'Scanning comics…';
+    // Indexing runs two passes (comic formats, then book formats). The user
+    // doesn't care which pass is active — only that a scan is in progress —
+    // so don't assert a content type that may not match what they added.
+    return 'Scanning…';
   };
 
   form.addEventListener('submit', async (e) => {
@@ -178,6 +186,8 @@ export function renderAddPath(body) {
     submit.disabled = true;
     input.disabled = true;
     folderInput.disabled = true;
+    skipComicInfoInput.disabled = true;
+    skipThumbnailsInput.disabled = true;
     submit.textContent = 'Scanning…';
     progress.hidden = false;
     progressPhase.textContent = 'Starting…';
@@ -197,7 +207,11 @@ export function renderAddPath(body) {
           ? `${msg.processed.toLocaleString()} / ${msg.discovered.toLocaleString()}`
           : 'Discovering files…';
         progressFile.textContent = msg.currentFile || '';
-      }, { folderName });
+      }, {
+        folderName,
+        skipComicInfo: skipComicInfoInput.checked,
+        skipThumbnails: skipThumbnailsInput.checked,
+      });
       const msg = result.added > 0
         ? `Added ${result.added.toLocaleString()} item${result.added === 1 ? '' : 's'}`
         : 'No new items found';
@@ -213,6 +227,8 @@ export function renderAddPath(body) {
       submit.disabled = false;
       input.disabled = false;
       folderInput.disabled = false;
+      skipComicInfoInput.disabled = false;
+      skipThumbnailsInput.disabled = false;
       submit.textContent = 'Add';
     }
   });

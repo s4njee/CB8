@@ -16,7 +16,7 @@ import {
   ensureCheckbox, syncCardSelection,
 } from './library/selection.js';
 import {
-  createCard, createFolderCard,
+  createCard, createFolderCard, createSeriesCard,
 } from './library/cards.js';
 import {
   buildMediaStrip, buildFileTypeStrip, buildReadStatusStrip,
@@ -34,10 +34,12 @@ let totalCount = 0;
 let loading = false;
 let sentinel = null;
 let observer = null;
+let removeScrollFallback = null;
 let currentRoute = null;
 let currentOptions = null;
 let grid = null;
 let renderEpoch = 0;
+let seriesBrowseMode = false;
 
 let adminUnsubscribe = null;
 
@@ -49,6 +51,7 @@ export async function renderLibrary(el, route, options) {
   const epoch = ++renderEpoch;
   currentRoute = route;
   currentOptions = { ...options };
+  seriesBrowseMode = shouldBrowseSeries(route, currentOptions);
   offset = 0;
   totalCount = 0;
   loading = false;
@@ -69,10 +72,12 @@ export async function renderLibrary(el, route, options) {
     });
   }
 
-  // Disconnect any previous observer
+  // Disconnect any previous observer/listener
   if (observer) { observer.disconnect(); observer = null; }
+  if (removeScrollFallback) { removeScrollFallback(); removeScrollFallback = null; }
 
   el.innerHTML = '';
+  document.getElementById('main-content')?.scrollTo({ top: 0, left: 0 });
 
   const header = document.createElement('div');
   header.className = 'library-header';
@@ -134,19 +139,64 @@ export async function renderLibrary(el, route, options) {
   spinnerEl.hidden = true;
   el.appendChild(spinnerEl);
 
+  const scrollRoot = document.getElementById('main-content');
   observer = new IntersectionObserver(
     (entries) => {
       if (entries[0].isIntersecting && !loading && offset < totalCount) {
         loadNextPage(epoch);
       }
     },
-    { rootMargin: '200px' },
+    { root: scrollRoot, rootMargin: '200px' },
   );
   observer.observe(sentinel);
+  removeScrollFallback = installInfiniteScrollFallback(scrollRoot, epoch);
 
   installPullToRefresh();
 
   await loadNextPage(epoch);
+}
+
+function installInfiniteScrollFallback(scrollRoot, epoch) {
+  if (!scrollRoot) return null;
+  let scheduled = false;
+
+  const maybeLoad = () => {
+    scheduled = false;
+    if (epoch !== renderEpoch || loading || offset >= totalCount) return;
+    const remaining = scrollRoot.scrollHeight - scrollRoot.scrollTop - scrollRoot.clientHeight;
+    if (remaining < 600) loadNextPage(epoch);
+  };
+
+  const onScroll = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(maybeLoad);
+  };
+
+  scrollRoot.addEventListener('scroll', onScroll, { passive: true });
+  return () => scrollRoot.removeEventListener('scroll', onScroll);
+}
+
+function ensureScrollableContent(epoch) {
+  const scrollRoot = document.getElementById('main-content');
+  if (!scrollRoot || epoch !== renderEpoch || loading || offset >= totalCount) return;
+  const hasOverflow = scrollRoot.scrollHeight > scrollRoot.clientHeight + 80;
+  if (!hasOverflow) {
+    requestAnimationFrame(() => {
+      if (epoch === renderEpoch && !loading && offset < totalCount) {
+        loadNextPage(epoch);
+      }
+    });
+  }
+}
+
+function shouldBrowseSeries(route, options) {
+  if (!route || (route.type !== 'library' && route.type !== 'folder')) return false;
+  if (options.mediaType === 'book') return false;
+  return !options.search
+    && !options.fileExt
+    && !options.readStatus
+    && !options.favorites;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,15 +316,19 @@ async function loadNextPage(epoch = renderEpoch) {
   if (spinner) spinner.hidden = false;
 
   try {
+    const isSearching = Boolean(currentOptions.search);
     const opts = {
       ...currentOptions,
       offset,
       limit: PAGE_SIZE,
-      sortBy: currentOptions.sortBy || 'dateAdded',
-      sortOrder:
-        currentOptions.sortBy === 'dateAdded' || currentOptions.sortBy === 'lastRead'
+      // When a search is active, always sort alphabetically by title so results
+      // are predictable regardless of the user's browsing sort preference.
+      sortBy: isSearching ? 'title' : (currentOptions.sortBy || 'dateAdded'),
+      sortOrder: isSearching
+        ? 'asc'
+        : (currentOptions.sortBy === 'dateAdded' || currentOptions.sortBy === 'lastRead'
           ? 'desc'
-          : undefined,
+          : undefined),
     };
 
     let result;
@@ -288,7 +342,27 @@ async function loadNextPage(epoch = renderEpoch) {
       && currentRoute.type !== 'folder'
       && currentRoute.type !== 'tag');
 
-    if (currentRoute.type === 'recent') {
+    if (seriesBrowseMode && currentRoute.type === 'library') {
+      const series = await api.fetchLibrarySeries(currentRoute.id, {
+        offset,
+        limit: PAGE_SIZE,
+      });
+      result = {
+        records: series.items ?? [],
+        totalCount: Math.max(offset + (series.items?.length ?? 0), series.totalCount ?? 0),
+        kind: 'series',
+      };
+    } else if (seriesBrowseMode && currentRoute.type === 'folder') {
+      const series = await api.fetchFolderSeries(currentRoute.id, {
+        offset,
+        limit: PAGE_SIZE,
+      });
+      result = {
+        records: series.items ?? [],
+        totalCount: Math.max(offset + (series.items?.length ?? 0), series.totalCount ?? 0),
+        kind: 'series',
+      };
+    } else if (currentRoute.type === 'recent') {
       const records = await api.fetchRecentlyRead(PAGE_SIZE + offset, currentOptions.mediaType || undefined);
       result = { records: records.slice(offset, offset + PAGE_SIZE), totalCount: records.length };
     } else if (currentRoute.type === 'continue') {
@@ -323,14 +397,31 @@ async function loadNextPage(epoch = renderEpoch) {
     offset += result.records.length;
 
     const countEl = document.getElementById('grid-count');
-    if (countEl) countEl.textContent = `${totalCount.toLocaleString()} item${totalCount !== 1 ? 's' : ''}`;
+    if (countEl) {
+      const noun = result.kind === 'series' ? 'series' : 'item';
+      countEl.textContent = `${totalCount.toLocaleString()} ${noun}${totalCount !== 1 && noun !== 'series' ? 's' : ''}`;
+    }
 
     if (result.records.length === 0 && offset === 0) {
+      if (seriesBrowseMode) {
+        // Series browse found nothing — fall through to the flat comic view.
+        // Reset paging state and `loading` so the recursive load isn't bounced
+        // by the re-entry guard at the top of this function.
+        seriesBrowseMode = false;
+        totalCount = 0;
+        loading = false;
+        await loadNextPage(epoch);
+        return;
+      }
       renderEmpty(grid, emptyReasonForRoute(currentRoute));
     } else {
       for (const record of result.records) {
-        grid.appendChild(createCard(record));
-        trackId(record.id);
+        if (result.kind === 'series') {
+          grid.appendChild(createSeriesCard(record));
+        } else {
+          grid.appendChild(createCard(record));
+          trackId(record.id);
+        }
       }
     }
   } catch (err) {
@@ -347,6 +438,7 @@ async function loadNextPage(epoch = renderEpoch) {
       loading = false;
       const spinner = document.getElementById('grid-spinner');
       if (spinner) spinner.hidden = true;
+      ensureScrollableContent(epoch);
     }
   }
 }

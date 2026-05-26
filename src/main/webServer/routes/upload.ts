@@ -114,7 +114,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'POST' && pathname === '/api/admin/add-path') {
     if (!requireAdmin(ctx)) return true;
     const body = await readBody(req, 64 * 1024); // admin JSON: 64 KiB is plenty
-    let parsed: { path?: string; folderName?: string };
+    let parsed: { path?: string; folderName?: string; skipComicInfo?: boolean; skipThumbnails?: boolean };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.path !== 'string' || !parsed.path.trim()) {
       sendError(res, 400, 'Provide "path" (string)'); return true;
@@ -153,7 +153,10 @@ export const handle: RouteHandler = async (ctx) => {
     };
 
     try {
-      await ingestPathStreaming(db, parsed.path.trim(), emit, folderId);
+      await ingestPathStreaming(db, parsed.path.trim(), emit, folderId, {
+        skipComicInfo: parsed.skipComicInfo === true,
+        skipThumbnails: parsed.skipThumbnails === true,
+      });
     } catch (err) {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
       emit({ type: 'done', added: 0 });

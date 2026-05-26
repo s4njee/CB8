@@ -15,19 +15,29 @@ import { withTimeout } from './utils/timeout';
 
 const COVER_TIMEOUT_MS = 5000;
 
+const SKIP_COMICINFO = process.env.CB8_INGEST_SKIP_COMICINFO === '1';
+const SKIP_THUMBNAILS = process.env.CB8_INGEST_SKIP_THUMBNAILS === '1';
+
 // Concurrency for parallel directory scans. Workers spend most of their
 // time parked in async I/O (yauzl reads, sharp encodes — both libuv
-// pool tasks), so overcommit beyond core count is a clear win. We cap
-// at 64 to keep the pending-payload queue bounded; tune via the
-// CB8_INGEST_CONCURRENCY env var if needed.
+// pool tasks), but each worker can briefly hold an archive handle, a raw
+// cover image, and a thumbnail. Keep the default modest so very large
+// imports do not spike memory; tune via CB8_INGEST_CONCURRENCY if needed.
 const MAX_INGEST_CONCURRENCY = (() => {
   const fromEnv = parseInt(process.env.CB8_INGEST_CONCURRENCY ?? '', 10);
   if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
-  return Math.min(64, Math.max(8, os.cpus().length * 2));
+  return Math.min(16, Math.max(4, os.cpus().length));
 })();
 
 // Flush batched inserts every N prepared records (or at end of run).
-const FLUSH_BATCH_SIZE = 200;
+const FLUSH_BATCH_SIZE = 50;
+
+let placeholderThumbnail: Promise<Buffer> | null = null;
+
+function getPlaceholderThumbnail(): Promise<Buffer> {
+  placeholderThumbnail ??= generateThumbnail(null);
+  return placeholderThumbnail;
+}
 
 export interface IngestResult {
   added: boolean;
@@ -83,6 +93,7 @@ interface PreparedInsert {
   fileSize: number;
   coverThumbnail: Buffer;
   mediaType: 'comic' | 'book';
+  thumbnailStatus: 'ready' | 'pending' | 'failed';
   /** Result of the v7 precedence chain (R-6, R-16, R-17, R-19, R-20, R-21). */
   metadata: ResolvedMetadata;
 }
@@ -106,6 +117,17 @@ export interface IngestOptions {
    * root.
    */
   libraryRoot?: string;
+  /**
+   * Skip archive ComicInfo.xml reads during ingest. Useful for very large
+   * imports where folder/filename parsing is good enough for the initial
+   * pass and archive metadata can be repaired later.
+   */
+  skipComicInfo?: boolean;
+  /**
+   * Store the placeholder thumbnail without extracting the cover page.
+   * This keeps initial imports fast; thumbnails can be regenerated later.
+   */
+  skipThumbnails?: boolean;
 }
 
 export class IngestService {
@@ -126,7 +148,7 @@ export class IngestService {
    * Pure async work — does not write to the DB. The caller is responsible
    * for batching the resulting payloads through `flushBatch`.
    */
-  async prepareInsert(filePath: string, libraryRoot?: string): Promise<PreparedInsert | null> {
+  async prepareInsert(filePath: string, opts: IngestOptions = {}): Promise<PreparedInsert | null> {
     const mediaType = detectMediaType(filePath);
     if (!mediaType) return null;
     if (this.db.comics.isDismissed(filePath)) return null;
@@ -135,10 +157,12 @@ export class IngestService {
     const ext = path.extname(filePath).toLowerCase();
     const stats = fs.statSync(filePath);
     const title = path.basename(filePath, ext);
-    const root = libraryRoot ?? path.dirname(filePath);
+    const root = opts.libraryRoot ?? path.dirname(filePath);
+    const skipComicInfo = SKIP_COMICINFO || opts.skipComicInfo === true;
     const metadata = await resolveMetadata(filePath, {
       libraryRoot: root,
       folderGrouping: this.folderGrouping,
+      comicInfo: skipComicInfo ? null : undefined,
     });
 
     if (mediaType === 'book') {
@@ -148,29 +172,35 @@ export class IngestService {
       }
       let coverThumbnail: Buffer;
       try {
-        const raw = ext === '.epub'
+        const raw = SKIP_THUMBNAILS || opts.skipThumbnails === true
+          ? null
+          : ext === '.epub'
           ? await withTimeout(extractEpubCover(filePath), COVER_TIMEOUT_MS)
           : ext === '.pdf'
             ? await withTimeout(renderPdfFirstPageCover(filePath), COVER_TIMEOUT_MS)
             : null;
-        coverThumbnail = ext === '.epub'
+        coverThumbnail = raw
           ? await generateThumbnail(raw)
-          : (raw ?? await generateThumbnail(null));
+          : await getPlaceholderThumbnail();
       } catch {
-        coverThumbnail = await generateThumbnail(null);
+        coverThumbnail = await getPlaceholderThumbnail();
       }
-      return { filePath, title, pageCount, fileSize: stats.size, coverThumbnail, mediaType: 'book', metadata };
+      return { filePath, title, pageCount, fileSize: stats.size, coverThumbnail, mediaType: 'book', thumbnailStatus: 'ready', metadata };
     }
 
     // Comic archive
     const handle = await ArchiveLoader.open(filePath);
     try {
       let coverImage: Buffer | null = null;
-      try { coverImage = await ArchiveLoader.getCoverImage(handle); } catch { /* placeholder */ }
-      const coverThumbnail = await generateThumbnail(coverImage);
+      const skipThumbnails = SKIP_THUMBNAILS || opts.skipThumbnails === true;
+      if (!skipThumbnails) {
+        try { coverImage = await ArchiveLoader.getCoverImage(handle); } catch { /* placeholder */ }
+      }
+      const coverThumbnail = coverImage ? await generateThumbnail(coverImage) : await getPlaceholderThumbnail();
+      const thumbnailStatus = skipThumbnails ? 'pending' : 'ready';
       return {
         filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
-        coverThumbnail, mediaType: 'comic', metadata,
+        coverThumbnail, mediaType: 'comic', thumbnailStatus, metadata,
       };
     } finally {
       await ArchiveLoader.close(handle);
@@ -212,7 +242,7 @@ export class IngestService {
         const m = p.metadata;
         const id = this.db.comics.addComicFast({
           filePath: p.filePath, title: p.title, pageCount: p.pageCount, fileSize: p.fileSize,
-          coverThumbnail: p.coverThumbnail, mediaType: p.mediaType,
+          coverThumbnail: p.coverThumbnail, mediaType: p.mediaType, thumbnailStatus: p.thumbnailStatus,
         });
 
         // Hierarchy upsert + comic FK.
@@ -266,7 +296,11 @@ export class IngestService {
    *   3. fall back to the Inbox library (R-6 Option B for orphan ingests)
    */
   private resolveLibraryId(opts: IngestOptions): number {
-    if (opts.libraryId != null) return opts.libraryId;
+    if (opts.libraryId != null) {
+      const row = this.db.raw.prepare('SELECT id FROM libraries WHERE id = ?').get(opts.libraryId) as { id: number } | undefined;
+      if (row) return opts.libraryId;
+      console.warn(`[CB8 ingest] library ${opts.libraryId} disappeared during ingest; falling back to Inbox`);
+    }
     if (opts.folderId != null) {
       const lib = this.db.libraries.getLibraryForFolder(opts.folderId);
       if (lib != null) return lib;
@@ -346,7 +380,7 @@ export class IngestService {
    */
   async addFile(filePath: string, opts: IngestOptions = {}): Promise<IngestResult> {
     try {
-      const prepared = await this.prepareInsert(filePath, opts.libraryRoot);
+      const prepared = await this.prepareInsert(filePath, opts);
       if (!prepared) {
         if (!detectMediaType(filePath)) return { added: false, error: 'Unsupported file type' };
         return { added: false };
@@ -401,9 +435,24 @@ export class IngestService {
       onProgress({ ...progress });
     };
 
+    const flushPrepared = (items: PreparedInsert[]): number => {
+      if (items.length === 0) return 0;
+      try {
+        return this.flushBatch(items, opts).length;
+      } catch (err) {
+        if (items.length === 1) {
+          console.error(`Failed to insert ${items[0].filePath}:`, err);
+          return 0;
+        }
+        let inserted = 0;
+        for (const item of items) inserted += flushPrepared([item]);
+        return inserted;
+      }
+    };
+
     const flushIfFull = (): void => {
       if (pending.length >= FLUSH_BATCH_SIZE) {
-        added += this.flushBatch(pending.splice(0, pending.length), opts).length;
+        added += flushPrepared(pending.splice(0, pending.length));
       }
       if (folderId != null && existingForFolder.length >= FLUSH_BATCH_SIZE) {
         const ids = existingForFolder.splice(0, existingForFolder.length);
@@ -424,7 +473,7 @@ export class IngestService {
               if (existing) existingForFolder.push(existing.id);
             }
           } else {
-            const prep = await this.prepareInsert(filePath, opts.libraryRoot);
+            const prep = await this.prepareInsert(filePath, opts);
             if (prep) pending.push(prep);
           }
           flushIfFull();
@@ -441,7 +490,7 @@ export class IngestService {
     await Promise.all(workers);
 
     if (pending.length > 0) {
-      added += this.flushBatch(pending.splice(0, pending.length), opts).length;
+      added += flushPrepared(pending.splice(0, pending.length));
     }
     if (folderId != null && existingForFolder.length > 0) {
       this.db.runInTransaction(() => this.db.folders.addComicsToFolderRaw(folderId, existingForFolder));

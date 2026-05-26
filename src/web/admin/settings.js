@@ -108,10 +108,49 @@ function renderWebServerForm(body, settings) {
   });
 }
 
+function renderLibraryDangerSection(body) {
+  const section = document.createElement('section');
+  section.className = 'settings-danger-section';
+  section.innerHTML = `
+    <div>
+      <h3 class="settings-section-title">Library data</h3>
+      <p class="settings-section-hint">
+        Clear all comics, books, collections, folders, tags, reading progress, and watched folders from the library database. Files on disk are not deleted.
+      </p>
+    </div>
+    <button type="button" class="admin-btn-danger" data-action="clear-library">Clear library</button>
+    <div class="admin-error" hidden></div>
+  `;
+
+  const button = section.querySelector('[data-action="clear-library"]');
+  const err = section.querySelector('.admin-error');
+  button.addEventListener('click', async () => {
+    err.hidden = true;
+    const confirmation = window.prompt('Type CLEAR to remove all library data. Comic files on disk will not be deleted.');
+    if (confirmation !== 'CLEAR') return;
+
+    button.disabled = true;
+    try {
+      const { removed } = await api.clearLibrary();
+      closeModal();
+      window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      showToast(`Library cleared (${removed?.comics ?? 0} items removed).`);
+    } catch (clearErr) {
+      err.textContent = clearErr.message || 'Failed to clear library.';
+      err.hidden = false;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  body.appendChild(section);
+}
+
 export async function renderSettings(body) {
   body.innerHTML = `<h2 class="admin-modal-title">Settings</h2>`;
 
   await renderInitialPasswordSection(body);
+  renderLibraryDangerSection(body);
 
   if (isElectron()) {
     let settings;

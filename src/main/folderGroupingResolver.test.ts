@@ -13,8 +13,8 @@ import { FolderGroupingResolver, comparisonKey } from './folderGroupingResolver'
 
 describe('comparisonKey', () => {
   it('strips extension, date prefix, and lowercases', () => {
-    expect(comparisonKey('198001 Avengers v1 191.cbz')).toBe('avengers v1 191');
-    expect(comparisonKey('Darth Vader 001 (2015) (Digital).cbr')).toBe('darth vader 001 (2015) (digital)');
+    expect(comparisonKey('198001 Avengers v1 191.cbz')).toBe('avengers v1');
+    expect(comparisonKey('Darth Vader 001 (2015) (Digital).cbr')).toBe('darth vader');
   });
 
   it('collapses internal whitespace', () => {
@@ -22,7 +22,7 @@ describe('comparisonKey', () => {
   });
 
   it('keeps a non-date-prefix numeric leader intact', () => {
-    expect(comparisonKey('199913 Foo.cbz')).toBe('199913 foo'); // month=13 → not a date
+    expect(comparisonKey('199913 Foo.cbz')).toBe('199913 foo'); // month=13 -> not a date
   });
 });
 
@@ -84,6 +84,19 @@ describe('FolderGroupingResolver.resolveFromFilenames', () => {
     ]);
     expect(g!.recurringPrefix).toBe('avengers v1');
     expect(g!.matches('198003 Avengers v1 193.cbz')).toBe(true);
+  });
+
+  it('groups chronology-style dated issue filenames by stripped series name', () => {
+    const r = new FolderGroupingResolver();
+    const g = r.resolveFromFilenames('/x', [
+      '200502 Supreme Power 014.cbr',
+      '200508 Supreme Power 017.cbz',
+      '200510 Supreme Power 018.cbr',
+    ]);
+    expect(g).not.toBeNull();
+    expect(g!.recurringPrefix).toBe('supreme power');
+    expect(g!.seriesName).toBe('Supreme Power');
+    expect(g!.matches('200505 Supreme Power 016.cbr')).toBe(true);
   });
 
   it('returns null when the longest shared prefix is below the threshold', () => {

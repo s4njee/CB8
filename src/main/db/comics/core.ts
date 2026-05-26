@@ -70,12 +70,13 @@ export function addComicFast(
     fileSize: number;
     coverThumbnail: Buffer;
     mediaType: 'comic' | 'book';
+    thumbnailStatus?: 'ready' | 'pending' | 'failed';
   },
 ): number {
   db.prepare('DELETE FROM dismissed_paths WHERE file_path = ?').run(record.filePath);
   const stmt = db.prepare(
-    `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, last_page, last_location, last_read, media_type)
-     VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`
+    `INSERT INTO comics (file_path, title, page_count, file_size, cover_thumbnail, thumbnail_status, last_page, last_location, last_read, media_type)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`
   );
   const info = stmt.run(
     record.filePath,
@@ -83,6 +84,7 @@ export function addComicFast(
     record.pageCount,
     record.fileSize,
     record.coverThumbnail,
+    record.thumbnailStatus ?? 'ready',
     record.mediaType,
   );
   return info.lastInsertRowid as number;

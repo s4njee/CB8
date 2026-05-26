@@ -9,6 +9,8 @@ import { DbStartupError } from './db/schema';
 import { buildApplicationMenu, type MenuContext } from './menu';
 import { IngestService } from './ingestService';
 import { sweepSoftDeleted, logSweeperResult } from './maintenance/softDeleteSweeper';
+import { LibraryWatcher } from './libraryWatcher';
+import { startThumbnailBackfillWorker, type ThumbnailBackfillWorker } from './maintenance/thumbnailBackfillWorker';
 
 const isHeadless =
   process.argv.includes('--headless') ||
@@ -34,6 +36,8 @@ let db: LibraryDatabase | null = null;
 let mainWindow: BrowserWindow | null = null;
 const pendingOpenFiles: string[] = [];
 let sweeperTimer: NodeJS.Timeout | null = null;
+let libraryWatcher: LibraryWatcher | null = null;
+let thumbnailWorker: ThumbnailBackfillWorker | null = null;
 
 const SWEEPER_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -56,6 +60,17 @@ function startSweeperSchedule(database: LibraryDatabase): void {
   if (sweeperTimer) clearInterval(sweeperTimer);
   sweeperTimer = setInterval(() => run('tick'), SWEEPER_INTERVAL_MS);
   if (sweeperTimer.unref) sweeperTimer.unref();
+}
+
+function startLibraryWatcher(database: LibraryDatabase): void {
+  void libraryWatcher?.stop();
+  libraryWatcher = new LibraryWatcher(database);
+  libraryWatcher.start();
+}
+
+function startThumbnailWorker(database: LibraryDatabase): void {
+  void thumbnailWorker?.stop();
+  thumbnailWorker = startThumbnailBackfillWorker(database);
 }
 
 /**
@@ -136,6 +151,8 @@ const createWindow = (): void => {
     db = new LibraryDatabase(dbPath);
     db.initialize();
     startSweeperSchedule(db);
+    startLibraryWatcher(db);
+    startThumbnailWorker(db);
   } catch (err) {
     if (err instanceof DbStartupError) {
       console.error(`[CB8] DB startup failed (${err.category}): ${err.detail}`, err.cause);
@@ -200,6 +217,8 @@ function startHeadless(): void {
     db = new LibraryDatabase(dbPath);
     db.initialize();
     startSweeperSchedule(db);
+    startLibraryWatcher(db);
+    startThumbnailWorker(db);
     console.log('[CB8] Headless startup: database ready');
   } catch (err) {
     console.error('[CB8] Failed to initialize database or IPC:', err);
@@ -258,6 +277,10 @@ app.on('before-quit', (event) => {
   isQuitting = true;
   (async () => {
     try { await closeAllHandles(); } catch { /* ignore */ }
+    try { await thumbnailWorker?.stop(); } catch { /* ignore */ }
+    thumbnailWorker = null;
+    try { await libraryWatcher?.stop(); } catch { /* ignore */ }
+    libraryWatcher = null;
     if (webServerRef.handle) {
       try { webServerRef.handle.server.close(); } catch { /* ignore */ }
       webServerRef.handle = null;

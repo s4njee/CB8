@@ -170,6 +170,62 @@ export function listForLibrary(
   return rows.map(rowToSeriesListRow);
 }
 
+export function countForLibrary(db: Database.Database, libraryId: number, opts: Pick<ListOptions, 'includeDeleted'> = {}): number {
+  const deletedFilter = opts.includeDeleted ? '' : 'AND deleted_at IS NULL';
+  const row = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM series
+    WHERE library_id = ?
+      ${deletedFilter}
+  `).get(libraryId) as { count: number };
+  return row.count;
+}
+
+export function listForFolder(
+  db: Database.Database,
+  folderId: number,
+  opts: ListOptions = {},
+): SeriesListRow[] {
+  const limit = opts.limit ?? 200;
+  const offset = opts.offset ?? 0;
+  const deletedFilter = opts.includeDeleted ? '' : 'AND s.deleted_at IS NULL';
+  const chapterDeletedFilter = opts.includeDeleted ? '' : 'AND c.deleted_at IS NULL';
+  const rows = db.prepare(`
+    SELECT s.id, s.library_id, s.name, s.sort_name, s.localized_name, s.summary,
+           s.status, s.age_rating, s.cover_comic_id, s.metadata_json,
+           s.created_at, s.updated_at, s.deleted_at,
+           COUNT(c.id) AS chapter_count,
+           MAX(c.date_added) AS last_chapter_added_at
+    FROM series s
+    JOIN comics c ON c.series_id = s.id
+    JOIN folder_comics fc ON fc.comic_id = c.id
+    WHERE fc.folder_id = ?
+      ${deletedFilter}
+      ${chapterDeletedFilter}
+    GROUP BY s.id
+    HAVING chapter_count > 0
+    ORDER BY s.sort_name COLLATE NOCASE, s.id
+    LIMIT ? OFFSET ?
+  `).all(folderId, limit, offset) as SeriesListDbRow[];
+  return rows.map(rowToSeriesListRow);
+}
+
+export function countForFolder(db: Database.Database, folderId: number, opts: Pick<ListOptions, 'includeDeleted'> = {}): number {
+  const deletedFilter = opts.includeDeleted ? '' : 'AND s.deleted_at IS NULL';
+  const chapterDeletedFilter = opts.includeDeleted ? '' : 'AND c.deleted_at IS NULL';
+  const row = db.prepare(`
+    SELECT COUNT(DISTINCT s.id) AS count
+    FROM series s
+    JOIN comics c ON c.series_id = s.id
+    JOIN folder_comics fc ON fc.comic_id = c.id
+    WHERE fc.folder_id = ?
+      ${deletedFilter}
+      ${chapterDeletedFilter}
+  `).get(folderId) as { count: number };
+  return row.count;
+}
+
+
 export type UpdatableField =
   | 'name' | 'localized_name' | 'summary' | 'status' | 'age_rating'
   | 'cover_comic_id' | 'metadata_json';

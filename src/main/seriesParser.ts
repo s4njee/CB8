@@ -103,6 +103,42 @@ export function stripDatePrefix(filename: string): DatePrefixResult {
   return { stripped: m[3], year, month };
 }
 
+/**
+ * Derive a coarse series key for Marvel chronology-style names where the
+ * filesystem name is often `YYYYMM Series Name 014` or `YYYYMM Series Name`.
+ * Drops a leading date prefix and trailing issue-like numeric tokens, then
+ * normalizes whitespace. This is intentionally a grouping helper, not a full
+ * metadata parser: callers still use `parseSeriesFromFilename` to recover
+ * chapter/volume values from the actual filename.
+ */
+export function chronologyGroupingName(name: string): string | null {
+  if (!name) return null;
+  const noExt = name.replace(/\.[^./\\]+$/, '');
+  let cleaned = stripDatePrefix(noExt).stripped
+    .replace(/\.(?!\d)/g, ' ')
+    .replace(/_+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return null;
+
+  // Remove bracketed scanner/format tags from the right edge first so the
+  // trailing issue token can be found in names like `Foo 014 (Digital)`.
+  let prev: string;
+  do {
+    prev = cleaned;
+    cleaned = cleaned.replace(/\s*[\[({][^\])}]+[\])}]\s*$/g, '').trim();
+  } while (cleaned !== prev);
+
+  // Drop common cover-count suffixes, then one issue-like trailing number.
+  cleaned = cleaned
+    .replace(/\s+\d{1,3}\s+of\s+\d{1,3}\s+covers?\s*$/i, '')
+    .replace(/\s+\d{1,3}(?:\.\d+)?\s*$/i, '')
+    .trim();
+
+  const normalized = normalizeSeriesName(cleaned);
+  return normalized.length >= 3 ? normalized : null;
+}
+
 // Volume/chapter markers require a prefix so series with numeric names
 // ("7SEEDS", "20th Century Boys") don't get eaten.
 const VOL_RE  = /\b(?:v(?:ol(?:ume)?)?\.?\s*)(\d+(?:\.\d+)?)\b/i;

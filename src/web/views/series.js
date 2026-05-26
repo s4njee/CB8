@@ -37,7 +37,7 @@ export async function renderSeries(el, id) {
     [series, volumes, chapters] = await Promise.all([
       api.fetchSeries(id),
       api.fetchSeriesVolumes(id, { include_implicit: true }),
-      api.fetchSeriesChapters(id, includeDeleted ? { include_deleted: 1 } : {}),
+      api.fetchSeriesChapters(id, { limit: 500, ...(includeDeleted ? { include_deleted: 1 } : {}) }),
     ]);
   } catch (err) {
     console.error('[CB8] failed to load series', id, err);

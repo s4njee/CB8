@@ -31,6 +31,7 @@ import { createAuth, getAuth } from './auth';
 import type { RequestContext, RouteHandler } from './context';
 import * as authRoutes from './routes/auth';
 import * as userRoutes from './routes/users';
+import * as adminRoutes from './routes/admin';
 import * as tagRoutes from './routes/tags';
 import * as libraryRoutes from './routes/libraries';
 import * as folderRoutes from './routes/folders';
@@ -55,6 +56,7 @@ const OWN_AUTH_ENDPOINTS = new Set([
 const API_ROUTES: RouteHandler[] = [
   authRoutes.handle,
   userRoutes.handle,
+  adminRoutes.handle,
   uploadRoutes.handle,
   comicRoutes.handle,
   // seriesRoutes is registered before progressRoutes so the new

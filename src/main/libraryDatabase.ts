@@ -31,6 +31,8 @@ import * as comics from './db/comics';
 import * as series from './db/series';
 import * as volume from './db/volume';
 import * as search from './db/search';
+import * as watchRoots from './db/watchRoots';
+import * as libraryMaintenance from './db/libraryMaintenance';
 
 // ---------------------------------------------------------------------------
 // bindAll — strip the leading `db` parameter from every function in a module
@@ -96,10 +98,12 @@ export class LibraryDatabase {
   get folders(): Bound<typeof folders>     { return bindAll(folders, this.db); }
   get history(): Bound<typeof history>     { return bindAll(history, this.db); }
   get libraries(): Bound<typeof libraries> { return bindAll(libraries, this.db); }
+  get libraryMaintenance(): Bound<typeof libraryMaintenance> { return bindAll(libraryMaintenance, this.db); }
   get progress(): Bound<typeof progress>   { return bindAll(progress, this.db); }
   get search(): Bound<typeof search>       { return bindAll(search, this.db); }
   get series(): Bound<typeof series>       { return bindAll(series, this.db); }
   get tags(): Bound<typeof tags>           { return bindAll(tags, this.db); }
   get users(): Bound<typeof users>         { return bindAll(users, this.db); }
   get volume(): Bound<typeof volume>       { return bindAll(volume, this.db); }
+  get watchRoots(): Bound<typeof watchRoots> { return bindAll(watchRoots, this.db); }
 }

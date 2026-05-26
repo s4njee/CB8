@@ -36,6 +36,8 @@ function setVersion(db: Database.Database, v: number): void {
  * something here.
  */
 export function migrateSchema(db: Database.Database): void {
+  ensureWatchRootsTable(db);
+  ensureThumbnailStatusColumn(db);
   ensurePostMigrationIndexes(db);
   ensureSearchIndex(db);
   ensureSeriesSearchIndex(db);
@@ -46,10 +48,46 @@ export function migrateSchema(db: Database.Database): void {
  * Pins schema_version and ensures the FTS + index objects exist.
  */
 export function initializeVersion(db: Database.Database): void {
+  ensureWatchRootsTable(db);
+  ensureThumbnailStatusColumn(db);
   ensurePostMigrationIndexes(db);
   ensureSearchIndex(db);
   ensureSeriesSearchIndex(db);
   setVersion(db, CURRENT_VERSION);
+}
+
+function ensureThumbnailStatusColumn(db: Database.Database): void {
+  const cols = db.prepare('PRAGMA table_info(comics)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'thumbnail_status')) {
+    db.prepare(
+      `ALTER TABLE comics
+       ADD COLUMN thumbnail_status TEXT NOT NULL DEFAULT 'ready'
+       CHECK (thumbnail_status IN ('ready','pending','failed'))`
+    ).run();
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_comics_thumbnail_status
+      ON comics(thumbnail_status, media_type, id);
+  `);
+}
+
+function ensureWatchRootsTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS library_watch_roots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      root_path TEXT NOT NULL,
+      library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+      folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_library_watch_roots_unique
+      ON library_watch_roots(root_path, library_id, COALESCE(folder_id, -1));
+    CREATE INDEX IF NOT EXISTS idx_library_watch_roots_enabled
+      ON library_watch_roots(enabled);
+  `);
 }
 
 /**

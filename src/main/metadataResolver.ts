@@ -159,7 +159,7 @@ export async function resolve(filePath: string, opts: ResolveOptions): Promise<R
     const fg = opts.folderGrouping ?? new FolderGroupingResolver();
     const grouping = await fg.resolve(dir);
     if (grouping && grouping.matches(fileName)) {
-      out.seriesName = normalizeSeriesName(folderName);
+      out.seriesName = normalizeSeriesName(grouping.seriesName);
     }
   }
 

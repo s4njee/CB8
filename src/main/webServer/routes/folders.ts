@@ -56,6 +56,32 @@ export const handle: RouteHandler = async (ctx) => {
   }
 
   const folderComicsMatch = pathname.match(/^\/api\/folders\/(\d+)\/comics$/);
+  const folderSeriesMatch = pathname.match(/^\/api\/folders\/(\d+)\/series$/);
+
+  if (method === 'GET' && folderSeriesMatch) {
+    const folderId = parseInt(folderSeriesMatch[1], 10);
+    const limit = query.limit ? Math.min(Math.max(parseInt(query.limit, 10) || 50, 1), 200) : 50;
+    const offset = query.offset ? Math.max(parseInt(query.offset, 10) || 0, 0) : 0;
+    const includeDeleted = !!currentUser?.isAdmin && (query.include_deleted === '1' || query.include_deleted === 'true');
+    const rows = db.series.listForFolder(folderId, { includeDeleted, limit, offset });
+    const totalCount = db.series.countForFolder(folderId, { includeDeleted });
+    sendJson(res, 200, {
+      totalCount,
+      items: rows.map((r) => ({
+        id: r.id,
+        libraryId: r.libraryId,
+        name: r.name,
+        sortName: r.sortName,
+        summary: r.summary,
+        status: r.status,
+        ageRating: r.ageRating,
+        coverComicId: r.coverComicId ?? db.comics.defaultSeriesCover(r.id),
+        chapterCount: r.chapterCount,
+        lastChapterAddedAt: r.lastChapterAddedAt,
+      })),
+    });
+    return true;
+  }
 
   // Add/remove comics to folder
   if ((method === 'POST' || method === 'DELETE') && folderComicsMatch) {

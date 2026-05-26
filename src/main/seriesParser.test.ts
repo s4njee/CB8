@@ -5,6 +5,7 @@ import {
   computeSortName,
   parseFolderVolumeMarker,
   stripDatePrefix,
+  chronologyGroupingName,
 } from './seriesParser';
 
 describe('parseSeriesFromFilename', () => {
@@ -185,6 +186,21 @@ describe('normalizeSeriesName', () => {
 
   it('trims leading and trailing whitespace', () => {
     expect(normalizeSeriesName('  Berserk  ')).toBe('Berserk');
+  });
+});
+
+describe('chronologyGroupingName', () => {
+  it('drops a leading YYYYMM date and trailing issue number', () => {
+    expect(chronologyGroupingName('200502 Supreme Power 014.cbr')).toBe('Supreme Power');
+    expect(chronologyGroupingName('200508 Supreme Power 017.cbz')).toBe('Supreme Power');
+  });
+
+  it('keeps dated names with no trailing issue as their stripped title', () => {
+    expect(chronologyGroupingName('200502 Supreme Power')).toBe('Supreme Power');
+  });
+
+  it('drops cover-count suffixes after a dated name', () => {
+    expect(chronologyGroupingName('200310 Supreme Power v1 001 02 of 02 covers.cbr')).toBe('Supreme Power v1');
   });
 });
 

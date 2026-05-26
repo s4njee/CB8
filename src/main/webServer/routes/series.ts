@@ -48,7 +48,9 @@ export const handle: RouteHandler = async (ctx) => {
       includeDeleted: inc.includeDeleted,
       limit, offset,
     });
+    const totalCount = db.series.countForLibrary(libId, { includeDeleted: inc.includeDeleted });
     sendJson(res, 200, {
+      totalCount,
       items: rows.map((r) => ({
         id: r.id,
         libraryId: r.libraryId,

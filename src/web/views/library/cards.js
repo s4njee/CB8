@@ -109,6 +109,66 @@ export function createFolderCard(folder) {
   return card;
 }
 
+export function createSeriesCard(series) {
+  const card = document.createElement('div');
+  card.className = 'comic-card series-card';
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-label', `Series: ${series.name}`);
+  card.dataset.seriesId = series.id;
+
+  const thumbWrap = document.createElement('div');
+  thumbWrap.className = 'card-thumb-wrap';
+
+  const img = document.createElement('img');
+  img.className = 'card-thumb loading';
+  img.alt = series.name;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.src = api.seriesCoverUrl(series.id);
+  img.addEventListener('load', () => img.classList.remove('loading'));
+  img.addEventListener('error', () => {
+    img.classList.remove('loading');
+    img.src = PLACEHOLDER_BOOK_SVG_DATA_URI;
+  });
+
+  const badge = document.createElement('div');
+  badge.className = 'card-badge series';
+  badge.textContent = 'Series';
+
+  thumbWrap.appendChild(img);
+  thumbWrap.appendChild(badge);
+
+  const info = document.createElement('div');
+  info.className = 'card-info';
+
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = series.name;
+
+  const meta = document.createElement('div');
+  meta.className = 'card-meta';
+  const count = series.chapterCount ?? 0;
+  meta.textContent = `${count} issue${count === 1 ? '' : 's'}`;
+
+  info.appendChild(title);
+  info.appendChild(meta);
+
+  card.appendChild(thumbWrap);
+  card.appendChild(info);
+
+  const open = () => { window.location.hash = `#/series/${series.id}`; };
+  card.addEventListener('click', (e) => {
+    e.preventDefault();
+    open();
+  });
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+
+  return card;
+}
+
 export function createCard(record) {
   const card = document.createElement('div');
   card.className = 'comic-card';

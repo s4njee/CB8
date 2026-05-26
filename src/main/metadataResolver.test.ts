@@ -138,6 +138,20 @@ describe('metadataResolver.resolve precedence', () => {
     expect(md.chapterNumber).toBe(191);
   });
 
+  it('groups dated issue filenames under the stripped series name', async () => {
+    await place('Supreme Power/200502 Supreme Power 014.cbr');
+    const file = await place('Supreme Power/200508 Supreme Power 017.cbz');
+    const md = await resolve(file, {
+      libraryRoot: lib,
+      comicInfo: null,
+      folderGrouping: new FolderGroupingResolver(),
+    });
+    expect(md.seriesName).toBe('Supreme Power');
+    expect(md.volumeNumber).toBeNull();
+    expect(md.chapterNumber).toBe(17);
+    expect(md.isStandalone).toBe(false);
+  });
+
   it('one-shot guard alone (no ComicInfo) produces standalone', async () => {
     const file = await place('one-shot/Aero/Aero 001.cbz');
     const md = await resolve(file, { libraryRoot: lib, comicInfo: null });

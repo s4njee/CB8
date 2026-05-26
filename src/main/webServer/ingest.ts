@@ -26,6 +26,7 @@ export async function ingestPathStreaming(
   targetPath: string,
   emit: (event: IngestEvent) => void,
   folderId?: number,
+  ingestOpts: Pick<IngestOptions, 'skipComicInfo' | 'skipThumbnails'> = {},
 ): Promise<void> {
   let stat: fs.Stats;
   try {
@@ -38,29 +39,32 @@ export async function ingestPathStreaming(
 
   if (stat.isDirectory()) {
     const scanner = new FileScannerImpl(db);
-    const opts: IngestOptions = { folderId, libraryRoot: targetPath };
+    const rootPath = path.resolve(targetPath);
+    const libraryId = resolveLibraryId(db, folderId);
+    const opts: IngestOptions = { libraryId, folderId, libraryRoot: rootPath, ...ingestOpts };
     let added = 0;
     try {
-      added += await scanner.scan(targetPath, (p) => {
+      added += await scanner.scan(rootPath, (p) => {
         emit({ type: 'progress', phase: 'comics', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
       }, undefined, opts);
     } catch (err) {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     }
     try {
-      added += await scanner.scanBooks(targetPath, (p) => {
+      added += await scanner.scanBooks(rootPath, (p) => {
         emit({ type: 'progress', phase: 'books', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
       }, undefined, opts);
     } catch (err) {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     }
+    db.watchRoots.upsertWatchRoot(rootPath, libraryId, folderId ?? null);
     emit({ type: 'done', added });
     return;
   }
 
   if (stat.isFile()) {
     emit({ type: 'progress', phase: 'file', discovered: 1, processed: 0, currentFile: path.basename(targetPath) });
-    const result = await addSingleFile(db, targetPath, { folderId });
+    const result = await addSingleFile(db, targetPath, { folderId, ...ingestOpts });
     emit({ type: 'progress', phase: 'file', discovered: 1, processed: 1, currentFile: path.basename(targetPath) });
     if (result.error) emit({ type: 'error', message: `${targetPath}: ${result.error}` });
     emit({ type: 'done', added: result.added ? 1 : 0 });
@@ -69,4 +73,12 @@ export async function ingestPathStreaming(
 
   emit({ type: 'error', message: 'Path is not a regular file or directory' });
   emit({ type: 'done', added: 0 });
+}
+
+function resolveLibraryId(db: LibraryDatabase, folderId?: number): number {
+  if (folderId != null) {
+    const libraryId = db.libraries.getLibraryForFolder(folderId);
+    if (libraryId != null) return libraryId;
+  }
+  return db.libraries.getOrCreateInbox();
 }

@@ -15,6 +15,8 @@ import * as path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import { setImageCacheRoot } from './imageResizer';
 import { buildServer } from './webServer/server';
+import { LibraryWatcher } from './libraryWatcher';
+import { startThumbnailBackfillWorker, type ThumbnailBackfillWorker } from './maintenance/thumbnailBackfillWorker';
 
 async function main(): Promise<void> {
   const dataDir = process.env.CB8_DATA_DIR ?? '/var/lib/cb8';
@@ -27,6 +29,9 @@ async function main(): Promise<void> {
   console.log(`[CB8] Standalone startup: opening database at ${dbPath}`);
   const db = new LibraryDatabase(dbPath);
   db.initialize();
+  const watcher = new LibraryWatcher(db);
+  watcher.start();
+  const thumbnailWorker: ThumbnailBackfillWorker = startThumbnailBackfillWorker(db);
   console.log('[CB8] Standalone startup: database ready');
 
   const fastify = await buildServer(db);
@@ -36,6 +41,8 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     console.log('[CB8] Shutting down…');
     try { await fastify.close(); } catch { /* ignore */ }
+    try { await thumbnailWorker.stop(); } catch { /* ignore */ }
+    try { await watcher.stop(); } catch { /* ignore */ }
     try { db.raw.close(); } catch { /* ignore */ }
     process.exit(0);
   };
