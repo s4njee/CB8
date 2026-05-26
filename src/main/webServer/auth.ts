@@ -50,15 +50,34 @@ export interface AuthInstance {
 
 let _auth: AuthInstance | null = null;
 
-function resolveSecret(): string {
+/**
+ * Resolve the better-auth signing secret.
+ *
+ * Priority:
+ *   1. BETTER_AUTH_SECRET environment variable (production / Docker deploys).
+ *   2. A secret persisted in app_meta under the key 'auth_secret' (desktop /
+ *      standalone runs). This keeps session cookies valid across restarts so
+ *      the user does not have to log in again every time the app is restarted.
+ *   3. Generate a new secret, persist it, and use it going forward.
+ *
+ * Using a persistent secret means better-auth's signed session cookies remain
+ * valid after a restart. With an ephemeral (random) secret every restart
+ * invalidated all existing sessions, forcing manual re-authentication or
+ * relying on the initial-password auto-login fallback — which stops working
+ * once the admin clears the initial credentials.
+ */
+function resolveSecret(db: Database.Database): string {
   const fromEnv = process.env.BETTER_AUTH_SECRET;
   if (fromEnv && fromEnv.length >= 32) return fromEnv;
-  // Dev fallback — stable across a single process so sessions don't churn,
-  // but not persisted across restarts. Production must set BETTER_AUTH_SECRET.
-  if (!fromEnv) {
-    console.warn('[CB8] BETTER_AUTH_SECRET not set — using ephemeral dev secret.');
-  }
-  return crypto.randomBytes(32).toString('hex');
+
+  const AUTH_SECRET_KEY = 'auth_secret';
+  const row = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(AUTH_SECRET_KEY) as { value: string } | undefined;
+  if (row?.value && row.value.length >= 32) return row.value;
+
+  // Generate a new secret, persist it so the next restart reuses it.
+  const newSecret = crypto.randomBytes(32).toString('hex');
+  db.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(AUTH_SECRET_KEY, newSecret);
+  return newSecret;
 }
 
 function resolveBaseURL(): string {
@@ -111,7 +130,7 @@ export function createAuth(db: Database.Database): AuthInstance {
 function buildAuth(db: Database.Database) {
   return betterAuth({
     database: db,
-    secret: resolveSecret(),
+    secret: resolveSecret(db),
     baseURL: resolveBaseURL(),
     telemetry: {
       enabled: false,
@@ -145,7 +164,14 @@ function buildAuth(db: Database.Database) {
         },
       },
     },
+    // Keep sessions alive for 30 days with a sliding window (cookie is
+    // refreshed on each access after 1 day of inactivity). This prevents
+    // the "must re-login every week" problem on desktop where the app may
+    // not be opened daily. The persistent auth_secret (above) ensures
+    // the signed session cookie stays valid across server restarts.
     session: {
+      expiresIn: 60 * 60 * 24 * 30,  // 30 days
+      updateAge:  60 * 60 * 24,       // refresh cookie if older than 1 day
       fields: {
         userId: 'user_id',
         expiresAt: 'expires_at',
