@@ -829,6 +829,7 @@ body.reader-open .reader-back-btn { opacity: 1; }
   -webkit-tap-highlight-color: transparent;
   min-height: 0;
   height: 100%;
+  overscroll-behavior: none;
 }
 .comic-reader.is-zoomed { touch-action: none; overflow: hidden; }
 
@@ -891,6 +892,7 @@ body.reader-open .reader-back-btn { opacity: 1; }
 /* Zoom modes ---------------------------------------------------- */
 .comic-reader[data-zoom="fit-width"] {
   overflow-y: auto;
+  overscroll-behavior-y: none;
   align-items: flex-start;
 }
 .comic-page-img[data-zoom="fit-width"] {
@@ -907,6 +909,7 @@ body.reader-open .reader-back-btn { opacity: 1; }
 }
 .comic-reader[data-zoom="original"] {
   overflow: auto;
+  overscroll-behavior: none;
   align-items: flex-start;
   justify-content: flex-start;
 }
@@ -1219,6 +1222,18 @@ body:not(.admin-authenticated) .admin-add-button { display: none; }
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-dim);
+}
+.admin-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+.admin-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
 }
 .admin-input {
   background: var(--surface2);
