@@ -117,8 +117,8 @@ function makeToggleButton(label, isActive, onClick) {
   return btn;
 }
 
-export async function renderEpubReader(el, record, onBack) {
-  const toolbar = buildToolbar(record.title, onBack);
+export async function renderEpubReader(el, record, onBack, backHref = '#/') {
+  const toolbar = buildToolbar(record.title, onBack, backHref);
   const slider = toolbar.querySelector('.reader-page-slider');
   if (slider) { slider.min = 0; slider.max = 100; slider.value = 0; }
   const bookContainer = document.createElement('div');

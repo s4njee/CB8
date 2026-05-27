@@ -97,6 +97,11 @@ export function parseRoute(hash) {
   return { type: 'all' };
 }
 
+// Last non-reader hash — used as the back-button destination when the
+// reader is opened. Defaults to '#/' for the case where the user deep-links
+// directly into a #/read/… URL without prior navigation.
+let previousLibraryHash = '#/';
+
 export async function navigate() {
   const route = parseRoute(window.location.hash);
   state.route = route;
@@ -121,13 +126,17 @@ export async function navigate() {
     document.body.classList.add('reader-open');
     overlay.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
+    const backHash = previousLibraryHash;
     await renderReader(
       document.getElementById('reader-content'),
       route.id,
       route.page,
-      () => { window.location.hash = '#/'; },
+      () => { window.location.hash = backHash; },
+      backHash,
     );
   } else {
+    // Record the last library/browse view so the reader back button returns here.
+    previousLibraryHash = window.location.hash || '#/';
     destroyReader();
     overlay.classList.add('hidden');
     document.body.classList.remove('reader-open');

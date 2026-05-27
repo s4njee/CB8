@@ -11,7 +11,7 @@ import { buildToolbar } from './utils.js';
 import { wirePinchPanSwipe } from './comicReader/gestures.js';
 import { wireKeyboard } from './comicReader/keyboard.js';
 
-export async function renderComicReader(el, record, initialPage, onBack) {
+export async function renderComicReader(el, record, initialPage, onBack, backHref = '#/') {
   const startPage = initialPage ?? record.lastPage ?? 0;
   const prefs = loadReaderPrefs();
 
@@ -25,7 +25,7 @@ export async function renderComicReader(el, record, initialPage, onBack) {
   };
   const comicState = state.comicState;
 
-  const toolbar = buildToolbar(record.title, onBack);
+  const toolbar = buildToolbar(record.title, onBack, backHref);
   const pageLabel = toolbar.querySelector('.toolbar-pages');
   const slider = toolbar.querySelector('.reader-page-slider');
 
@@ -105,7 +105,7 @@ export async function renderComicReader(el, record, initialPage, onBack) {
 
   const backBtn = document.createElement('a');
   backBtn.className = 'reader-back-btn';
-  backBtn.href = '#/';
+  backBtn.href = backHref;
   backBtn.textContent = '← Library';
   backBtn.addEventListener('click', (e) => { e.preventDefault(); onBack(); });
 

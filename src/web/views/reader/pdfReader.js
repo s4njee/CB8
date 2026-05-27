@@ -10,8 +10,8 @@ import { buildToolbar, loadScript } from './utils.js';
 const PDFJS_CDN        = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
 const PDFJS_WORKER_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
-export async function renderPdfReader(el, record, initialPage, onBack) {
-  const toolbar = buildToolbar(record.title, onBack);
+export async function renderPdfReader(el, record, initialPage, onBack, backHref = '#/') {
+  const toolbar = buildToolbar(record.title, onBack, backHref);
   const bookContainer = document.createElement('div');
   bookContainer.className = 'book-reader';
 

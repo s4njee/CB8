@@ -2,14 +2,14 @@
  * views/reader/utils.js — Shared helpers: toolbar builder, script loader, format guessing.
  */
 
-export function buildToolbar(title, onBack) {
+export function buildToolbar(title, onBack, backHref = '#/') {
   const toolbar = document.createElement('div');
   toolbar.className = 'reader-toolbar';
   toolbar.style.zIndex = '50';
 
   const backBtn = document.createElement('a');
   backBtn.className = 'toolbar-back';
-  backBtn.href = '#/';
+  backBtn.href = backHref;
   backBtn.innerHTML = '← Back';
   backBtn.addEventListener('click', (e) => { e.preventDefault(); onBack(); });
 

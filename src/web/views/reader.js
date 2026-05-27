@@ -13,7 +13,7 @@ import { renderComicReader } from './reader/comicReader.js';
 import { renderEpubReader } from './reader/epubReader.js';
 import { renderPdfReader } from './reader/pdfReader.js';
 
-export async function renderReader(el, comicId, initialPage, onBack) {
+export async function renderReader(el, comicId, initialPage, onBack, backHref = '#/') {
   state.readerEl = el;
   el.innerHTML = '';
 
@@ -32,11 +32,11 @@ export async function renderReader(el, comicId, initialPage, onBack) {
   }
 
   if (record.mediaType === 'comic') {
-    await renderComicReader(el, record, initialPage, onBack);
+    await renderComicReader(el, record, initialPage, onBack, backHref);
   } else if (ext === 'epub') {
-    await renderEpubReader(el, record, onBack);
+    await renderEpubReader(el, record, onBack, backHref);
   } else if (ext === 'pdf') {
-    await renderPdfReader(el, record, initialPage, onBack);
+    await renderPdfReader(el, record, initialPage, onBack, backHref);
   } else {
     el.innerHTML = `<div class="empty-state"><p>The .${ext || 'unknown'} format cannot be read in the browser.</p></div>`;
   }
