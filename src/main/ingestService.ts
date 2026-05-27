@@ -7,22 +7,42 @@ import * as ArchiveLoader from './archiveLoader';
 import { extractEpubCover } from './epubCoverExtractor';
 import { getPdfPageCount, renderPdfFirstPageCover } from './pdfCoverExtractor';
 import { generateThumbnail } from './thumbnailGenerator';
-import { parseSeriesFromFilename, type SeriesInfo } from './seriesParser';
+import { parseSeriesFromFilename, stripLeadingReleaseDate, type SeriesInfo } from './seriesParser';
 import { detectMediaType, COMIC_EXTENSIONS, BOOK_EXTENSIONS } from '../shared/mediaTypes';
 import type { ScanProgress } from '../shared/types';
 import { withTimeout } from './utils/timeout';
+import { classifyIngestError, recordIngestError, type IngestErrorClass } from './ingestErrorLog';
+
+export interface IngestFailure {
+  path: string;
+  errorClass: IngestErrorClass;
+  message: string;
+}
 
 const COVER_TIMEOUT_MS = 5000;
 
-// Concurrency for parallel directory scans. Workers spend most of their
-// time parked in async I/O (yauzl reads, sharp encodes — both libuv
-// pool tasks), so overcommit beyond core count is a clear win. We cap
-// at 64 to keep the pending-payload queue bounded; tune via the
-// CB8_INGEST_CONCURRENCY env var if needed.
+function getRelativeDir(scanRoot: string, filePath: string): string {
+  const resolvedRoot = path.resolve(scanRoot);
+  const resolvedFileDir = path.resolve(path.dirname(filePath));
+  if (process.platform === 'win32') {
+    const rootLower = resolvedRoot.toLowerCase();
+    const fileDirLower = resolvedFileDir.toLowerCase();
+    if (fileDirLower.startsWith(rootLower)) {
+      const relativePart = resolvedFileDir.slice(resolvedRoot.length);
+      return relativePart.replace(/^[/\\]+/, '');
+    }
+  }
+  return path.relative(resolvedRoot, resolvedFileDir);
+}
+
+// Concurrency for parallel directory scans. Each worker is primarily bound
+// by I/O (yauzl reads, sharp encodes) rather than CPU, but running too many
+// in parallel causes resource contention on low-spec NAS / container hosts.
+// Default is 8; override with CB8_INGEST_CONCURRENCY env var.
 const MAX_INGEST_CONCURRENCY = (() => {
   const fromEnv = parseInt(process.env.CB8_INGEST_CONCURRENCY ?? '', 10);
   if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
-  return Math.min(64, Math.max(8, os.cpus().length * 2));
+  return 8;
 })();
 
 // Flush batched inserts every N prepared records (or at end of run).
@@ -96,7 +116,7 @@ export class IngestService {
    * Pure async work — does not write to the DB. The caller is responsible
    * for batching the resulting payloads through `flushBatch`.
    */
-  async prepareInsert(filePath: string): Promise<PreparedInsert | null> {
+  async prepareInsert(filePath: string, scanRoot?: string): Promise<PreparedInsert | null> {
     const mediaType = detectMediaType(filePath);
     if (!mediaType) return null;
     if (this.db.isDismissed(filePath)) return null;
@@ -104,8 +124,21 @@ export class IngestService {
 
     const ext = path.extname(filePath).toLowerCase();
     const stats = fs.statSync(filePath);
-    const title = path.basename(filePath, ext);
+    // Strip leading YYYY/YYYYMM/YYYYMMDD prefix from the display title so files
+    // like "199305 X-Force v1 022.cbz" show as "X-Force v1 022".
+    const title = stripLeadingReleaseDate(path.basename(filePath, ext));
     const seriesInfo = parseSeriesFromFilename(path.basename(filePath));
+
+    if (scanRoot) {
+      const relPath = getRelativeDir(scanRoot, filePath);
+      const normalized = relPath.replace(/\\/g, '/');
+      if (normalized && normalized !== '.' && normalized !== '..') {
+        const firstSegment = normalized.split('/')[0];
+        if (firstSegment) {
+          seriesInfo.seriesName = firstSegment;
+        }
+      }
+    }
 
     if (mediaType === 'book') {
       let pageCount = 0;
@@ -132,7 +165,14 @@ export class IngestService {
     const handle = await ArchiveLoader.open(filePath);
     try {
       let coverImage: Buffer | null = null;
-      try { coverImage = await ArchiveLoader.getCoverImage(handle); } catch { /* placeholder */ }
+      try {
+        coverImage = await ArchiveLoader.getCoverImage(handle);
+      } catch (err) {
+        const message = (err instanceof Error ? err.message : String(err)).trim();
+        const errorClass = classifyIngestError(err, filePath);
+        recordIngestError({ path: filePath, ext, errorClass, message });
+        console.warn(`Failed to extract cover from ${filePath} [${errorClass}]; using placeholder thumbnail.`, err);
+      }
       const coverThumbnail = await generateThumbnail(coverImage);
       return {
         filePath, title, pageCount: handle.pageCount, fileSize: stats.size,
@@ -143,13 +183,6 @@ export class IngestService {
     }
   }
 
-  /**
-   * Apply a batch of prepared inserts in a single SQLite transaction.
-   * Returns the rowids of the inserted records (in input order).
-   *
-   * Synchronous: better-sqlite3 transactions cannot await. All async
-   * work must already be done in `prepareInsert`.
-   */
   flushBatch(batch: PreparedInsert[], folderId?: number): number[] {
     if (batch.length === 0) return [];
     const ids: number[] = [];
@@ -204,11 +237,12 @@ export class IngestService {
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
     folderId?: number,
-  ): Promise<number> {
+    scanRoot?: string,
+  ): Promise<{ added: number; failures: IngestFailure[] }> {
     const queue = new IngestQueue();
     queue.pushMany(filePaths);
     queue.complete();
-    return this.runWorkers(queue, onProgress, signal, folderId);
+    return this.runWorkers(queue, onProgress, signal, folderId, scanRoot);
   }
 
   private async runWorkers(
@@ -216,10 +250,12 @@ export class IngestService {
     onProgress: (progress: ScanProgress) => void,
     signal: AbortSignal | undefined,
     folderId: number | undefined,
-  ): Promise<number> {
+    scanRoot: string | undefined,
+  ): Promise<{ added: number; failures: IngestFailure[] }> {
     const progress: ScanProgress = { discovered: 0, processed: 0, currentFile: '' };
     const pending: PreparedInsert[] = [];
     const existingForFolder: number[] = [];
+    const failures: IngestFailure[] = [];
     let added = 0;
     let lastEmit = 0;
 
@@ -249,17 +285,43 @@ export class IngestService {
         progress.currentFile = filePath;
         try {
           if (this.db.comicExistsByPath(filePath)) {
-            if (folderId != null) {
-              const existing = this.db.getComicByPath(filePath);
-              if (existing) existingForFolder.push(existing.id);
+            const existing = this.db.getComicByPath(filePath);
+            if (existing) {
+              if (folderId != null) {
+                existingForFolder.push(existing.id);
+              } else if (scanRoot) {
+                const relPath = getRelativeDir(scanRoot, filePath);
+                const normalized = relPath.replace(/\\/g, '/');
+                if (normalized && normalized !== '.' && normalized !== '..') {
+                  const firstSegment = normalized.split('/')[0];
+                  const metadata = this.db.getComicMetadata(existing.id);
+                  if (firstSegment && metadata?.seriesName !== firstSegment) {
+                    this.db.setComicSeries(
+                      existing.id,
+                      firstSegment,
+                      metadata?.volumeNumber ?? null,
+                      metadata?.chapterNumber ?? null,
+                    );
+                  }
+                }
+              }
             }
           } else {
-            const prep = await this.prepareInsert(filePath);
+            const prep = await this.prepareInsert(filePath, scanRoot);
             if (prep) pending.push(prep);
           }
           flushIfFull();
         } catch (err) {
-          console.error(`Failed to process ${filePath}:`, err);
+          // Track and persist the failure so the user can see exactly which
+          // files dropped and why. Going to console alone (the old behavior)
+          // made a 26k-of-40k delta impossible to triage.
+          const message = (err instanceof Error ? err.message : String(err)).trim();
+          const errorClass = classifyIngestError(err, filePath);
+          const ext = (filePath.match(/\.[^./\\]+$/)?.[0] ?? '').toLowerCase();
+          const failure: IngestFailure = { path: filePath, errorClass, message };
+          failures.push(failure);
+          recordIngestError({ path: filePath, ext, errorClass, message });
+          console.error(`Failed to process ${filePath} [${errorClass}]:`, err);
         }
         progress.processed++;
         emit();
@@ -277,7 +339,7 @@ export class IngestService {
       this.db.runInTransaction(() => this.db.addComicsToFolderRaw(folderId, existingForFolder));
     }
     emit(true);
-    return added;
+    return { added, failures };
   }
 
   async scanDirectory(
@@ -286,15 +348,15 @@ export class IngestService {
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
     folderId?: number,
-  ): Promise<number> {
+  ): Promise<{ added: number; failures: IngestFailure[] }> {
     const extensions = mediaType === 'comic'
       ? new Set([...COMIC_EXTENSIONS].map(e => `.${e}`))
       : new Set([...BOOK_EXTENSIONS].map(e => `.${e}`));
 
     const files: string[] = [];
     await this.discoverFiles(dirPath, files, extensions, signal);
-    if (signal?.aborted) return 0;
-    return this.ingestParallel(files, onProgress, signal, folderId);
+    if (signal?.aborted) return { added: 0, failures: [] };
+    return this.ingestParallel(files, onProgress, signal, folderId, dirPath);
   }
 
   private async discoverFiles(dirPath: string, files: string[], extensions: Set<string>, signal?: AbortSignal): Promise<void> {

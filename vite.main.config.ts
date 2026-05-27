@@ -5,7 +5,7 @@ const extraExternals = [
   'better-sqlite3',
   '@napi-rs/canvas',
   'sharp',
-  'node-unrar-js',
+  'node-7z',
   'yauzl',
   '@jsquash/jxl',
   '@tanstack/react-virtual',

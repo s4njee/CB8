@@ -55,6 +55,7 @@ CB8_PUBLISH_PORT=4218
 | `CB8_DATA_DIR` | `/var/lib/cb8` | Where SQLite + thumbnail cache live. |
 | `CB8_HOST` | `0.0.0.0` | Bind address. |
 | `CB8_PORT` | `8008` | Listen port. |
+| `CB8_SEVENZIP_PATH` | `7z` (`/usr/bin/7z` in Docker) | 7-Zip binary used for CBZ/CBR archive reads. |
 | `BETTER_AUTH_SECRET` | (generated) | Set explicitly if you want stable session signing across restarts. |
 | `BETTER_AUTH_TRUSTED_ORIGINS` | — | Comma-separated extra origins to trust (e.g. when fronted by a reverse proxy with a custom hostname). |
 

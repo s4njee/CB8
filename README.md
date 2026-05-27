@@ -34,6 +34,10 @@ CB8 ships in three flavours. Pick whichever fits your setup — the library form
 
 Prebuilt artifacts for all three are published with each [Release](../../releases). Detailed instructions in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+CBZ and CBR reading uses a native 7-Zip executable through `node-7z`. Docker
+images install this automatically. Desktop and standalone runs need `7z` on
+`PATH`, or `CB8_SEVENZIP_PATH` pointing at a `7z`, `7zz`, or `7za` executable.
+
 ### Quick start — Docker
 
 ```sh

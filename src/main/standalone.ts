@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import { LibraryDatabase } from './libraryDatabase';
 import { setImageCacheRoot } from './imageResizer';
 import { setUploadRoot } from './webServer/routes/upload';
+import { setIngestErrorLogPath } from './ingestErrorLog';
 import { buildServer } from './webServer/server';
 
 async function main(): Promise<void> {
@@ -24,6 +25,7 @@ async function main(): Promise<void> {
 
   setImageCacheRoot(path.join(dataDir, 'image-cache'));
   setUploadRoot(dataDir);
+  setIngestErrorLogPath(dataDir);
 
   const dbPath = path.join(dataDir, 'library.db');
   console.log(`[CB8] Standalone startup: opening database at ${dbPath}`);

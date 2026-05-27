@@ -10,9 +10,11 @@ Completed. `LibraryView.tsx` now uses `@tanstack/react-virtual` (`useVirtualizer
 
 `src/main/imageDecoder.ts` is still a pass-through stub, so `.jxl` pages and covers are not converted into a Chromium-displayable format despite the spec requiring transparent JXL support. This should be implemented as a real main-process decode pipeline using the installed `@jsquash/jxl` package, plus a browser-native output encoder and Forge/Vite packaging for the WASM assets.
 
-## Large Archive Memory Use
+## ~~Large Archive Memory Use~~
 
-`openCbr` extracts every image in a RAR archive into memory during open. That is simple but can be expensive for large comics and does not match an on-demand page extraction model. Refactor CBR handling to keep archive metadata separately from page bytes and extract individual pages as requested, or add an explicit bounded cache.
+Completed. CBZ and CBR now share a `node-7z` backend that lists archive
+metadata separately from page bytes, extracts individual pages on demand, and
+keeps a bounded per-handle LRU cache.
 
 ## Library Query Scalability
 

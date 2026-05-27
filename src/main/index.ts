@@ -5,6 +5,7 @@ import { registerIpcHandlers } from './ipcHandlers';
 import { closeAllHandles, startWebServer } from './webServer';
 import { setImageCacheRoot } from './imageResizer';
 import { setUploadRoot } from './webServer/routes/upload';
+import { setIngestErrorLogPath } from './ingestErrorLog';
 import type { WebServerHandle } from './webServer';
 import { DbStartupError } from './db/schema';
 import { buildApplicationMenu, type MenuContext } from './menu';
@@ -106,6 +107,7 @@ const createWindow = (): void => {
   const userDataPath = app.getPath('userData');
   setImageCacheRoot(path.join(userDataPath, 'image-cache'));
   setUploadRoot(userDataPath);
+  setIngestErrorLogPath(userDataPath);
   const dbPath = path.join(userDataPath, 'library.db');
   try {
     db = new LibraryDatabase(dbPath);
@@ -170,6 +172,7 @@ function startHeadless(): void {
     const userDataPath = app.getPath('userData');
     setImageCacheRoot(path.join(userDataPath, 'image-cache'));
     setUploadRoot(userDataPath);
+    setIngestErrorLogPath(userDataPath);
     const dbPath = path.join(userDataPath, 'library.db');
     console.log(`[CB8] Headless startup: opening database at ${dbPath}`);
     db = new LibraryDatabase(dbPath);

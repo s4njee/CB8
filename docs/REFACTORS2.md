@@ -95,19 +95,11 @@ mirrored it is gone.
 
 `src/main/menu.ts` has near-identical confirm dialogs for "Clear Database" and "Reset Admin Password" — same shape (warning, two buttons, detail block, response check). Extract once. Trivial DRY.
 
-### `archiveLoader.getCbrPage` — split mode branches
+### `archiveLoader.getCbrPage` cleanup
 
-The new file-mode / data-mode CBR support put the branch inside the cache-miss path. Cleaner:
+Completed by the 7-Zip migration. CBZ and CBR now share one `node-7z` path and
+the old file-mode / data-mode CBR branch is gone.
 
-```ts
-async function extractCbrPage(handle: CbrHandle, name: string): Promise<Buffer> {
-  return handle._mode === 'data'
-    ? extractFromData(handle, name)
-    : extractFromFile(handle, name);
-}
-```
-
-…and `getCbrPage` becomes a thin cache-or-load wrapper. Same shape as `imageResizer.getCachedOrResize`, which makes the pattern recognizable.
 
 ### Auto-derive `vite.main.config.ts` externals from `package.json`
 

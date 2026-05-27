@@ -32,6 +32,15 @@ const READ_STATUS_PILLS = [
   { status: 'completed',   label: 'Completed' },
 ];
 
+const GROUP_NONE_KEY = '__none__';
+
+function numberLabel(key, fallback, noun) {
+  if (key === GROUP_NONE_KEY) return fallback;
+  const value = Number(key);
+  if (!Number.isFinite(value)) return fallback;
+  return `${noun} ${Number.isInteger(value) ? value.toFixed(0) : String(value)}`;
+}
+
 export function buildMediaStrip() {
   const strip = document.createElement('div');
   strip.className = 'media-strip';
@@ -110,6 +119,18 @@ export function routeTitle(route) {
       const folder = sidebarCache.folders.find((f) => f.id === route.id);
       return folder?.name ?? 'Folder';
     }
+    case 'folderSeries':
+      return route.seriesKey === GROUP_NONE_KEY ? 'Unsorted' : route.seriesKey;
+    case 'folderVolume':
+      return numberLabel(route.volumeKey, 'Unnumbered Volume', 'Volume');
+    case 'folderChapter':
+      return numberLabel(route.chapterKey, 'Unnumbered Chapter', 'Chapter');
+    case 'browseSeries':
+      return route.seriesKey === GROUP_NONE_KEY ? 'Unsorted' : route.seriesKey;
+    case 'browseVolume':
+      return numberLabel(route.volumeKey, 'Unnumbered Volume', 'Volume');
+    case 'browseChapter':
+      return numberLabel(route.chapterKey, 'Unnumbered Chapter', 'Chapter');
     case 'tag':     return `Tag: ${route.tag}`;
     default:        return 'Library';
   }

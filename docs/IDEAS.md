@@ -12,18 +12,14 @@ Performance improvements, feature ideas, and quality-of-life enhancements for CB
 Prefetch the next 2-3 pages into a bounded LRU cache while the current page is displayed so that forward navigation feels instant.
 Backward navigation benefits too if recently viewed pages stay in the cache.
 
-### CBR on-demand extraction
+### Archive extraction tuning
 
 > See also: **REFACTOR.md § Large Archive Memory Use**
 
-`openCbr` extracts every image into memory at open time. For a 200 MB RAR with
-50 pages, this spikes resident memory. Switch to a two-pass model:
-
-1. First pass reads the file header list (entry names + offsets) without extracting.
-2. `getCbrPage` extracts a single entry when requested, backed by the read-ahead cache above.
-
-`node-unrar-js` may not support single-entry extraction today; if not, keep a
-bounded sliding window of extracted pages instead of the full set.
+CBZ and CBR now share a `node-7z` backend and extract one page at a time into a
+bounded LRU cache. Remaining optimization work is mostly around read-ahead:
+prefetch the next 2-3 likely pages and keep an eye on 7-Zip process concurrency
+during large imports.
 
 ### Thumbnail generation at scan time — resize before storing
 

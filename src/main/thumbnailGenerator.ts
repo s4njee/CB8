@@ -32,3 +32,7 @@ export async function generateThumbnail(source: Buffer | null | undefined): Prom
     return PLACEHOLDER_THUMBNAIL;
   }
 }
+
+export function isPlaceholderThumbnail(source: Buffer | null | undefined): boolean {
+  return Boolean(source && source.length === PLACEHOLDER_THUMBNAIL.length && source.equals(PLACEHOLDER_THUMBNAIL));
+}

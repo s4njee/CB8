@@ -38,10 +38,12 @@ export interface AuthInstance {
     } | null>;
     signInUsername: (args: {
       body: { username: string; password: string };
+      headers?: Headers;
       returnHeaders?: boolean;
     }) => Promise<{ user: AuthUser; token: string; headers?: Headers }>;
     signInEmail: (args: {
       body: { email: string; password: string };
+      headers?: Headers;
       returnHeaders?: boolean;
     }) => Promise<{ user: AuthUser; token: string; headers?: Headers }>;
     signOut: (args: { headers: Headers; returnHeaders?: boolean }) => Promise<{ success: boolean; headers?: Headers }>;

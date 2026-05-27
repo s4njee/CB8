@@ -198,13 +198,21 @@ export function renderAddPath(body) {
           : 'Discovering files…';
         progressFile.textContent = msg.currentFile || '';
       }, { folderName });
+      window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+
+      const failureTotal = result.failuresSummary?.total ?? 0;
+      if (failureTotal > 0) {
+        // Don't auto-close — show the breakdown so the user can see WHY some
+        // files failed instead of just "Added N items" and a silent gap.
+        renderFailureReport(body, result, folderName);
+        return;
+      }
+
       const msg = result.added > 0
         ? `Added ${result.added.toLocaleString()} item${result.added === 1 ? '' : 's'}`
         : 'No new items found';
       closeModal();
       showToast(msg);
-      if (result.errors?.length) console.warn('[CB8] Add path errors:', result.errors);
-      window.dispatchEvent(new CustomEvent('cb8:library-changed'));
     } catch (e2) {
       err.textContent = e2.message || 'Failed to add path';
       err.hidden = false;
@@ -214,6 +222,69 @@ export function renderAddPath(body) {
       input.disabled = false;
       folderInput.disabled = false;
       submit.textContent = 'Add';
+    }
+  });
+}
+
+function classLabel(c) {
+  switch (c) {
+    case 'wasm_oom':       return 'WASM out-of-memory (try CB8_INGEST_CONCURRENCY=8)';
+    case 'archive_open':   return 'Archive open failed (corrupt / encrypted / unsupported)';
+    case 'fs_missing':     return 'File disappeared between scan and ingest';
+    case 'fs_permission':  return 'Permission denied';
+    case 'timeout':        return 'Cover / page-count extraction timed out';
+    case 'unknown':        return 'Other / unclassified';
+    default:               return c;
+  }
+}
+
+function renderFailureReport(body, result, folderName) {
+  const summary = result.failuresSummary;
+  const breakdown = Object.entries(summary.byClass || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<li><strong>${v.toLocaleString()}</strong> &middot; ${classLabel(k)}</li>`)
+    .join('');
+  const sample = (summary.sample || [])
+    .slice(0, 8)
+    .map((f) => {
+      const name = f.path.split(/[\\/]/).pop();
+      const msg = (f.message || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+      return `<li title="${f.path.replace(/"/g, '&quot;')}">
+        <code>${name}</code> &mdash; <span class="settings-initial-password-hint">[${f.errorClass}] ${msg}</span>
+      </li>`;
+    })
+    .join('');
+
+  body.innerHTML = `
+    <h2 class="admin-modal-title">Scan finished with errors</h2>
+    <p class="admin-hint">
+      Added <strong>${result.added.toLocaleString()}</strong> item${result.added === 1 ? '' : 's'} &middot;
+      <strong>${summary.total.toLocaleString()}</strong> file${summary.total === 1 ? '' : 's'} failed.
+      Full list is in <code>ingest-errors.jsonl</code> under the app's user-data directory.
+    </p>
+    <div class="settings-initial-password">
+      <div class="settings-initial-password-label">By reason</div>
+      <ul style="margin: 0; padding-left: 18px; font-size: 0.86rem;">${breakdown}</ul>
+    </div>
+    ${sample ? `
+      <div class="settings-initial-password">
+        <div class="settings-initial-password-label">First ${Math.min(summary.sample.length, 8)} failures</div>
+        <ul style="margin: 0; padding-left: 18px; font-size: 0.82rem; line-height: 1.5;">${sample}</ul>
+      </div>
+    ` : ''}
+    <div class="admin-actions">
+      <button type="button" class="admin-btn-secondary" data-action="clear-log">Clear log</button>
+      <button type="button" class="admin-btn-primary" data-action="close">Close</button>
+    </div>
+  `;
+  void folderName;
+  body.querySelector('[data-action="close"]').addEventListener('click', closeModal);
+  body.querySelector('[data-action="clear-log"]').addEventListener('click', async () => {
+    try {
+      await api.adminClearIngestErrors();
+      showToast('Ingest error log cleared');
+    } catch (clearErr) {
+      showToast(clearErr.message || 'Failed to clear log');
     }
   });
 }

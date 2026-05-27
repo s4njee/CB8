@@ -21,6 +21,8 @@ export function closeSortSheet() {
 export function updateSortLabel() {
   const label = document.querySelector('#sort-button .sort-button-label');
   if (label) label.textContent = SORT_LABELS[state.sortBy] || 'Title';
+  const select = document.getElementById('sort-select');
+  if (select) select.value = state.sortBy;
 }
 
 export function applySort(value) {

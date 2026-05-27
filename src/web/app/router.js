@@ -29,8 +29,64 @@ export function parseRoute(hash) {
   const libM = path.match(/^\/library\/(\d+)$/);
   if (libM) return { type: 'library', id: parseInt(libM[1], 10) };
 
+  const folderChapterM = path.match(/^\/folder\/(\d+)\/series\/([^/]+)\/volume\/([^/]+)\/chapter\/([^/]+)$/);
+  if (folderChapterM) {
+    return {
+      type: 'folderChapter',
+      id: parseInt(folderChapterM[1], 10),
+      seriesKey: decodeURIComponent(folderChapterM[2]),
+      volumeKey: decodeURIComponent(folderChapterM[3]),
+      chapterKey: decodeURIComponent(folderChapterM[4]),
+    };
+  }
+
+  const folderVolumeM = path.match(/^\/folder\/(\d+)\/series\/([^/]+)\/volume\/([^/]+)$/);
+  if (folderVolumeM) {
+    return {
+      type: 'folderVolume',
+      id: parseInt(folderVolumeM[1], 10),
+      seriesKey: decodeURIComponent(folderVolumeM[2]),
+      volumeKey: decodeURIComponent(folderVolumeM[3]),
+    };
+  }
+
+  const folderSeriesM = path.match(/^\/folder\/(\d+)\/series\/([^/]+)$/);
+  if (folderSeriesM) {
+    return {
+      type: 'folderSeries',
+      id: parseInt(folderSeriesM[1], 10),
+      seriesKey: decodeURIComponent(folderSeriesM[2]),
+    };
+  }
+
   const folderM = path.match(/^\/folder\/(\d+)$/);
   if (folderM) return { type: 'folder', id: parseInt(folderM[1], 10) };
+
+  // Global browse/search hierarchy (no folder scope — used when searching)
+  const browseChapterM = path.match(/^\/browse\/series\/([^/]+)\/volume\/([^/]+)\/chapter\/([^/]+)$/);
+  if (browseChapterM) {
+    return {
+      type: 'browseChapter',
+      seriesKey: decodeURIComponent(browseChapterM[1]),
+      volumeKey: decodeURIComponent(browseChapterM[2]),
+      chapterKey: decodeURIComponent(browseChapterM[3]),
+    };
+  }
+  const browseVolumeM = path.match(/^\/browse\/series\/([^/]+)\/volume\/([^/]+)$/);
+  if (browseVolumeM) {
+    return {
+      type: 'browseVolume',
+      seriesKey: decodeURIComponent(browseVolumeM[1]),
+      volumeKey: decodeURIComponent(browseVolumeM[2]),
+    };
+  }
+  const browseSeriesM = path.match(/^\/browse\/series\/([^/]+)$/);
+  if (browseSeriesM) {
+    return {
+      type: 'browseSeries',
+      seriesKey: decodeURIComponent(browseSeriesM[1]),
+    };
+  }
 
   const tagM = path.match(/^\/tag\/(.+)$/);
   if (tagM) return { type: 'tag', tag: decodeURIComponent(tagM[1]) };

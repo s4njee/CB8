@@ -16,7 +16,7 @@ import {
   ensureCheckbox, syncCardSelection,
 } from './library/selection.js';
 import {
-  createCard, createFolderCard,
+  createCard, createFolderCard, createGroupCard,
 } from './library/cards.js';
 import {
   buildMediaStrip, buildFileTypeStrip, buildReadStatusStrip,
@@ -28,6 +28,7 @@ import {
 
 const PAGE_SIZE = 48;
 const SHELF_LIMIT = 20;
+const GROUP_NONE_KEY = '__none__';
 
 let offset = 0;
 let totalCount = 0;
@@ -258,6 +259,120 @@ async function renderContinueShelf(host, options, epoch) {
 // Data loading
 // ---------------------------------------------------------------------------
 
+function routePart(value) {
+  return encodeURIComponent(value);
+}
+
+function itemCountLabel(count) {
+  return `${count} item${count === 1 ? '' : 's'}`;
+}
+
+function renderGroupCards(groups, toCardOptions, singularLabel, pluralLabel = `${singularLabel}s`, emptyReason = 'empty') {
+  totalCount = groups.length;
+  offset = groups.length;
+
+  const countEl = document.getElementById('grid-count');
+  if (countEl) countEl.textContent = `${groups.length.toLocaleString()} ${groups.length === 1 ? singularLabel : pluralLabel}`;
+
+  if (groups.length === 0) {
+    renderEmpty(grid, emptyReason);
+    return;
+  }
+
+  for (const group of groups) {
+    grid.appendChild(createGroupCard(toCardOptions(group)));
+  }
+}
+
+function folderSeriesHref(folderId, seriesKey) {
+  return `#/folder/${folderId}/series/${routePart(seriesKey)}`;
+}
+
+function folderVolumeHref(folderId, seriesKey, volumeKey) {
+  return `${folderSeriesHref(folderId, seriesKey)}/volume/${routePart(volumeKey)}`;
+}
+
+function folderChapterHref(folderId, seriesKey, volumeKey, chapterKey) {
+  return `${folderVolumeHref(folderId, seriesKey, volumeKey)}/chapter/${routePart(chapterKey)}`;
+}
+
+function browseSeriesHref(seriesKey) {
+  return `#/browse/series/${routePart(seriesKey)}`;
+}
+
+function browseVolumeHref(seriesKey, volumeKey) {
+  return `${browseSeriesHref(seriesKey)}/volume/${routePart(volumeKey)}`;
+}
+
+function browseChapterHref(seriesKey, volumeKey, chapterKey) {
+  return `${browseVolumeHref(seriesKey, volumeKey)}/chapter/${routePart(chapterKey)}`;
+}
+
+/**
+ * Returns true when a volume groups response should be bypassed — i.e. the
+ * series has only one volume and it is the synthetic "no volume" bucket.  In
+ * that case we skip straight to the comics level so the user never sees a
+ * single-card "Unnumbered Volume" dead-end.
+ */
+function isSingleUnnumberedVolume(groups) {
+  return groups.length === 1 && groups[0].key === GROUP_NONE_KEY;
+}
+
+function groupFilterOptions() {
+  return {
+    mediaType: currentOptions.mediaType || undefined,
+    search: currentOptions.search || undefined,
+    fileExt: currentOptions.fileExt || undefined,
+    readStatus: currentOptions.readStatus || undefined,
+    favorites: currentOptions.favorites ? true : undefined,
+  };
+}
+
+/**
+ * Render a series-level view that mixes named volume group cards with
+ * individual comic cards for unnumbered issues (volume_number = null).
+ *
+ * @param {number} epoch - render epoch for stale-render guard
+ * @param {Array}  namedGroups - volume groups whose key !== GROUP_NONE_KEY
+ * @param {Function} volumeHrefFn - (group) => href string for each volume card
+ * @param {Function|null} fetchUnnumbered - async () => { records } or null
+ */
+async function renderMixedSeries(epoch, namedGroups, volumeHrefFn, fetchUnnumbered) {
+  let unnumberedComics = [];
+  if (fetchUnnumbered) {
+    const res = await fetchUnnumbered();
+    if (epoch !== renderEpoch) return;
+    unnumberedComics = res.records ?? [];
+  }
+
+  const totalItems = namedGroups.length + unnumberedComics.length;
+  totalCount = totalItems;
+  offset = totalItems;
+
+  const countEl = document.getElementById('grid-count');
+  if (countEl) countEl.textContent = itemCountLabel(totalItems);
+
+  if (totalItems === 0) {
+    renderEmpty(grid, 'empty');
+    return;
+  }
+
+  for (const group of namedGroups) {
+    grid.appendChild(createGroupCard({
+      key: group.key,
+      title: group.label,
+      meta: group.chapterCount > 1 ? `${group.chapterCount} chapters` : itemCountLabel(group.count),
+      badgeLabel: 'Volume',
+      thumbnailUrl: group.thumbnailUrl,
+      href: volumeHrefFn(group),
+    }));
+  }
+  for (const record of unnumberedComics) {
+    grid.appendChild(createCard(record));
+    trackId(record.id);
+  }
+}
+
 async function loadNextPage(epoch = renderEpoch) {
   if (loading) return;
   loading = true;
@@ -270,7 +385,7 @@ async function loadNextPage(epoch = renderEpoch) {
       ...currentOptions,
       offset,
       limit: PAGE_SIZE,
-      sortBy: currentOptions.sortBy || 'dateAdded',
+      sortBy: currentOptions.sortBy || 'title',
       sortOrder:
         currentOptions.sortBy === 'dateAdded' || currentOptions.sortBy === 'lastRead'
           ? 'desc'
@@ -282,11 +397,7 @@ async function loadNextPage(epoch = renderEpoch) {
     // The "all" view (no library, no folder, no search/tag) hides comics
     // that already live inside a virtual folder, the same way the Electron
     // grid does. Folder cards then take their place — see folder load below.
-    const isAllView = !currentRoute || (currentRoute.type !== 'recent'
-      && currentRoute.type !== 'continue'
-      && currentRoute.type !== 'library'
-      && currentRoute.type !== 'folder'
-      && currentRoute.type !== 'tag');
+    const isAllView = !currentRoute || currentRoute.type === 'all';
 
     if (currentRoute.type === 'recent') {
       const records = await api.fetchRecentlyRead(PAGE_SIZE + offset, currentOptions.mediaType || undefined);
@@ -297,9 +408,139 @@ async function loadNextPage(epoch = renderEpoch) {
     } else if (currentRoute.type === 'library') {
       result = await api.fetchLibraryComics(currentRoute.id, opts);
     } else if (currentRoute.type === 'folder') {
-      result = await api.fetchFolderComics(currentRoute.id, opts);
+      const response = await api.fetchFolderSeries(currentRoute.id, groupFilterOptions());
+      if (epoch !== renderEpoch) return;
+      renderGroupCards(response.groups ?? [], (group) => ({
+        key: group.key,
+        title: group.name,
+        meta: itemCountLabel(group.count),
+        badgeLabel: 'Series',
+        thumbnailUrl: group.thumbnailUrl,
+        href: folderSeriesHref(currentRoute.id, group.key),
+      }), 'series', 'series');
+      return;
+    } else if (currentRoute.type === 'folderSeries') {
+      const response = await api.fetchFolderSeriesVolumes(currentRoute.id, currentRoute.seriesKey, groupFilterOptions());
+      if (epoch !== renderEpoch) return;
+      const fsGroups = response.groups ?? [];
+      if (isSingleUnnumberedVolume(fsGroups)) {
+        // Nothing but unnumbered issues — skip the volume level entirely.
+        result = await api.fetchFolderVolumeComics(currentRoute.id, currentRoute.seriesKey, GROUP_NONE_KEY, opts);
+      } else {
+        // Named volumes + any unnumbered issues rendered inline beneath them.
+        const namedVols = fsGroups.filter((g) => g.key !== GROUP_NONE_KEY);
+        const hasUnnumbered = fsGroups.some((g) => g.key === GROUP_NONE_KEY);
+        await renderMixedSeries(
+          epoch,
+          namedVols,
+          (group) => folderVolumeHref(currentRoute.id, currentRoute.seriesKey, group.key),
+          hasUnnumbered
+            ? () => api.fetchFolderVolumeComics(
+                currentRoute.id, currentRoute.seriesKey, GROUP_NONE_KEY, { ...opts, limit: 200 },
+              )
+            : null,
+        );
+        return;
+      }
+    } else if (currentRoute.type === 'folderVolume') {
+      const chapters = await api.fetchFolderVolumeChapters(
+        currentRoute.id,
+        currentRoute.seriesKey,
+        currentRoute.volumeKey,
+        groupFilterOptions(),
+      );
+      if (epoch !== renderEpoch) return;
+      const chapterGroups = chapters.groups ?? [];
+      const shouldShowChapters = chapterGroups.length > 1
+        || (chapterGroups.length === 1 && chapterGroups[0].key !== GROUP_NONE_KEY && chapterGroups[0].count > 1);
+      if (shouldShowChapters) {
+        renderGroupCards(chapterGroups, (group) => ({
+          key: group.key,
+          title: group.label,
+          meta: itemCountLabel(group.count),
+          badgeLabel: 'Chapter',
+          thumbnailUrl: group.thumbnailUrl,
+          href: group.singleComicId && group.count === 1
+            ? `#/read/${group.singleComicId}`
+            : folderChapterHref(currentRoute.id, currentRoute.seriesKey, currentRoute.volumeKey, group.key),
+        }), 'chapter');
+        return;
+      }
+      result = await api.fetchFolderVolumeComics(currentRoute.id, currentRoute.seriesKey, currentRoute.volumeKey, opts);
+    } else if (currentRoute.type === 'folderChapter') {
+      result = await api.fetchFolderChapterComics(
+        currentRoute.id,
+        currentRoute.seriesKey,
+        currentRoute.volumeKey,
+        currentRoute.chapterKey,
+        opts,
+      );
+    } else if (currentRoute.type === 'browseSeries') {
+      const response = await api.fetchBrowseSeriesVolumes(currentRoute.seriesKey, groupFilterOptions());
+      if (epoch !== renderEpoch) return;
+      const bsGroups = response.groups ?? [];
+      if (isSingleUnnumberedVolume(bsGroups)) {
+        result = await api.fetchBrowseVolumeComics(currentRoute.seriesKey, GROUP_NONE_KEY, opts);
+      } else {
+        const namedVols = bsGroups.filter((g) => g.key !== GROUP_NONE_KEY);
+        const hasUnnumbered = bsGroups.some((g) => g.key === GROUP_NONE_KEY);
+        await renderMixedSeries(
+          epoch,
+          namedVols,
+          (group) => browseVolumeHref(currentRoute.seriesKey, group.key),
+          hasUnnumbered
+            ? () => api.fetchBrowseVolumeComics(currentRoute.seriesKey, GROUP_NONE_KEY, { ...opts, limit: 200 })
+            : null,
+        );
+        return;
+      }
+    } else if (currentRoute.type === 'browseVolume') {
+      const bvChapters = await api.fetchBrowseVolumeChapters(
+        currentRoute.seriesKey, currentRoute.volumeKey, groupFilterOptions(),
+      );
+      if (epoch !== renderEpoch) return;
+      const bvChapterGroups = bvChapters.groups ?? [];
+      const bvShowChapters = bvChapterGroups.length > 1
+        || (bvChapterGroups.length === 1 && bvChapterGroups[0].key !== GROUP_NONE_KEY && bvChapterGroups[0].count > 1);
+      if (bvShowChapters) {
+        renderGroupCards(bvChapterGroups, (group) => ({
+          key: group.key,
+          title: group.label,
+          meta: itemCountLabel(group.count),
+          badgeLabel: 'Chapter',
+          thumbnailUrl: group.thumbnailUrl,
+          href: group.singleComicId && group.count === 1
+            ? `#/read/${group.singleComicId}`
+            : browseChapterHref(currentRoute.seriesKey, currentRoute.volumeKey, group.key),
+        }), 'chapter');
+        return;
+      }
+      result = await api.fetchBrowseVolumeComics(currentRoute.seriesKey, currentRoute.volumeKey, opts);
+    } else if (currentRoute.type === 'browseChapter') {
+      result = await api.fetchBrowseChapterComics(
+        currentRoute.seriesKey,
+        currentRoute.volumeKey,
+        currentRoute.chapterKey,
+        opts,
+      );
     } else if (currentRoute.type === 'tag') {
       result = await api.fetchComics({ ...opts, tag: currentRoute.tag });
+    } else if (currentOptions.search) {
+      // Search is active on the all-items view → show series groups so the
+      // user can drill down via the same series → volume → chapter hierarchy
+      // that the folder view uses.
+      const response = await api.fetchBrowseSeries(groupFilterOptions());
+      if (epoch !== renderEpoch) return;
+      const searchGroups = (response.groups ?? []).filter((g) => g.key !== GROUP_NONE_KEY);
+      renderGroupCards(searchGroups, (group) => ({
+        key: group.key,
+        title: group.name,
+        meta: itemCountLabel(group.count),
+        badgeLabel: 'Series',
+        thumbnailUrl: group.thumbnailUrl,
+        href: browseSeriesHref(group.key),
+      }), 'series', 'series');
+      return;
     } else {
       result = await api.fetchComics({ ...opts, excludeFoldered: true });
     }

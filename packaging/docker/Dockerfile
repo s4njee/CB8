@@ -1,12 +1,12 @@
 # Slim Node-based image for the CB8 web server.
 #
 # No Electron, no GPU stack, no display server: the standalone entrypoint
-# (src/main/standalone.ts → dist/standalone.mjs) opens the SQLite library
+# (src/main/standalone.ts -> dist/standalone.mjs) opens the SQLite library
 # and starts a Fastify server listening on $CB8_PORT (default 8008).
 #
 # Layout in the runtime image:
 #   /app/dist/standalone.mjs   esbuild bundle of all first-party code
-#   /app/node_modules/         only production deps (better-sqlite3, sharp, …)
+#   /app/node_modules/         runtime dependencies
 #   /app/web/                  static SPA assets (served by @fastify/static)
 # Library data (SQLite + image cache + uploads) lives at $CB8_DATA_DIR
 # (default /var/lib/cb8), which the k8s manifest mounts from a PVC.
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-COPY package.json pnpm-lock.yaml .npmrc* ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc* ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
@@ -32,18 +32,16 @@ COPY . .
 # resolved at runtime against /app/node_modules.
 RUN pnpm build:standalone
 
-# Re-resolve a production-only node_modules tree for the runtime image so we
-# don't ship dev deps (electron, vite, vitest, …).
-RUN pnpm prune --prod --config.confirmModulesPurge=false || pnpm install --prod --frozen-lockfile
-
 # --- runtime ----------------------------------------------------------------
 FROM node:22-bookworm-slim
 
 # sharp + better-sqlite3 native deps. Most are bundled into their .node files
-# already; libstdc++/glibc come from the slim base. tini for proper signal
-# handling.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates tini \
+# already; libstdc++/glibc come from the slim base. tini handles signals.
+# node-7z shells out to 7z for CBZ/CBR handling. Debian keeps the RAR
+# extraction codec in non-free, so enable that component before installing.
+RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates tini p7zip-full p7zip-rar unrar \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --create-home --home-dir /var/lib/cb8 --uid 10001 cb8
@@ -57,12 +55,13 @@ COPY --from=builder /src/package.json      /app/package.json
 
 # Drop the SPA into a sibling that resolveStaticRoot() will find. The
 # bundled lookup order is: ../../src/web (dev), ../web (packaged), then
-# process.resourcesPath/web. /app/dist/standalone.mjs → ../web hits /app/web.
+# process.resourcesPath/web. /app/dist/standalone.mjs -> ../web hits /app/web.
 
 ENV NODE_ENV=production \
     CB8_DATA_DIR=/var/lib/cb8 \
     CB8_PORT=8008 \
     CB8_HOST=0.0.0.0 \
+    CB8_SEVENZIP_PATH=/usr/bin/7z \
     UV_THREADPOOL_SIZE=64
 
 USER cb8

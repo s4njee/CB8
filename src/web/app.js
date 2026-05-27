@@ -22,6 +22,7 @@ import { populateSidebar } from './app/sidebar.js';
 import { openTabPanel, closeTabPanel, promptNewCollection, promptNewFolder } from './app/tabPanel.js';
 import { openSortSheet, closeSortSheet, updateSortLabel, applySort } from './app/sort.js';
 import { wireDrop } from './app/drop.js';
+import { applyStoredTheme } from './app/theme.js';
 import { onComicOpened, onOpenSettings } from './host/index.js';
 import { openModal } from './admin/modal.js';
 import { renderSettings } from './admin/settings.js';
@@ -161,6 +162,7 @@ function wireHostBridges() {
 }
 
 async function init() {
+  applyStoredTheme();
   wireControls();
   wireDrop();
   wireHostBridges();

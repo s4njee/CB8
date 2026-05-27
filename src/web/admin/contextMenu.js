@@ -103,7 +103,10 @@ export function openCardContextMenu(x, y, { targetId, targets, isSelected, grid,
   _closeContextMenu();
 
   const inLibrary = route?.type === 'library';
-  const inFolder = route?.type === 'folder';
+  const inFolder = route?.type === 'folder'
+    || route?.type === 'folderSeries'
+    || route?.type === 'folderVolume'
+    || route?.type === 'folderChapter';
 
   const menu = document.createElement('div');
   menu.className = 'context-menu';

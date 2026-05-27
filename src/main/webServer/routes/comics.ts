@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as ArchiveLoader from '../../archiveLoader';
-import { generateThumbnail } from '../../thumbnailGenerator';
+import { generateThumbnail, isPlaceholderThumbnail } from '../../thumbnailGenerator';
 import { getCachedOrResize, invalidateCacheForComic } from '../../imageResizer';
 import { searchMetadata } from '../../metadataScraper';
 import { sendJson, sendError, readBody, parseQueryOptions } from '../middleware';
@@ -10,6 +10,7 @@ import { withArchive, evictFromCache } from '../archiveCache';
 import { safeFetchBuffer, SafeFetchError } from '../safeFetch';
 import { requireAdmin, type RouteHandler } from '../context';
 import { FileScannerImpl } from '../../fileScanner';
+import { classifyIngestError, recordIngestError } from '../../ingestErrorLog';
 import type { QueryOptions } from '../../../shared/types';
 
 const PAGE_MIME: Record<string, string> = {
@@ -65,7 +66,26 @@ export const handle: RouteHandler = async (ctx) => {
     const id = parseInt(thumbMatch[1], 10);
     const record = db.getComic(id);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
-    const thumb = record.coverThumbnail;
+    let thumb = record.coverThumbnail;
+    if (record.mediaType === 'comic' && (!thumb || thumb.length === 0 || isPlaceholderThumbnail(thumb))) {
+      try {
+        await withArchive(id, record.filePath, async (handle) => {
+          const cover = await ArchiveLoader.getCoverImage(handle);
+          thumb = await generateThumbnail(cover);
+          db.updateCoverThumbnailByPath(record.filePath, thumb);
+          invalidateCacheForComic(id);
+        });
+      } catch (err) {
+        console.warn(`[webServer] Thumbnail recover failed comic=${id}:`, err);
+        const message = (err instanceof Error ? err.message : String(err)).trim();
+        recordIngestError({
+          path: record.filePath,
+          ext: path.extname(record.filePath).toLowerCase(),
+          errorClass: classifyIngestError(err, record.filePath),
+          message,
+        });
+      }
+    }
     if (!thumb || thumb.length === 0) {
       const placeholder = Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -75,10 +95,11 @@ export const handle: RouteHandler = async (ctx) => {
       res.end(placeholder);
       return true;
     }
+    const resolvedThumb = thumb;
     const widthParam = query.width ? parseInt(query.width, 10) : NaN;
     if (Number.isFinite(widthParam) && widthParam > 0) {
       try {
-        const out = await getCachedOrResize(id, -1, widthParam, async () => ({ buffer: thumb, ext: 'jpg' }));
+        const out = await getCachedOrResize(id, -1, widthParam, async () => ({ buffer: resolvedThumb, ext: 'jpg' }));
         res.writeHead(200, {
           'Content-Type': `image/${out.ext}`,
           'Cache-Control': 'public, max-age=3600',
@@ -93,9 +114,9 @@ export const handle: RouteHandler = async (ctx) => {
     res.writeHead(200, {
       'Content-Type': 'image/jpeg',
       'Cache-Control': 'public, max-age=3600',
-      'Content-Length': String(thumb.length),
+      'Content-Length': String(resolvedThumb.length),
     });
-    res.end(thumb);
+    res.end(resolvedThumb);
     return true;
   }
 
@@ -145,6 +166,13 @@ export const handle: RouteHandler = async (ctx) => {
       });
     } catch (err) {
       console.error(`[webServer] Page read error comic=${comicId} page=${pageIndex}:`, err);
+      const message = (err instanceof Error ? err.message : String(err)).trim();
+      recordIngestError({
+        path: record.filePath,
+        ext: path.extname(record.filePath).toLowerCase(),
+        errorClass: classifyIngestError(err, record.filePath),
+        message,
+      });
       if (!res.headersSent) sendError(res, 500, 'Failed to read page');
     }
     return true;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSeriesFromFilename, normalizeSeriesName } from './seriesParser';
+import { parseSeriesFromFilename, normalizeSeriesName, stripLeadingReleaseDate } from './seriesParser';
 
 describe('parseSeriesFromFilename', () => {
   describe('volume markers', () => {
@@ -134,6 +134,44 @@ describe('parseSeriesFromFilename', () => {
     });
   });
 
+  describe('leading release-date prefix', () => {
+    it('strips YYYYMM and captures bare trailing issue (X-Force scans)', () => {
+      expect(parseSeriesFromFilename('199305 X-Force v1 022.cbz')).toEqual({
+        seriesName: 'X-Force', volumeNumber: 1, chapterNumber: 22,
+      });
+      expect(parseSeriesFromFilename('199210 X-Force v1 015.cbz')).toEqual({
+        seriesName: 'X-Force', volumeNumber: 1, chapterNumber: 15,
+      });
+    });
+
+    it('strips YYYY-only prefix', () => {
+      expect(parseSeriesFromFilename('2010 Spider-Man v01.cbz')).toMatchObject({
+        seriesName: 'Spider-Man', volumeNumber: 1,
+      });
+    });
+
+    it('strips YYYYMMDD prefix', () => {
+      expect(parseSeriesFromFilename('19930512 X-Force v1 022.cbz')).toMatchObject({
+        seriesName: 'X-Force', volumeNumber: 1, chapterNumber: 22,
+      });
+    });
+  });
+
+  describe('bare issue after volume marker', () => {
+    it('captures "v1 022" as issue 22', () => {
+      expect(parseSeriesFromFilename('X-Force v1 022.cbz')).toEqual({
+        seriesName: 'X-Force', volumeNumber: 1, chapterNumber: 22,
+      });
+    });
+
+    it('does not mistake a trailing year for an issue', () => {
+      // 4 digits → too long for the issue heuristic; chapter stays null.
+      expect(parseSeriesFromFilename('Title v01 1998.cbz')).toMatchObject({
+        seriesName: 'Title', volumeNumber: 1, chapterNumber: null,
+      });
+    });
+  });
+
   describe('no-match fallback', () => {
     it('returns all-null for a bare title', () => {
       expect(parseSeriesFromFilename('Standalone Book.cbz')).toEqual({
@@ -163,5 +201,28 @@ describe('normalizeSeriesName', () => {
 
   it('trims leading and trailing whitespace', () => {
     expect(normalizeSeriesName('  Berserk  ')).toBe('Berserk');
+  });
+});
+
+describe('stripLeadingReleaseDate', () => {
+  it('strips a YYYYMM prefix', () => {
+    expect(stripLeadingReleaseDate('199305 X-Force v1 022')).toBe('X-Force v1 022');
+  });
+
+  it('strips a YYYY-only prefix', () => {
+    expect(stripLeadingReleaseDate('2010 Spider-Man v01')).toBe('Spider-Man v01');
+  });
+
+  it('strips a YYYYMMDD prefix', () => {
+    expect(stripLeadingReleaseDate('19930512 X-Force v1 022')).toBe('X-Force v1 022');
+  });
+
+  it('leaves numeric-named series alone', () => {
+    expect(stripLeadingReleaseDate('7SEEDS v04')).toBe('7SEEDS v04');
+    expect(stripLeadingReleaseDate('20th Century Boys v01')).toBe('20th Century Boys v01');
+  });
+
+  it('leaves a bare title alone', () => {
+    expect(stripLeadingReleaseDate('Standalone Book')).toBe('Standalone Book');
   });
 });

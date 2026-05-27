@@ -109,6 +109,64 @@ export function createFolderCard(folder) {
   return card;
 }
 
+export function createGroupCard(group) {
+  const card = document.createElement('div');
+  card.className = 'comic-card folder-card group-card';
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-label', `${group.badgeLabel}: ${group.title}`);
+  card.dataset.groupKey = group.key;
+
+  const thumbWrap = document.createElement('div');
+  thumbWrap.className = 'card-thumb-wrap';
+
+  const img = document.createElement('img');
+  img.className = 'card-thumb loading';
+  img.alt = group.title;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.src = group.thumbnailUrl || PLACEHOLDER_BOOK_SVG_DATA_URI;
+  img.addEventListener('load', () => img.classList.remove('loading'));
+  img.addEventListener('error', () => {
+    img.classList.remove('loading');
+    img.src = PLACEHOLDER_BOOK_SVG_DATA_URI;
+  });
+
+  const badge = document.createElement('div');
+  badge.className = 'card-badge folder';
+  badge.textContent = group.badgeLabel;
+
+  thumbWrap.appendChild(img);
+  thumbWrap.appendChild(badge);
+
+  const info = document.createElement('div');
+  info.className = 'card-info';
+
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = group.title;
+
+  const meta = document.createElement('div');
+  meta.className = 'card-meta';
+  meta.textContent = group.meta || '';
+
+  info.appendChild(title);
+  info.appendChild(meta);
+  card.appendChild(thumbWrap);
+  card.appendChild(info);
+
+  const open = () => { window.location.hash = group.href; };
+  card.addEventListener('click', (e) => {
+    e.preventDefault();
+    open();
+  });
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+
+  return card;
+}
+
 export function createCard(record) {
   const card = document.createElement('div');
   card.className = 'comic-card';

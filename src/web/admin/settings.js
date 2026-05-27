@@ -13,6 +13,7 @@
 import { closeModal } from './modal.js';
 import { showToast } from '../app/toast.js';
 import { getWebServerSettings, setWebServerSettings, isElectron } from '../host/index.js';
+import { THEMES, getTheme, setTheme } from '../app/theme.js';
 import * as api from '../api.js';
 
 async function renderInitialPasswordSection(container) {
@@ -43,6 +44,82 @@ async function renderInitialPasswordSection(container) {
     });
     container.prepend(section);
   } catch { /* no initial password */ }
+}
+
+function renderLibraryDangerSection(container) {
+  const section = document.createElement('div');
+  section.className = 'settings-danger';
+  section.innerHTML = `
+    <div class="settings-danger-label-row">Danger zone</div>
+    <p class="settings-danger-hint">
+      Removes every comic, book, folder, collection, tag, and reading-progress
+      record from the database. Users and sessions are kept. <strong>Files on
+      disk are not deleted.</strong>
+    </p>
+    <button type="button" class="admin-btn-danger" data-action="clear-library">Clear library</button>
+    <div class="admin-error" hidden style="margin-top:8px"></div>
+  `;
+  const button = section.querySelector('[data-action="clear-library"]');
+  const err = section.querySelector('.admin-error');
+  button.addEventListener('click', async () => {
+    err.hidden = true;
+    const confirmation = window.prompt(
+      'Type CLEAR to wipe the library catalog. Files on disk will not be deleted.',
+    );
+    if (confirmation !== 'CLEAR') return;
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = 'Clearing…';
+    try {
+      const { removed } = await api.clearLibrary();
+      const n = removed?.comics ?? 0;
+      window.dispatchEvent(new CustomEvent('cb8:library-changed'));
+      closeModal();
+      showToast(`Library cleared (${n.toLocaleString()} item${n === 1 ? '' : 's'} removed).`);
+    } catch (clearErr) {
+      err.textContent = clearErr.message || 'Failed to clear library.';
+      err.hidden = false;
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
+  container.appendChild(section);
+}
+
+function renderThemeSection(container) {
+  const section = document.createElement('div');
+  section.className = 'settings-theme';
+  const swatches = THEMES.map((t) => `
+    <button type="button"
+            class="settings-theme-swatch"
+            data-theme-id="${t.id}"
+            aria-label="${t.label}"
+            title="${t.label}">
+      <span class="settings-theme-dot" style="background:${t.color}"></span>
+      <span class="settings-theme-label">${t.label}</span>
+    </button>
+  `).join('');
+  section.innerHTML = `
+    <div class="settings-theme-label-row">Theme color</div>
+    <div class="settings-theme-row">${swatches}</div>
+  `;
+
+  function refresh() {
+    const current = getTheme();
+    section.querySelectorAll('.settings-theme-swatch').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.themeId === current);
+    });
+  }
+  refresh();
+
+  section.querySelectorAll('.settings-theme-swatch').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setTheme(btn.dataset.themeId);
+      refresh();
+    });
+  });
+
+  container.appendChild(section);
 }
 
 function renderWebServerForm(body, settings) {
@@ -112,6 +189,8 @@ export async function renderSettings(body) {
   body.innerHTML = `<h2 class="admin-modal-title">Settings</h2>`;
 
   await renderInitialPasswordSection(body);
+  renderThemeSection(body);
+  renderLibraryDangerSection(body);
 
   if (isElectron()) {
     let settings;

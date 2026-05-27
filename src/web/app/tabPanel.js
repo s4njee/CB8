@@ -42,7 +42,7 @@ export function updateSidebarActive(route) {
     document.getElementById('link-recent')?.classList.add('active');
   } else if (route.type === 'library') {
     document.querySelector(`a[href="#/library/${route.id}"]`)?.classList.add('active');
-  } else if (route.type === 'folder') {
+  } else if (route.type === 'folder' || route.type === 'folderSeries' || route.type === 'folderVolume' || route.type === 'folderChapter') {
     document.querySelector(`a[href="#/folder/${route.id}"]`)?.classList.add('active');
   } else if (route.type === 'tag') {
     document.querySelector(`a[href="#/tag/${encodeURIComponent(route.tag)}"]`)?.classList.add('active');

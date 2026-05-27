@@ -124,6 +124,30 @@ export const refreshBookMetadata = (comicId) =>
 export const fetchFolders = () => get('/api/folders');
 export const fetchFolderComics = (folderId, options = {}) =>
   get(`/api/folders/${folderId}/comics`, { query: options });
+export const fetchFolderSeries = (folderId, options = {}) =>
+  get(`/api/folders/${folderId}/series`, { query: options });
+export const fetchFolderSeriesVolumes = (folderId, seriesKey, options = {}) =>
+  get(`/api/folders/${folderId}/series/${encodeURIComponent(seriesKey)}/volumes`, { query: options });
+export const fetchFolderVolumeChapters = (folderId, seriesKey, volumeKey, options = {}) =>
+  get(`/api/folders/${folderId}/series/${encodeURIComponent(seriesKey)}/volumes/${encodeURIComponent(volumeKey)}/chapters`, { query: options });
+export const fetchFolderVolumeComics = (folderId, seriesKey, volumeKey, options = {}) =>
+  get(`/api/folders/${folderId}/series/${encodeURIComponent(seriesKey)}/volumes/${encodeURIComponent(volumeKey)}/comics`, { query: options });
+export const fetchFolderChapterComics = (folderId, seriesKey, volumeKey, chapterKey, options = {}) =>
+  get(`/api/folders/${folderId}/series/${encodeURIComponent(seriesKey)}/volumes/${encodeURIComponent(volumeKey)}/chapters/${encodeURIComponent(chapterKey)}/comics`, { query: options });
+// ---------------------------------------------------------------------------
+// Global browse/search hierarchy (mirrors folder hierarchy without folder scope)
+// ---------------------------------------------------------------------------
+export const fetchBrowseSeries = (options = {}) =>
+  get('/api/browse/series', { query: options });
+export const fetchBrowseSeriesVolumes = (seriesKey, options = {}) =>
+  get(`/api/browse/series/${encodeURIComponent(seriesKey)}/volumes`, { query: options });
+export const fetchBrowseVolumeChapters = (seriesKey, volumeKey, options = {}) =>
+  get(`/api/browse/series/${encodeURIComponent(seriesKey)}/volumes/${encodeURIComponent(volumeKey)}/chapters`, { query: options });
+export const fetchBrowseVolumeComics = (seriesKey, volumeKey, options = {}) =>
+  get(`/api/browse/series/${encodeURIComponent(seriesKey)}/volumes/${encodeURIComponent(volumeKey)}/comics`, { query: options });
+export const fetchBrowseChapterComics = (seriesKey, volumeKey, chapterKey, options = {}) =>
+  get(`/api/browse/series/${encodeURIComponent(seriesKey)}/volumes/${encodeURIComponent(volumeKey)}/chapters/${encodeURIComponent(chapterKey)}/comics`, { query: options });
+
 export const createFolder = (name, comicIds = []) =>
   post('/api/folders', { body: { name, comicIds } });
 export const renameFolder = (id, name) =>
@@ -322,6 +346,9 @@ export async function adminAddPath(targetPath, onProgress, opts = {}) {
   let buffer = '';
   let added = 0;
   const errors = [];
+  // Per-file failures (path + errorClass + message) and the server's
+  // categorized summary, populated from the final `failures-summary` event.
+  let failuresSummary = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -335,11 +362,24 @@ export async function adminAddPath(targetPath, onProgress, opts = {}) {
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.type === 'progress') onProgress?.(msg);
       else if (msg.type === 'error') errors.push(msg.message);
+      else if (msg.type === 'failures-summary') failuresSummary = msg;
       else if (msg.type === 'done') added = msg.added ?? 0;
     }
   }
-  return { added, errors };
+  return { added, errors, failuresSummary };
 }
+
+export const adminGetIngestErrors = (limit = 50) =>
+  get('/api/admin/ingest-errors', { query: { limit } });
+export const adminClearIngestErrors = () =>
+  del('/api/admin/ingest-errors', { parse: 'none' });
+
+/**
+ * Wipe the library catalog (comics, tags, folders, collections, per-user
+ * progress, dismissed paths). Preserves users, sessions, and app settings.
+ * Files on disk are NOT removed.
+ */
+export const clearLibrary = () => del('/api/admin/library');
 
 /**
  * Upload a single file with a raw-body POST. Uses XHR for upload-progress
