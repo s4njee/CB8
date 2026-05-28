@@ -27,12 +27,18 @@ export type IngestEvent =
   | { type: 'failures-summary'; total: number; byClass: Record<string, number>; sample: IngestFailure[] }
   | { type: 'done'; added: number };
 
+export interface IngestPathOptions {
+  folderId?: number;
+  useFolderNamesAsSeries?: boolean;
+}
+
 export async function ingestPathStreaming(
   db: LibraryDatabase,
   targetPath: string,
   emit: (event: IngestEvent) => void,
-  folderId?: number,
+  options: IngestPathOptions = {},
 ): Promise<void> {
+  const { folderId, useFolderNamesAsSeries = false } = options;
   let stat: fs.Stats;
   try {
     stat = fs.statSync(targetPath);
@@ -49,7 +55,7 @@ export async function ingestPathStreaming(
     try {
       const r = await scanner.scan(targetPath, (p) => {
         emit({ type: 'progress', phase: 'comics', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
-      }, undefined, folderId);
+      }, undefined, folderId, { useFolderNamesAsSeries });
       added += r.added;
       allFailures.push(...r.failures);
     } catch (err) {
@@ -58,7 +64,7 @@ export async function ingestPathStreaming(
     try {
       const r = await scanner.scanBooks(targetPath, (p) => {
         emit({ type: 'progress', phase: 'books', discovered: p.discovered, processed: p.processed, currentFile: path.basename(p.currentFile) });
-      }, undefined, folderId);
+      }, undefined, folderId, { useFolderNamesAsSeries });
       added += r.added;
       allFailures.push(...r.failures);
     } catch (err) {

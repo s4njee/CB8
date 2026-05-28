@@ -38,11 +38,11 @@ function getRelativeDir(scanRoot: string, filePath: string): string {
 // Concurrency for parallel directory scans. Each worker is primarily bound
 // by I/O (yauzl reads, sharp encodes) rather than CPU, but running too many
 // in parallel causes resource contention on low-spec NAS / container hosts.
-// Default is 8; override with CB8_INGEST_CONCURRENCY env var.
+// Default is 4; override with CB8_INGEST_CONCURRENCY env var.
 const MAX_INGEST_CONCURRENCY = (() => {
   const fromEnv = parseInt(process.env.CB8_INGEST_CONCURRENCY ?? '', 10);
   if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
-  return 8;
+  return 4;
 })();
 
 // Flush batched inserts every N prepared records (or at end of run).
@@ -52,6 +52,10 @@ export interface IngestResult {
   added: boolean;
   comicId?: number;
   error?: string;
+}
+
+export interface ScanDirectoryOptions {
+  useFolderNamesAsSeries?: boolean;
 }
 
 /**
@@ -230,7 +234,8 @@ export class IngestService {
    * Existing-on-disk hits (`comicExistsByPath`) and dismissed paths are
    * skipped silently. If `folderId` is set, existing items also get
    * attached to the folder so re-running an add-path with a folder is
-   * additive.
+   * additive. `scanRoot` is intentionally opt-in; when supplied, the first
+   * folder below that root is written as the series name.
    */
   async ingestParallel(
     filePaths: string[],
@@ -258,6 +263,7 @@ export class IngestService {
     const failures: IngestFailure[] = [];
     let added = 0;
     let lastEmit = 0;
+    let emittedCurrentFile = false;
 
     const emit = (force = false): void => {
       progress.discovered = queue.totalSeen();
@@ -283,6 +289,8 @@ export class IngestService {
         const filePath = await queue.shift();
         if (filePath === null) return; // queue closed and drained
         progress.currentFile = filePath;
+        emit(!emittedCurrentFile);
+        emittedCurrentFile = true;
         try {
           if (this.db.comicExistsByPath(filePath)) {
             const existing = this.db.getComicByPath(filePath);
@@ -328,6 +336,8 @@ export class IngestService {
       }
     };
 
+    emit(true);
+
     const workers: Promise<void>[] = [];
     for (let i = 0; i < MAX_INGEST_CONCURRENCY; i++) workers.push(worker());
     await Promise.all(workers);
@@ -348,6 +358,7 @@ export class IngestService {
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
     folderId?: number,
+    options: ScanDirectoryOptions = {},
   ): Promise<{ added: number; failures: IngestFailure[] }> {
     const extensions = mediaType === 'comic'
       ? new Set([...COMIC_EXTENSIONS].map(e => `.${e}`))
@@ -356,7 +367,8 @@ export class IngestService {
     const files: string[] = [];
     await this.discoverFiles(dirPath, files, extensions, signal);
     if (signal?.aborted) return { added: 0, failures: [] };
-    return this.ingestParallel(files, onProgress, signal, folderId, dirPath);
+    const metadataRoot = options.useFolderNamesAsSeries === true ? dirPath : undefined;
+    return this.ingestParallel(files, onProgress, signal, folderId, metadataRoot);
   }
 
   private async discoverFiles(dirPath: string, files: string[], extensions: Set<string>, signal?: AbortSignal): Promise<void> {

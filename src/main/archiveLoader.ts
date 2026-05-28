@@ -53,9 +53,14 @@ export interface ArchiveHandle {
 // Constants
 // ---------------------------------------------------------------------------
 
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 const PAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024; // 64 MiB per open archive
-const LIST_TIMEOUT_MS = 15_000;
-const EXTRACT_TIMEOUT_MS = 30_000;
+const LIST_TIMEOUT_MS = readPositiveIntEnv('CB8_ARCHIVE_LIST_TIMEOUT_MS', 60_000);
+const EXTRACT_TIMEOUT_MS = readPositiveIntEnv('CB8_ARCHIVE_EXTRACT_TIMEOUT_MS', 30_000);
 
 // ===========================================================================
 // yauzl backend (CBZ)
@@ -196,6 +201,11 @@ function spawnToBuffer(
       { timeout, maxBuffer, encoding: 'buffer' },
       (err: Error | null, stdout: Buffer, stderr: Buffer) => {
         if (err) {
+          const execErr = err as Error & { killed?: boolean; signal?: string | null };
+          if (execErr.killed) {
+            reject(new Error(`${file} ${args.join(' ')} timed out after ${timeout} ms`));
+            return;
+          }
           reject(new Error(stderr?.length ? stderr.toString().trim() : err.message));
           return;
         }

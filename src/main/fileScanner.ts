@@ -19,13 +19,19 @@ export interface FileScanner {
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
     folderId?: number,
+    options?: FileScanOptions,
   ): Promise<{ added: number; failures: IngestFailure[] }>;
   scanBooks(
     directoryPath: string,
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
     folderId?: number,
+    options?: FileScanOptions,
   ): Promise<{ added: number; failures: IngestFailure[] }>;
+}
+
+export interface FileScanOptions {
+  useFolderNamesAsSeries?: boolean;
 }
 
 export class FileScannerImpl implements FileScanner {
@@ -40,8 +46,9 @@ export class FileScannerImpl implements FileScanner {
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
     folderId?: number,
+    options: FileScanOptions = {},
   ): Promise<{ added: number; failures: IngestFailure[] }> {
-    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress, signal, folderId);
+    return this.scanFiles(directoryPath, COMIC_EXTENSIONS, 'comic', onProgress, signal, folderId, options);
   }
 
   async scanBooks(
@@ -49,8 +56,9 @@ export class FileScannerImpl implements FileScanner {
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
     folderId?: number,
+    options: FileScanOptions = {},
   ): Promise<{ added: number; failures: IngestFailure[] }> {
-    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress, signal, folderId);
+    return this.scanFiles(directoryPath, BOOK_EXTENSIONS, 'book', onProgress, signal, folderId, options);
   }
 
   private async scanFiles(
@@ -60,8 +68,11 @@ export class FileScannerImpl implements FileScanner {
     onProgress: (progress: ScanProgress) => void,
     signal?: AbortSignal,
     folderId?: number,
+    options: FileScanOptions = {},
   ): Promise<{ added: number; failures: IngestFailure[] }> {
-    return this.ingestService.scanDirectory(directoryPath, mediaType, onProgress, signal, folderId);
+    return this.ingestService.scanDirectory(directoryPath, mediaType, onProgress, signal, folderId, {
+      useFolderNamesAsSeries: options.useFolderNamesAsSeries === true,
+    });
   }
 
   private async discoverFiles(dirPath: string, files: string[], extensions: Set<string>): Promise<void> {

@@ -325,6 +325,8 @@ export const adminListDir = (partialPath) =>
  * Start a server-side scan. `onProgress` is called with each
  * `{type:'progress', phase, discovered, processed, currentFile}` event.
  * Resolves with `{ added, errors }` after the 'done' event.
+ * `opts.useFolderNamesAsSeries` lets scans opt into deriving series metadata
+ * from the first folder under the scanned path.
  *
  * Streamed NDJSON response — handled directly because `request()` assumes
  * a single JSON body.
@@ -332,6 +334,7 @@ export const adminListDir = (partialPath) =>
 export async function adminAddPath(targetPath, onProgress, opts = {}) {
   const body = { path: targetPath };
   if (opts.folderName) body.folderName = opts.folderName;
+  if (opts.useFolderNamesAsSeries) body.useFolderNamesAsSeries = true;
   const res = await fetch(`${API}/api/admin/add-path`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

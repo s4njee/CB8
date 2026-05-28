@@ -25,6 +25,11 @@ export function renderAddPath(body) {
       <input id="admin-folder" type="text" class="admin-input" list="admin-folder-options" placeholder="Leave empty to add to main library" autocomplete="off" spellcheck="false" />
       <datalist id="admin-folder-options"></datalist>
       <p class="admin-hint">Existing folders are suggested; a new name creates an empty folder. Foldered items don't appear in the main library view.</p>
+      <label class="admin-check">
+        <input id="admin-use-folder-series" type="checkbox" />
+        <span>Use folder names as series</span>
+      </label>
+      <p class="admin-hint">Leave off for omnibus folders where each archive should stand alone.</p>
       <div class="admin-error" hidden></div>
       <div class="admin-progress" hidden>
         <div class="admin-progress-phase"></div>
@@ -41,6 +46,7 @@ export function renderAddPath(body) {
   const form = body.querySelector('form');
   const input = body.querySelector('#admin-path');
   const folderInput = body.querySelector('#admin-folder');
+  const useFolderSeriesInput = body.querySelector('#admin-use-folder-series');
   const folderOptions = body.querySelector('#admin-folder-options');
   const err = body.querySelector('.admin-error');
   const submit = form.querySelector('button[type="submit"]');
@@ -178,6 +184,7 @@ export function renderAddPath(body) {
     submit.disabled = true;
     input.disabled = true;
     folderInput.disabled = true;
+    useFolderSeriesInput.disabled = true;
     submit.textContent = 'Scanning…';
     progress.hidden = false;
     progressPhase.textContent = 'Starting…';
@@ -187,6 +194,7 @@ export function renderAddPath(body) {
 
     try {
       const folderName = folderInput.value.trim();
+      const useFolderNamesAsSeries = useFolderSeriesInput.checked;
       const result = await api.adminAddPath(p, (msg) => {
         progressPhase.textContent = phaseLabel(msg.phase);
         const pct = msg.discovered > 0
@@ -197,7 +205,7 @@ export function renderAddPath(body) {
           ? `${msg.processed.toLocaleString()} / ${msg.discovered.toLocaleString()}`
           : 'Discovering files…';
         progressFile.textContent = msg.currentFile || '';
-      }, { folderName });
+      }, { folderName, useFolderNamesAsSeries });
       window.dispatchEvent(new CustomEvent('cb8:library-changed'));
 
       const failureTotal = result.failuresSummary?.total ?? 0;
@@ -221,6 +229,7 @@ export function renderAddPath(body) {
       submit.disabled = false;
       input.disabled = false;
       folderInput.disabled = false;
+      useFolderSeriesInput.disabled = false;
       submit.textContent = 'Add';
     }
   });
@@ -228,7 +237,7 @@ export function renderAddPath(body) {
 
 function classLabel(c) {
   switch (c) {
-    case 'wasm_oom':       return 'WASM out-of-memory (try CB8_INGEST_CONCURRENCY=8)';
+    case 'wasm_oom':       return 'WASM out-of-memory (try CB8_INGEST_CONCURRENCY=4)';
     case 'archive_open':   return 'Archive open failed (corrupt / encrypted / unsupported)';
     case 'fs_missing':     return 'File disappeared between scan and ingest';
     case 'fs_permission':  return 'Permission denied';
