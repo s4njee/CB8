@@ -1,11 +1,20 @@
 # CB8 shadcn Rewrite — Requirements
 
+> **Companion docs**: `design.md` (architecture), `tasks.md` (phased execution),
+> `context.md` (implementation gotchas, exact API shapes, invariants to preserve).
+> **Read `context.md` first** if you're about to write code — it covers the build
+> topology, sentinel constants, and quirks that aren't obvious from the source.
+
 ## Context
 
 CB8's web frontend is currently vanilla JavaScript (ES modules, direct DOM manipulation, a custom
 hash router, and a single hand-crafted `style.css`). This branch rewrites it in React + shadcn/ui
 + Tailwind CSS while keeping the backend (Fastify, better-sqlite3, sharp, etc.) completely
 unchanged. The `api.js` contract and the `/api/*` URL surface are preserved.
+
+**Important**: the existing pipeline does **not** compile the renderer — `src/web/` is served
+as raw source by the embedded Fastify server. The rewrite introduces a renderer build step
+and updates the Electron Forge + Docker copies to use its output. See `context.md` §1.
 
 ---
 

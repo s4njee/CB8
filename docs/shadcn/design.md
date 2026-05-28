@@ -1,5 +1,10 @@
 # CB8 shadcn Rewrite — Design
 
+> See `context.md` for: build-pipeline changes required, exact API response shapes,
+> hash-routing order, sentinel constants, per-user vs shared state, host bridge contract,
+> CSS variable → shadcn token mapping, and the "mixed series" decision tree the library
+> view depends on.
+
 ## Tech stack
 
 | Layer | Choice | Reason |
@@ -85,6 +90,12 @@ src/web/
 
 The backend entry point (`src/web/index.html`) changes minimally: swap
 `<script type="module" src="/app.js">` → `<script type="module" src="/main.tsx">`.
+
+**But note**: the renderer source can also live under `src/renderer/` (recommended in
+`context.md` §1) with its own `index.html` as the Vite entry. The Vite build then outputs
+to `dist/web/` and the Forge/Docker copy hooks pull from there. The choice between
+"build in place under `src/web/`" vs "move source to `src/renderer/` and build to
+`dist/web/`" is the implementer's call; the latter is cleaner.
 
 ---
 
@@ -287,8 +298,9 @@ CSS loads is kept as-is to prevent flash.
 ## Migration strategy
 
 This is a **parallel full rewrite** on the `shadcn` branch, not an incremental swap.
-The backend, Dockerfile, and standalone build pipeline are untouched. The frontend is replaced
-in-place: `src/web/` is rebuilt from scratch, targeting the same Vite entry point. Each phase
-is a self-contained unit that can be reviewed independently.
+The backend is untouched (zero changes to `src/main/**`). The Dockerfile and `forge.config.ts`
+get one-line updates to copy from the new renderer build output instead of `src/web/` raw
+source — see `context.md` §1.
 
-Phases are detailed in `tasks.md`.
+Each phase is a self-contained unit that can be reviewed independently. Phases are detailed
+in `tasks.md`.

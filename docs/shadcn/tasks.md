@@ -3,46 +3,96 @@
 Phases are ordered by dependency. Each task is atomic enough to commit separately.
 Check off tasks as completed.
 
+> **Before starting any task, skim `context.md`.** It catalogs the build-topology change
+> (the existing pipeline doesn't compile the renderer — see §1), exact API shapes (§4),
+> initial auto-login flow (§6), the `cb8:library-changed` event-bus → TanStack Query
+> invalidation map (§7), sentinel constants and localStorage keys not to break (§8), the
+> hash-route order (§9), why the reader is an overlay rather than a route (§10), and a
+> smoke-test checklist (§27).
+
 ---
 
 ## Phase 0 — Scaffolding
 
-- [ ] **0.1** Install React 18, `@vitejs/plugin-react`, TypeScript JSX support  
-  `pnpm add react react-dom; pnpm add -D @vitejs/plugin-react @types/react @types/react-dom`
+> **Read context.md §1 first.** The existing pipeline does not compile the renderer at
+> all. This phase introduces a renderer build target and rewires Forge + Docker copies.
 
-- [ ] **0.2** Install Tailwind CSS v3 + PostCSS  
-  `pnpm add -D tailwindcss postcss autoprefixer; pnpm dlx tailwindcss init -p`  
-  Configure `tailwind.config.js` with `content: ['src/web/**/*.{tsx,ts,js,html}']`.
+- [ ] **0.1** Decide source layout. Recommended: move new source to `src/renderer/`, keep
+  legacy `src/web/` until everything is ported (then delete in Phase 15).
+  Add `src/renderer/index.html` as the Vite entry, with `<div id="root"></div>` and the
+  inline `data-theme` script (see context.md §11).
 
-- [ ] **0.3** Install shadcn/ui CLI and initialise  
+- [ ] **0.2** Install React 18 + JSX tooling  
+  `pnpm add react react-dom`  
+  `pnpm add -D @vitejs/plugin-react @types/react @types/react-dom`
+
+- [ ] **0.3** Install Tailwind CSS v3 + PostCSS  
+  `pnpm add -D tailwindcss postcss autoprefixer`  
+  `pnpm dlx tailwindcss init -p`  
+  Configure `tailwind.config.js` with `content: ['src/renderer/**/*.{tsx,ts,html}']`.
+
+- [ ] **0.4** Install shadcn/ui CLI and initialise (run from `src/renderer/`)  
   `pnpm dlx shadcn-ui@latest init`  
-  Accept defaults; output to `src/web/components/ui/`; use CSS variables.
+  Accept defaults; output to `src/renderer/components/ui/`; use CSS variables.
 
-- [ ] **0.4** Install React Router v6  
-  `pnpm add react-router-dom`
+- [ ] **0.5** Install runtime libs  
+  `pnpm add react-router-dom @tanstack/react-query zustand clsx tailwind-merge`
 
-- [ ] **0.5** Install TanStack Query v5  
-  `pnpm add @tanstack/react-query`
+- [ ] **0.6** Create `vite.renderer.config.ts`  
+  ```ts
+  import { defineConfig } from 'vite';
+  import react from '@vitejs/plugin-react';
+  import path from 'node:path';
+  export default defineConfig({
+    root: 'src/renderer',
+    plugins: [react()],
+    build: { outDir: path.resolve(__dirname, 'dist/web'), emptyOutDir: true },
+    server: {
+      port: 5173,
+      proxy: { '/api': 'http://localhost:8008' },  // dev: proxy API to standalone server
+    },
+    resolve: { alias: { '@': path.resolve(__dirname, 'src/renderer') } },
+  });
+  ```
 
-- [ ] **0.6** Install Zustand  
-  `pnpm add zustand`
+- [ ] **0.7** Add npm scripts to `package.json`  
+  `"dev:renderer": "vite --config vite.renderer.config.ts"`  
+  `"build:renderer": "vite build --config vite.renderer.config.ts"`  
+  Update `build:standalone` to depend on `build:renderer` (or add a `prebuild:standalone`
+  alias) so the Dockerfile picks up the built SPA.
 
-- [ ] **0.7** Update `vite.renderer.config.ts` (or `vite.main.config.ts` renderer section)  
-  Add `@vitejs/plugin-react()` to plugins. Confirm JSX transform works.
+- [ ] **0.8** Update `src/main/webServer/server.ts:resolveStaticRoot()`  
+  Prepend `path.join(__dirname, '../../dist/web')` to the candidates list so the Electron
+  dev run and standalone server find the new bundle first. Keep the existing fallbacks
+  for the brief window where both `src/web/` and `dist/web/` coexist.
 
-- [ ] **0.8** Update `tsconfig.json`  
-  Add `"jsx": "react-jsx"`, `"include": ["src/web/**/*"]`.
+- [ ] **0.9** Update `forge.config.ts` `packageAfterCopy` hook  
+  Change `path.join(__dirname, 'src', 'web')` to `path.join(__dirname, 'dist', 'web')`.  
+  The destination (`appDir/web`) stays the same.
 
-- [ ] **0.9** Create `src/web/main.tsx` as the new Vite entry  
-  `ReactDOM.createRoot(document.getElementById('app')!).render(<App />)`  
-  Update `src/web/index.html` script tag to point to `/main.tsx`.
+- [ ] **0.10** Update `packaging/docker/Dockerfile`  
+  Add `RUN pnpm build:renderer` before `RUN pnpm build:standalone`.  
+  Change `COPY --from=builder /src/src/web/ /app/web/` → `COPY --from=builder /src/dist/web/ /app/web/`.
 
-- [ ] **0.10** Create `src/web/globals.css`  
-  Tailwind `@base` / `@components` / `@utilities` directives.  
-  Paste shadcn CSS variable block. Add six `data-theme` overrides (red/blue/green/purple/orange/teal).  
-  Keep reader-specific CSS (`.comic-reader`, `.comic-stage`, etc.) until reader is ported.
+- [ ] **0.11** Create `src/renderer/main.tsx`  
+  `ReactDOM.createRoot(document.getElementById('root')!).render(<App />)`
 
-- [ ] **0.11** Verify cold start: blank React app renders at `/` with Tailwind applied.
+- [ ] **0.12** Create `src/renderer/globals.css`  
+  Tailwind `@tailwind base` / `@tailwind components` / `@tailwind utilities` directives.  
+  Paste shadcn CSS variable block.  
+  Add six `data-theme` overrides (red/blue/green/purple/orange/teal) — see context.md §23
+  for the value-mapping table.  
+  Reader-specific CSS (`.comic-reader`, `.comic-stage`, `overscroll-behavior` rules) lives
+  here too — copy from `src/web/style.css` lines 816+ verbatim until Phase 7 ports them.
+
+- [ ] **0.13** Move `src/web/manifest.json` and `src/web/favicon.svg` into
+  `src/renderer/public/` so Vite copies them to the build output.
+
+- [ ] **0.14** Verify cold start  
+  - `pnpm dev:renderer` runs Vite, opens browser at `:5173`, blank React app renders with
+    Tailwind classes applied.  
+  - `pnpm build:renderer` produces `dist/web/index.html` + JS chunks.  
+  - `pnpm start:standalone` (after building both) serves the new SPA at `:8008`.
 
 ---
 
