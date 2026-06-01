@@ -14,7 +14,7 @@
 | Build | Vite (existing) | Already present; add `@vitejs/plugin-react` |
 | Styling | Tailwind CSS v3 + shadcn CSS vars | v4 not fully stable with shadcn at writing time |
 | Components | shadcn/ui (Radix UI primitives) | Accessible by default, copy-into-repo model |
-| Routing | React Router v6 `HashRouter` | Keeps `#/…` URLs identical; no server config needed |
+| Routing | React Router v7 `HashRouter` | Keeps `#/…` URLs identical; no server config needed |
 | Server state | TanStack Query v5 | Caching, loading/error states, auto-refetch |
 | Client state | Zustand | Tiny; no boilerplate; replaces the mutable `state.js` object |
 | API client | `api.ts` (port of `api.js`) | Zero logic change; add TypeScript types |
@@ -24,7 +24,7 @@
 ## File structure
 
 ```
-src/web/
+src/renderer/
   components/
     ui/                 ← shadcn CLI output (Button, Input, Sheet, Dialog, …)
     layout/
@@ -58,10 +58,12 @@ src/web/
       LoginPanel.tsx
   hooks/
     useInfiniteComics.ts   ← TanStack Query infinite scroll
-    useSidebar.ts          ← folders + libraries + tags
-    useReader.ts           ← reader prefs, progress, bookmarks
     useComicGestures.ts    ← pinch-zoom / pan / swipe (no React dep, pure refs)
-    useWakeLock.ts
+    useComicKeyboard.ts    ← keyboard navigation in comic reader
+    useDrop.ts             ← drag-and-drop file handling
+    usePullToRefresh.ts    ← pull-to-refresh on mobile
+    useToast.ts            ← sonner toast helper
+    useWakeLock.ts         ← screen wake lock
   lib/
     api.ts              ← port of api.js with TypeScript types
     queryClient.ts      ← TanStack QueryClient singleton
@@ -83,25 +85,20 @@ src/web/
     BrowseVolumePage.tsx
     BrowseChapterPage.tsx
     ReaderPage.tsx
-  app.tsx             ← QueryClientProvider + Router + AppShell + routes
+  App.tsx             ← QueryClientProvider + Router + AppShell bootstrap
   main.tsx            ← ReactDOM.createRoot entry
   globals.css         ← Tailwind directives + shadcn CSS vars + reader overrides
 ```
 
-The backend entry point (`src/web/index.html`) changes minimally: swap
-`<script type="module" src="/app.js">` → `<script type="module" src="/main.tsx">`.
-
-**But note**: the renderer source can also live under `src/renderer/` (recommended in
-`context.md` §1) with its own `index.html` as the Vite entry. The Vite build then outputs
-to `dist/web/` and the Forge/Docker copy hooks pull from there. The choice between
-"build in place under `src/web/`" vs "move source to `src/renderer/` and build to
-`dist/web/`" is the implementer's call; the latter is cleaner.
+The renderer source lives under `src/renderer/` with its own `index.html` as the Vite entry.
+The Vite build outputs to `dist/web/`, and Forge/Docker copy that output to the packaged
+`web/` directory. Legacy `src/web/` files are not the target for new renderer work.
 
 ---
 
 ## Routing
 
-`HashRouter` from React Router v6. All existing hash routes are preserved as `<Route>` entries
+`HashRouter` from React Router v7. All existing hash routes are preserved as `<Route>` entries
 so deep links and bookmarks continue to work.
 
 ```tsx
@@ -122,8 +119,8 @@ so deep links and bookmarks continue to work.
   <Route path="/tag/:tag"                                     element={<TagPage />} />
   <Route path="/read/:id"                                     element={<ReaderPage />} />
   <Route path="/read/:id/:page"                               element={<ReaderPage />} />
-  <Route path="/reset-password"                               element={<AllPage modal="reset-password" />} />
-  <Route path="/verified"                                     element={<AllPage toast="verified" />} />
+  <Route path="/reset-password"                               element={<ResetPasswordPage />} />
+  <Route path="/verified"                                     element={<VerifiedPage />} />
   <Route path="*"                                             element={<AllPage />} />
 </Routes>
 ```
@@ -162,14 +159,17 @@ interface UIState {
 ```ts
 interface ReaderState {
   prefs: ReaderPrefs;       // zoom, direction, spread, transition
+  epubPrefs: EpubPrefs;     // fontSize, fontFamily, themeMode, googleFont, spread
   currentPage: number;
-  pdfDoc: PDFDocumentProxy | null;
-  pan: { scale: number; tx: number; ty: number };
   // actions
   setPrefs(p: Partial<ReaderPrefs>): void;
-  gotoPage(n: number): void;
+  setEpubPrefs(p: Partial<EpubPrefs>): void;
+  setCurrentPage(n: number): void;
+  resetReader(): void;
 }
 ```
+Note: `pan` (scale/tx/ty) and `pdfDoc` are **not** in the store. Pan state lives as a
+`useRef` inside `ComicReader` for performance; pdf.js document state is component-local.
 
 ### TanStack Query
 Every API call becomes a query or mutation:

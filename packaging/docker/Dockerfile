@@ -50,7 +50,7 @@ WORKDIR /app
 
 COPY --from=builder /src/dist/             /app/dist/
 COPY --from=builder /src/node_modules/     /app/node_modules/
-COPY --from=builder /src/src/web/          /app/web/
+COPY --from=builder /src/dist/web/         /app/web/
 COPY --from=builder /src/package.json      /app/package.json
 
 # Drop the SPA into a sibling that resolveStaticRoot() will find. The

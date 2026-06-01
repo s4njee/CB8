@@ -3,6 +3,7 @@ dist/
 .vite/
 out/
 *.js.map
+*.tar.gz
 
 # OS / editor / tooling cruft.
 .DS_Store

@@ -89,17 +89,22 @@ and updates the Electron Forge + Docker copies to use its output. See `context.m
 
 - **React 18** with concurrent features; JSX compiled by Vite's `@vitejs/plugin-react`.
 - **TypeScript** throughout the frontend (`.tsx` / `.ts`). Extend the existing `tsconfig.json`.
-- **Tailwind CSS v4** (or v3 if v4 shadcn support is incomplete at time of implementation).
-- **shadcn/ui** CLI-generated components copied into `src/web/components/ui/`.
-- **React Router v6** with `HashRouter` so existing hash URLs continue to work.
+- **Tailwind CSS v3** with shadcn CSS variables. Do not upgrade to v4 during the gap-fill pass.
+- **shadcn/ui** CLI-generated components copied into `src/renderer/components/ui/`.
+- **React Router v7** with `HashRouter` so existing hash URLs continue to work.
 - **TanStack Query v5** for server state (caching, loading/error states, refetch on focus).
 - **Zustand** for client-side UI state (mediaType, sortBy, search, tabPanel, etc.).
 - `api.js` ported to `api.ts` with proper TypeScript types; zero change to the fetch logic.
-- No new backend dependencies; no changes to any `src/main/` file.
+- Preserve the backend API contract. Backend changes should be limited to static renderer serving
+  and packaging/build wiring unless a documented API mismatch is found.
 - Vite config additions are isolated to `vite.renderer.config.ts` (new file) or inline in the
   existing config; do not break `build:standalone`.
-- Electron host bridge (`src/web/host/index.js`) kept as-is; consumed via typed wrapper.
+- Electron host bridge consumed via a typed wrapper (`src/renderer/lib/hostBridge.ts`) and the
+  existing preload channel names.
 - All existing `/api/*` endpoints consumed identically.
+- Fresh installs/containers must preserve initial admin auto-login: if `/api/auth/session`
+  reports unauthenticated and `/api/settings/initial-credentials` returns `initial_password`,
+  the renderer must log in with it before treating the user as guest.
 
 ---
 

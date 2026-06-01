@@ -203,7 +203,7 @@ Server sends newline-delimited JSON events on a single long-lived response:
 type IngestEvent =
   | { type: 'progress'; phase: 'discover'|'process'; discovered: number; processed: number; currentFile: string }
   | { type: 'error'; message: string }
-  | { type: 'failures-summary'; total: number; categories: Record<string, number>; samples: Array<{path:string, errorClass:string, message:string}> }
+  | { type: 'failures-summary'; total: number; byClass: Record<string, number>; sample: Array<{path:string, errorClass:string, message:string}> }
   | { type: 'done'; added: number };
 ```
 
@@ -327,7 +327,7 @@ first would win. The order:
 11. `/read/:id(/:page)?`
 12. fallthrough → `/`
 
-React Router v6 sorts routes by specificity automatically, so order of `<Route>` declarations
+React Router v7 sorts routes by specificity automatically, so order of `<Route>` declarations
 doesn't matter — but the URL patterns themselves must mirror the above exactly. Keys are URL-
 encoded (e.g. `__none__` is literal, but a series name like `Batman & Robin` becomes
 `Batman%20%26%20Robin`).
@@ -379,29 +379,19 @@ serve them from somewhere.
 
 ---
 
-## 12. Reader libraries loaded from CDN
+## 12. Reader libraries — bundled via npm
 
-The PDF and EPUB readers **do not bundle pdf.js / epub.js / jszip**. They fetch them at
-runtime from CDN URLs:
+The PDF and EPUB readers bundle their dependencies via npm rather than loading from CDN.
 
-- `pdf.js`: `https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js`
-- `pdf.worker.js`: `https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js`
-- `jszip`: `https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js`
-- `epub.js`: `https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js`
+- `pdfjs-dist` — already a `dependencies` entry in `package.json`; imported directly in
+  `PdfReader.tsx`.
+- `epubjs` — also a `dependencies` entry; imported directly in `EpubReader.tsx`.
 
-Loaded via the `loadScript()` helper (`src/web/views/reader/utils.js:43`). Why CDN: the
-bundle is currently just raw `src/web/` files served as-is; there's no bundler, so npm
-packages are unreachable.
-
-**Decision needed for the rewrite**: keep CDN, or bundle now that Vite is in the picture?
-- **CDN**: zero bundle bloat for users who never open a PDF/EPUB. Offline-hostile and
-  brittle if the CDN goes down.
-- **Bundle**: works offline, slower initial load. `pdfjs-dist` is already a runtime dep
-  (see `package.json`). epub.js is not currently a dep.
-
-Recommendation: bundle via Vite dynamic `import()` so the chunk is split out. The current
-runtime cost (CDN fetch on first PDF/EPUB open) becomes a bundled lazy chunk. Same UX,
-works offline, no new deps for PDF (already in package.json), one new dep for EPUB.
+**Decision**: bundled (the CDN option was ruled out). Works offline, no CDN single-point-
+of-failure. `pdfjs-dist` was already in `package.json`; `epubjs` was added as a dep during
+the rewrite. Both are imported at the top of their respective reader components — no dynamic
+`import()` code-splitting is currently applied, meaning they land in the main renderer chunk.
+Split into lazy chunks if bundle size becomes a concern.
 
 ---
 
