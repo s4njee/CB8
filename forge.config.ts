@@ -53,7 +53,15 @@ const nativeExternals = [
   'file-uri-to-path',
   'prebuild-install',
   'node-abi',
-  'node-unrar-js',
+  'node-7z',
+  'debug',
+  'lodash.defaultsdeep',
+  'lodash.defaultto',
+  'lodash.flattendeep',
+  'lodash.isempty',
+  'lodash.negate',
+  'normalize-path',
+  'ms',
   '@jsquash/jxl',
   'pdfjs-dist',
   'semver',
@@ -78,7 +86,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: {
       unpack:
-        '**/node_modules/{better-sqlite3,node-unrar-js,pdfjs-dist,sharp,@jsquash/jxl,@img/{colour,sharp-*,sharp-libvips-*},@napi-rs/canvas,@napi-rs/canvas-*}/**',
+        '**/node_modules/{better-sqlite3,pdfjs-dist,sharp,@jsquash/jxl,@img/{colour,sharp-*,sharp-libvips-*},@napi-rs/canvas,@napi-rs/canvas-*}/**',
     },
     icon: 'book',
     executableName: 'cb8',
@@ -88,7 +96,7 @@ const config: ForgeConfig = {
     packageAfterCopy: async (_config, appDir) => {
       copyModules(appDir);
       // Copy web SPA assets into packaged app resources
-      const webSrc = path.join(__dirname, 'src', 'web');
+      const webSrc = path.join(__dirname, 'dist', 'web');
       const webDest = path.join(appDir, 'web');
       fs.mkdirSync(webDest, { recursive: true });
       fs.cpSync(webSrc, webDest, { recursive: true });

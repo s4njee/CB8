@@ -1,8 +1,41 @@
 import type Database from 'better-sqlite3';
 import type { MediaRecord, QueryOptions, QueryResult } from '../../shared/types';
-import type { SqlParam, ComicRow, ComicListRow, CountRow, TagNameRow } from './types';
+import type { SqlParam, ComicRow, ComicListRow, CountRow } from './types';
 import { SORT_COLUMN_MAP } from './types';
 import { addTag } from './tags';
+
+type ComicFilterOptions = QueryOptions & {
+  libraryId?: number;
+  folderId?: number;
+};
+
+type UserComicQueryOptions = ComicFilterOptions & {
+  favorites?: boolean;
+};
+
+type UserComicListRow = ComicListRow & {
+  up_last_page: number | null;
+  up_last_location: string | null;
+  up_last_read: string | null;
+  up_completed: number;
+  is_fav: number;
+};
+
+type ComicTagRow = {
+  comic_id: number;
+  name: string;
+};
+
+const DEFAULT_QUERY_LIMIT = 50;
+const DEFAULT_QUERY_OFFSET = 0;
+const TAG_LOOKUP_CHUNK_SIZE = 500;
+
+const COMIC_LIST_SELECT = `
+  c.id, c.file_path, c.title, c.page_count, c.file_size,
+  CASE WHEN c.cover_thumbnail IS NULL THEN 0 ELSE 1 END as has_thumbnail,
+  COALESCE(length(c.cover_thumbnail), 0) as thumbnail_version,
+  c.date_added, c.last_page, c.last_location, c.last_read, c.media_type
+`;
 
 /**
  * Build a safe FTS5 MATCH expression from free-form user input.
@@ -29,11 +62,138 @@ function buildFtsQuery(raw: string): string | null {
   return tokens.map((t) => `${t}*`).join(' ');
 }
 
-export function rowToRecord(db: Database.Database, row: ComicRow): MediaRecord {
-  const tags = db.prepare(
-    `SELECT t.name FROM tags t JOIN comic_tags ct ON t.id = ct.tag_id WHERE ct.comic_id = ?`
-  ).all(row.id) as TagNameRow[];
+function toMediaType(value: string): MediaRecord['mediaType'] {
+  return value === 'book' ? 'book' : 'comic';
+}
 
+function buildWhere(conditions: string[]): string {
+  return conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+}
+
+function resolvePaging(options: QueryOptions): { limit: number; offset: number } {
+  return {
+    limit: options.limit ?? DEFAULT_QUERY_LIMIT,
+    offset: options.offset ?? DEFAULT_QUERY_OFFSET,
+  };
+}
+
+function resolveSort(options: QueryOptions, userScoped: boolean): { sortCol: string; sortDir: 'ASC' | 'DESC' } {
+  const sortCol = options.sortBy === 'lastRead' && userScoped
+    ? "COALESCE(up.last_read, '')"
+    : (SORT_COLUMN_MAP[options.sortBy ?? 'title'] ?? SORT_COLUMN_MAP.title);
+  const sortDir = options.sortOrder === 'desc' ? 'DESC' : 'ASC';
+  return { sortCol, sortDir };
+}
+
+function addSharedReadStatusFilter(conditions: string[], readStatus: QueryOptions['readStatus']): void {
+  if (readStatus === 'unread') {
+    conditions.push('c.last_page IS NULL AND c.last_read IS NULL');
+  } else if (readStatus === 'in-progress') {
+    conditions.push('(c.last_page IS NOT NULL OR c.last_read IS NOT NULL) AND (c.last_page IS NULL OR c.last_page < c.page_count - 1)');
+  } else if (readStatus === 'completed') {
+    conditions.push('c.last_page = c.page_count - 1');
+  }
+}
+
+function addUserReadStatusFilter(conditions: string[], readStatus: QueryOptions['readStatus']): void {
+  if (readStatus === 'unread') {
+    conditions.push('(up.comic_id IS NULL OR (COALESCE(up.last_page, 0) = 0 AND up.completed = 0))');
+  } else if (readStatus === 'in-progress') {
+    conditions.push('up.comic_id IS NOT NULL AND up.last_page IS NOT NULL AND up.last_page > 0 AND up.completed = 0');
+  } else if (readStatus === 'completed') {
+    conditions.push('up.completed = 1');
+  }
+}
+
+function buildComicFilters(
+  options: ComicFilterOptions,
+  opts: { includeSharedReadStatus: boolean },
+): { conditions: string[]; params: SqlParam[] } {
+  const conditions: string[] = [];
+  const params: SqlParam[] = [];
+
+  if (options.libraryId != null) {
+    conditions.push('c.id IN (SELECT comic_id FROM library_comics WHERE library_id = ?)');
+    params.push(options.libraryId);
+  }
+
+  if (options.folderId != null) {
+    conditions.push('c.id IN (SELECT comic_id FROM folder_comics WHERE folder_id = ?)');
+    params.push(options.folderId);
+  }
+
+  if (options.mediaType) {
+    conditions.push('c.media_type = ?');
+    params.push(options.mediaType);
+  }
+
+  if (options.search) {
+    const fts = buildFtsQuery(options.search);
+    if (fts) {
+      conditions.push('c.id IN (SELECT rowid FROM comics_fts WHERE comics_fts MATCH ?)');
+      params.push(fts);
+    } else {
+      // User typed only punctuation / whitespace: match nothing rather than
+      // silently dropping the filter.
+      conditions.push('1 = 0');
+    }
+  }
+
+  if (options.tag) {
+    conditions.push('c.id IN (SELECT ct.comic_id FROM comic_tags ct JOIN tags t ON ct.tag_id = t.id WHERE t.name = ?)');
+    params.push(options.tag);
+  }
+
+  if (options.excludeFoldered) {
+    conditions.push('c.id NOT IN (SELECT comic_id FROM folder_comics)');
+  }
+
+  if (options.fileExt) {
+    conditions.push('LOWER(c.file_path) LIKE ?');
+    params.push('%.' + options.fileExt.toLowerCase());
+  }
+
+  if (opts.includeSharedReadStatus) {
+    addSharedReadStatusFilter(conditions, options.readStatus);
+  }
+
+  return { conditions, params };
+}
+
+function getTagsByComicId(db: Database.Database, comicIds: number[]): Map<number, string[]> {
+  const ids = Array.from(new Set(comicIds));
+  if (!ids.length) return new Map();
+
+  const tagsById = new Map<number, string[]>();
+  for (let i = 0; i < ids.length; i += TAG_LOOKUP_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + TAG_LOOKUP_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT ct.comic_id, t.name
+       FROM comic_tags ct
+       JOIN tags t ON t.id = ct.tag_id
+       WHERE ct.comic_id IN (${placeholders})
+       ORDER BY t.name COLLATE NOCASE`,
+    ).all(...chunk) as ComicTagRow[];
+
+    for (const row of rows) {
+      const tags = tagsById.get(row.comic_id);
+      if (tags) tags.push(row.name);
+      else tagsById.set(row.comic_id, [row.name]);
+    }
+  }
+  return tagsById;
+}
+
+function withBatchedTags<T extends MediaRecord>(db: Database.Database, records: T[]): T[] {
+  const tagsById = getTagsByComicId(db, records.map((record) => record.id));
+  for (const record of records) {
+    record.tags = tagsById.get(record.id) ?? [];
+  }
+  return records;
+}
+
+function rowToRecordBase(row: ComicRow, tags: string[]): MediaRecord {
   return {
     id: row.id,
     filePath: row.file_path,
@@ -42,12 +202,21 @@ export function rowToRecord(db: Database.Database, row: ComicRow): MediaRecord {
     fileSize: row.file_size,
     coverThumbnail: row.cover_thumbnail,
     dateAdded: row.date_added,
-    tags: tags.map((t) => t.name),
+    tags,
     lastPage: row.last_page ?? null,
     lastLocation: row.last_location ?? null,
     lastRead: row.last_read ?? null,
-    mediaType: (row.media_type === 'book' ? 'book' : 'comic') as 'comic' | 'book',
+    mediaType: toMediaType(row.media_type),
   };
+}
+
+export function rowToRecord(db: Database.Database, row: ComicRow): MediaRecord {
+  const tags = getTagsByComicId(db, [row.id]).get(row.id) ?? [];
+  return rowToRecordBase(row, tags);
+}
+
+export function rowsToRecords(db: Database.Database, rows: ComicRow[]): MediaRecord[] {
+  return withBatchedTags(db, rows.map((row) => rowToRecordBase(row, [])));
 }
 
 export function rowToListRecord(row: ComicListRow): MediaRecord {
@@ -65,7 +234,7 @@ export function rowToListRecord(row: ComicListRow): MediaRecord {
     lastPage: row.last_page ?? null,
     lastLocation: row.last_location ?? null,
     lastRead: row.last_read ?? null,
-    mediaType: (row.media_type === 'book' ? 'book' : 'comic') as 'comic' | 'book',
+    mediaType: toMediaType(row.media_type),
   };
 }
 
@@ -290,7 +459,7 @@ export function getRecentlyRead(
          FROM comics WHERE last_read IS NOT NULL
          ORDER BY last_read DESC LIMIT ?`
       ).all(limit) as ComicRow[];
-  return rows.map((r) => rowToRecord(db, r));
+  return rowsToRecords(db, rows);
 }
 
 export function getContinueReading(
@@ -309,7 +478,7 @@ export function getContinueReading(
          FROM comics WHERE last_read IS NOT NULL AND completed = 0
          ORDER BY last_read DESC LIMIT ?`
       ).all(limit) as ComicRow[];
-  return rows.map((r) => rowToRecord(db, r));
+  return rowsToRecords(db, rows);
 }
 
 export function setComicSeries(
@@ -341,7 +510,7 @@ export function getSeriesComics(db: Database.Database, name: string): MediaRecor
      WHERE c.series_name = ? COLLATE NOCASE
      ORDER BY COALESCE(c.volume_number, 999999), COALESCE(c.chapter_number, 999999), c.title COLLATE NOCASE`
   ).all(name) as ComicRow[];
-  return rows.map((r) => rowToRecord(db, r));
+  return rowsToRecords(db, rows);
 }
 
 export function updateComicMetadata(
@@ -387,43 +556,9 @@ export function getComicMetadata(
 export function queryComicsForUser(
   db: Database.Database,
   userId: number | null,
-  options: QueryOptions & { readStatus?: 'unread' | 'in-progress' | 'completed'; favorites?: boolean; libraryId?: number; folderId?: number },
+  options: UserComicQueryOptions,
 ): { records: (MediaRecord & { favorited?: boolean })[]; totalCount: number } {
-  const conditions: string[] = [];
-  const params: SqlParam[] = [];
-
-  if (options.libraryId != null) {
-    conditions.push('c.id IN (SELECT comic_id FROM library_comics WHERE library_id = ?)');
-    params.push(options.libraryId);
-  }
-  if (options.folderId != null) {
-    conditions.push('c.id IN (SELECT comic_id FROM folder_comics WHERE folder_id = ?)');
-    params.push(options.folderId);
-  }
-  if (options.mediaType) {
-    conditions.push('c.media_type = ?');
-    params.push(options.mediaType);
-  }
-  if (options.search) {
-    const fts = buildFtsQuery(options.search);
-    if (fts) {
-      conditions.push('c.id IN (SELECT rowid FROM comics_fts WHERE comics_fts MATCH ?)');
-      params.push(fts);
-    } else {
-      conditions.push('1 = 0');
-    }
-  }
-  if (options.tag) {
-    conditions.push('c.id IN (SELECT ct.comic_id FROM comic_tags ct JOIN tags t ON ct.tag_id = t.id WHERE t.name = ?)');
-    params.push(options.tag);
-  }
-  if (options.excludeFoldered) {
-    conditions.push('c.id NOT IN (SELECT comic_id FROM folder_comics)');
-  }
-  if (options.fileExt) {
-    conditions.push('LOWER(c.file_path) LIKE ?');
-    params.push('%.' + options.fileExt.toLowerCase());
-  }
+  const { conditions, params } = buildComicFilters(options, { includeSharedReadStatus: false });
 
   let progressJoin = '';
   const progressSelect = userId != null
@@ -441,26 +576,16 @@ export function queryComicsForUser(
   }
 
   if (options.readStatus && userId != null) {
-    if (options.readStatus === 'unread') {
-      conditions.push('(up.comic_id IS NULL OR (COALESCE(up.last_page, 0) = 0 AND up.completed = 0))');
-    } else if (options.readStatus === 'in-progress') {
-      conditions.push('up.comic_id IS NOT NULL AND up.last_page IS NOT NULL AND up.last_page > 0 AND up.completed = 0');
-    } else if (options.readStatus === 'completed') {
-      conditions.push('up.completed = 1');
-    }
+    addUserReadStatusFilter(conditions, options.readStatus);
   }
 
   if (options.favorites && userId != null) {
     conditions.push('uf.comic_id IS NOT NULL');
   }
 
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const sortCol = options.sortBy === 'lastRead' && userId != null
-    ? "COALESCE(up.last_read, '')"
-    : (SORT_COLUMN_MAP[options.sortBy ?? 'title'] ?? SORT_COLUMN_MAP.title);
-  const sortDir = options.sortOrder === 'desc' ? 'DESC' : 'ASC';
-  const limit = options.limit ?? 50;
-  const offset = options.offset ?? 0;
+  const where = buildWhere(conditions);
+  const { sortCol, sortDir } = resolveSort(options, userId != null);
+  const { limit, offset } = resolvePaging(options);
 
   const joinParams: SqlParam[] = [];
   if (userId != null) joinParams.push(userId);
@@ -470,23 +595,24 @@ export function queryComicsForUser(
   const countSql = `SELECT COUNT(*) as cnt FROM comics c ${progressJoin} ${favJoin} ${where}`;
   const totalCount = (db.prepare(countSql).get(...allParams) as CountRow).cnt;
 
-  const rowsSql = `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added,
-                          c.last_page, c.last_location, c.last_read, c.media_type,
+  const rowsSql = `SELECT ${COMIC_LIST_SELECT},
                           ${progressSelect}, ${favSelect}
                    FROM comics c ${progressJoin} ${favJoin}
                    ${where}
                    ORDER BY ${sortCol} ${sortDir}
                    LIMIT ? OFFSET ?`;
-  const rows = db.prepare(rowsSql).all(...allParams, limit, offset) as (ComicRow & { up_last_page: number | null; up_last_location: string | null; up_last_read: string | null; up_completed: number; is_fav: number })[];
+  const rows = db.prepare(rowsSql).all(...allParams, limit, offset) as UserComicListRow[];
 
-  const records = rows.map((r) => {
-    const base = rowToRecord(db, r);
-    if (userId != null) {
-      base.lastPage = r.up_last_page;
-      base.lastLocation = r.up_last_location;
-      base.lastRead = r.up_last_read;
-    }
-    return { ...base, favorited: !!r.is_fav };
+  const baseRecords = withBatchedTags(db, rows.map(rowToListRecord));
+  const records = baseRecords.map((base, index) => {
+    const row = rows[index];
+    return {
+      ...base,
+      lastPage: userId != null ? row.up_last_page : base.lastPage,
+      lastLocation: userId != null ? row.up_last_location : base.lastLocation,
+      lastRead: userId != null ? row.up_last_read : base.lastRead,
+      favorited: Boolean(row.is_fav),
+    };
   });
 
   return { records, totalCount };

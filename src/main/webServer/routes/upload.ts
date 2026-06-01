@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import { sendJson, sendError, readBody, isHostConnection } from '../middleware';
 import { addSingleFile, ingestPathStreaming, COMIC_EXTS, BOOK_EXTS, type IngestEvent } from '../ingest';
 import { requireAdmin, type RouteHandler } from '../context';
+import { getRecentIngestErrors, countIngestErrors, clearIngestErrors } from '../../ingestErrorLog';
 
 let uploadRootDir: string | null = null;
 
@@ -204,11 +205,44 @@ export const handle: RouteHandler = async (ctx) => {
     return true;
   }
 
+  // Admin: read ingest-error log. Returns the total count plus the N most
+  // recent records (newest first). Backing store is the JSONL file under
+  // userData written by recordIngestError().
+  if (method === 'GET' && pathname === '/api/admin/ingest-errors') {
+    if (!requireAdmin(ctx)) return true;
+    const limitParam = ctx.query.limit ? parseInt(ctx.query.limit, 10) : NaN;
+    const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(500, limitParam)) : 50;
+    sendJson(res, 200, {
+      count: countIngestErrors(),
+      recent: getRecentIngestErrors(limit),
+    });
+    return true;
+  }
+
+  // Admin: truncate the ingest-error log.
+  if (method === 'DELETE' && pathname === '/api/admin/ingest-errors') {
+    if (!requireAdmin(ctx)) return true;
+    clearIngestErrors();
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // Admin: wipe the library catalog. Users, sessions, and app settings
+  // are preserved; only media-related rows (comics, tags, libraries,
+  // folders, per-user state, dismissed paths) are removed. Files on
+  // disk are not touched.
+  if (method === 'DELETE' && pathname === '/api/admin/library') {
+    if (!requireAdmin(ctx)) return true;
+    const removed = db.clearLibrary();
+    sendJson(res, 200, { ok: true, removed });
+    return true;
+  }
+
   // Admin: add path (streaming NDJSON)
   if (method === 'POST' && pathname === '/api/admin/add-path') {
     if (!requireAdmin(ctx)) return true;
     const body = await readBody(req, 64 * 1024); // admin JSON: 64 KiB is plenty
-    let parsed: { path?: string; folderName?: string };
+    let parsed: { path?: string; folderName?: string; useFolderNamesAsSeries?: boolean };
     try { parsed = JSON.parse(body); } catch { sendError(res, 400, 'Invalid JSON'); return true; }
     if (typeof parsed.path !== 'string' || !parsed.path.trim()) {
       sendError(res, 400, 'Provide "path" (string)'); return true;
@@ -247,7 +281,10 @@ export const handle: RouteHandler = async (ctx) => {
     };
 
     try {
-      await ingestPathStreaming(db, parsed.path.trim(), emit, folderId);
+      await ingestPathStreaming(db, parsed.path.trim(), emit, {
+        folderId,
+        useFolderNamesAsSeries: parsed.useFolderNamesAsSeries === true,
+      });
     } catch (err) {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) });
       emit({ type: 'done', added: 0 });

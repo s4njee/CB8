@@ -21,7 +21,7 @@ const externals = [
   'better-sqlite3',
   'sharp',
   'bindings',
-  'node-unrar-js',
+  'node-7z',
   'yauzl',
   '@jsquash/jxl',
   '@napi-rs/canvas',

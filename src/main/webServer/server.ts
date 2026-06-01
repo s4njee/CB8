@@ -63,9 +63,11 @@ const API_ROUTES: RouteHandler[] = [
 
 function resolveStaticRoot(): string {
   const candidates = [
-    path.join(__dirname, '../../src/web'),
-    // Packaged: main bundle lives at .vite/build/index.js inside app.asar,
-    // src/web is copied to /web at the asar root (see forge.config packageAfterCopy).
+    path.join(__dirname, '../../dist/web'), // Dev: Electron build (.vite/build) to dist/web
+    path.join(__dirname, '../dist/web'),    // Dev: Standalone build (dist/standalone.mjs) to dist/web
+    path.join(__dirname, '../../src/web'),  // Dev fallback: Electron build to src/web
+    path.join(__dirname, '../src/web'),     // Dev fallback: Standalone build to src/web
+    // Packaged / Production:
     path.join(__dirname, '../../web'),
     path.join(__dirname, '../web'),
     path.join(process.resourcesPath ?? '', 'web'),

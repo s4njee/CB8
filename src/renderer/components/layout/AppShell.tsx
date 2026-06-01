@@ -1,0 +1,177 @@
+import React, { useRef, useState, useEffect } from 'react';
+import { useLocation, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import * as hostBridge from '@/lib/hostBridge';
+import Navbar from './Navbar';
+import Sidebar from './Sidebar';
+import TabBar from './TabBar';
+import TabPanel from './TabPanel';
+import SortSheet from './SortSheet';
+import { Toaster } from '@/components/ui/sonner';
+import AdminModal from '@/components/admin/AdminModal';
+import { cn } from '@/lib/utils';
+import { useDrop } from '@/hooks/useDrop';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
+import { invalidateLibraryQueries } from '@/lib/queryClient';
+import { RefreshCw, Upload } from 'lucide-react';
+
+// Import pages for the routes
+import AllPage from '@/pages/AllPage';
+import RecentPage from '@/pages/RecentPage';
+import ContinuePage from '@/pages/ContinuePage';
+import LibraryPage from '@/pages/LibraryPage';
+import TagPage from '@/pages/TagPage';
+import ReaderPage from '@/pages/ReaderPage';
+import {
+  FolderPage,
+  FolderSeriesPage,
+  FolderVolumePage,
+  FolderChapterPage,
+} from '@/pages/FolderPages';
+import {
+  BrowseSeriesPage,
+  BrowseVolumePage,
+  BrowseChapterPage,
+} from '@/pages/BrowsePages';
+import { ResetPasswordPage, VerifiedPage } from '@/pages/AuthPages';
+
+export default function AppShell() {
+  const [sortOpen, setSortOpen] = useState(false);
+  const [adminPanel, setAdminPanel] = useState<string | null>(null);
+  const [droppedFiles, setDroppedFiles] = useState<{ file: File; relPath: string }[]>([]);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const mainScrollRef = useRef<HTMLElement | null>(null);
+
+  // Listen for Electron Host Bridge IPC events
+  useEffect(() => {
+    const unsubscribeComic = hostBridge.onComicOpened((comicId) => {
+      navigate(`/read/${comicId}`);
+    });
+    const unsubscribeSettings = hostBridge.onOpenSettings(() => {
+      setAdminPanel('settings');
+    });
+    return () => {
+      unsubscribeComic();
+      unsubscribeSettings();
+    };
+  }, [navigate]);
+
+  const { dragging } = useDrop({
+    onFilesDropped: (files) => {
+      setDroppedFiles(files);
+      setAdminPanel('upload');
+    }
+  });
+  const { pullOffset, pullState } = usePullToRefresh(mainScrollRef, () =>
+    invalidateLibraryQueries(queryClient)
+  );
+  const showPullRefreshIndicator = pullOffset > 0 || pullState === 'refreshing';
+
+  const isReader = location.pathname.startsWith('/read');
+
+  // Frozen library location to keep library component fully alive while reading
+  const [lastLibraryLocation, setLastLibraryLocation] = useState(location);
+
+  useEffect(() => {
+    if (!location.pathname.startsWith('/read')) {
+      setLastLibraryLocation(location);
+    }
+  }, [location]);
+
+  return (
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
+      {/* 1. Navbar (only visible when not reading) */}
+      {!isReader && (
+        <Navbar
+          onOpenSortSheet={() => setSortOpen(true)}
+          onOpenAdminModal={(panel) => setAdminPanel(panel)}
+        />
+      )}
+
+      {/* 2. Main Shell Layout Container */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar (Desktop only) */}
+        {!isReader && <Sidebar onOpenAdminModal={(panel) => setAdminPanel(panel)} />}
+
+        {/* Library pages container (hidden when reader is open, but stays mounted) */}
+        <div className={cn("flex-1 flex flex-col overflow-hidden", isReader && "hidden")}>
+          <main ref={mainScrollRef} className="flex-1 overflow-y-auto overscroll-y-none h-[calc(100dvh-3.25rem)] pb-tab-bar md:pb-0">
+            {showPullRefreshIndicator && (
+              <div
+                className={cn("ptr-indicator", pullState)}
+                style={{ transform: `translateY(${pullOffset}px)` }}
+              >
+                <div className="ptr-spinner flex items-center justify-center">
+                  {pullState === 'refreshing' && <RefreshCw className="h-4 w-4 text-primary animate-spin" />}
+                </div>
+              </div>
+            )}
+            <Routes location={lastLibraryLocation}>
+              <Route path="/" element={<AllPage />} />
+              <Route path="recent" element={<RecentPage />} />
+              <Route path="continue" element={<ContinuePage />} />
+              <Route path="reset-password" element={<ResetPasswordPage />} />
+              <Route path="verified" element={<VerifiedPage />} />
+              <Route path="library/:id" element={<LibraryPage />} />
+              <Route path="folder/:id/series/:k/volume/:v/chapter/:c" element={<FolderChapterPage />} />
+              <Route path="folder/:id/series/:k/volume/:v" element={<FolderVolumePage />} />
+              <Route path="folder/:id/series/:k" element={<FolderSeriesPage />} />
+              <Route path="folder/:id" element={<FolderPage />} />
+              <Route path="browse/series/:k/volume/:v/chapter/:c" element={<BrowseChapterPage />} />
+              <Route path="browse/series/:k/volume/:v" element={<BrowseVolumePage />} />
+              <Route path="browse/series/:k" element={<BrowseSeriesPage />} />
+              <Route path="tag/:name" element={<TagPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
+        </div>
+
+        {/* Reader Overlay (renders as active overlay, unmounts reader on exit) */}
+        {isReader && (
+          <main className="flex-1 overflow-hidden h-screen w-screen bg-black">
+            <Routes location={location}>
+              <Route path="read/:id" element={<ReaderPage />} />
+              <Route path="read/:id/:page" element={<ReaderPage />} />
+            </Routes>
+          </main>
+        )}
+      </div>
+
+      {/* 3. Mobile TabBar */}
+      {!isReader && <TabBar />}
+
+      {/* 4. Sheets & Dialogs */}
+      <SortSheet open={sortOpen} onOpenChange={setSortOpen} />
+      <TabPanel />
+
+      {/* Admin Action Modal Dialog */}
+      <AdminModal
+        open={adminPanel !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAdminPanel(null);
+            setDroppedFiles([]);
+          }
+        }}
+        initialPanel={adminPanel}
+        droppedFiles={droppedFiles}
+      />
+
+      {/* Global Drag-and-drop Overlay */}
+      {dragging && (
+        <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center pointer-events-none transition-all duration-300">
+          <div className="border-4 border-dashed border-primary/50 rounded-2xl p-12 flex flex-col items-center gap-4 bg-card/60 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <Upload className="h-16 w-16 text-primary animate-bounce" />
+            <span className="text-2xl font-bold text-foreground">Drop to add to library</span>
+            <span className="text-sm text-muted-foreground">Supports .cbz, .cbr, .epub, .pdf, .mobi</span>
+          </div>
+        </div>
+      )}
+
+      {/* sonner notifications */}
+      <Toaster theme="dark" closeButton />
+    </div>
+  );
+}

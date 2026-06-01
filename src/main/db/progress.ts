@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { SqlParam, ComicRow } from './types';
-import { rowToRecord } from './comics';
+import { rowsToRecords } from './comics';
 import type { MediaRecord } from '../../shared/types';
 
 export function upsertUserProgress(
@@ -60,7 +60,7 @@ export function getRecentlyReadByUser(
      ORDER BY up.last_read DESC
      LIMIT ?`
   ).all(...params) as ComicRow[];
-  return rows.map((r) => rowToRecord(db, r));
+  return rowsToRecords(db, rows);
 }
 
 export function getContinueReadingByUser(
@@ -82,5 +82,5 @@ export function getContinueReadingByUser(
      ORDER BY up.last_read DESC
      LIMIT ?`
   ).all(...params) as ComicRow[];
-  return rows.map((r) => rowToRecord(db, r));
+  return rowsToRecords(db, rows);
 }

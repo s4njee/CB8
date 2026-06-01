@@ -1,13 +1,41 @@
 /**
- * ArchiveLoader — opens CBZ (ZIP) and CBR (RAR) comic archives,
- * lists image entries in natural sort order, and extracts page data.
+ * ArchiveLoader - opens comic archives, lists image entries in natural sort
+ * order, and extracts page data.
+ *
+ * Backend selection:
+ *   CBZ  → yauzl  (native Node.js; no external binary, random-access via
+ *                  kept-open ZipFile handle)
+ *   CBR  → unrar  (faster and more reliable than 7-Zip for RAR/RAR5;
+ *                  falls back to 7-Zip when unrar is not installed)
+ *
+ * unrar binary resolution order:
+ *   1. $CB8_UNRAR_PATH env var
+ *   2. /usr/bin/unrar
+ *   3. /usr/local/bin/unrar
+ *   4. `unrar` on $PATH
+ *   5. (unavailable — falls back to 7-Zip for CBR)
  */
 
+import { createRequire } from 'node:module';
+import { execFile, spawnSync } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import type { Readable } from 'node:stream';
+import * as fsp from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as yauzl from 'yauzl';
 import { isImageFile } from '../shared/imageFilter';
 import { naturalCompare } from '../shared/naturalSort';
 import { selectCoverImage, ImageEntry } from '../shared/coverSelection';
-import { decode as decodeImage, needsDecoding } from './imageDecoder';
+import { decode as decodeImage } from './imageDecoder';
+import { LruByBytes } from '../shared/lru';
+import { assertSevenZipAvailable } from './sevenZipPath';
+
+const require = createRequire(import.meta.url);
+
+// ---------------------------------------------------------------------------
+// Public interface
+// ---------------------------------------------------------------------------
 
 export interface ArchiveEntry {
   filename: string;
@@ -21,96 +49,391 @@ export interface ArchiveHandle {
   pageCount: number;
 }
 
-// Internal handle that also holds the yauzl ZipFile reference
-interface CbzHandle extends ArchiveHandle {
-  format: 'cbz';
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const PAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024; // 64 MiB per open archive
+const LIST_TIMEOUT_MS = readPositiveIntEnv('CB8_ARCHIVE_LIST_TIMEOUT_MS', 60_000);
+const EXTRACT_TIMEOUT_MS = readPositiveIntEnv('CB8_ARCHIVE_EXTRACT_TIMEOUT_MS', 30_000);
+
+// ===========================================================================
+// yauzl backend (CBZ)
+// ===========================================================================
+
+interface YauzlArchiveHandle extends ArchiveHandle {
+  readonly _tag: 'yauzl';
   _zipFile: yauzl.ZipFile;
-  _yauzlEntries: yauzl.Entry[];
+  _entryMap: Map<number, yauzl.Entry>; // page-index → zip entry
+  _pageCache: LruByBytes<number, Buffer>;
 }
 
-function isCbzHandle(handle: ArchiveHandle): handle is CbzHandle {
-  return handle.format === 'cbz';
+function isYauzlHandle(h: ArchiveHandle): h is YauzlArchiveHandle {
+  return (h as YauzlArchiveHandle)._tag === 'yauzl';
 }
 
-/**
- * Open a CBZ (ZIP) archive. Returns a handle with sorted image entries.
- */
-export async function openCbz(filePath: string): Promise<ArchiveHandle> {
-  return new Promise<ArchiveHandle>((resolve, reject) => {
+function openYauzlZip(
+  filePath: string,
+): Promise<{ zipFile: yauzl.ZipFile; entries: ArchiveEntry[]; entryMap: Map<number, yauzl.Entry> }> {
+  return new Promise((resolve, reject) => {
     yauzl.open(filePath, { lazyEntries: true, autoClose: false }, (err, zipFile) => {
-      if (err) {
-        return reject(new Error(`Failed to open archive: ${err.message}`));
-      }
-      if (!zipFile) {
-        return reject(new Error(`Failed to open archive: ${filePath}`));
+      if (err || !zipFile) {
+        reject(err ?? new Error(`Failed to open ${filePath}`));
+        return;
       }
 
-      const imageEntries: { filename: string; yauzlEntry: yauzl.Entry }[] = [];
+      const imageItems: { name: string; entry: yauzl.Entry }[] = [];
 
       zipFile.on('entry', (entry: yauzl.Entry) => {
-        if (isImageFile(entry.fileName)) {
-          imageEntries.push({ filename: entry.fileName, yauzlEntry: entry });
+        if (!entry.fileName.endsWith('/') && isImageFile(entry.fileName)) {
+          imageItems.push({ name: entry.fileName, entry });
         }
         zipFile.readEntry();
       });
 
       zipFile.on('end', () => {
-        // Sort by filename using natural sort
-        imageEntries.sort((a, b) => naturalCompare(a.filename, b.filename));
-
-        const entries: ArchiveEntry[] = imageEntries.map((e, i) => ({
-          filename: e.filename,
-          index: i,
-        }));
-
-        const handle: CbzHandle = {
-          filePath,
-          format: 'cbz',
-          entries,
-          pageCount: entries.length,
-          _zipFile: zipFile,
-          _yauzlEntries: imageEntries.map((e) => e.yauzlEntry),
-        };
-
-        resolve(handle);
+        imageItems.sort((a, b) => naturalCompare(a.name, b.name));
+        const entries: ArchiveEntry[] = imageItems.map(({ name }, index) => ({ filename: name, index }));
+        const entryMap = new Map<number, yauzl.Entry>(imageItems.map(({ entry }, index) => [index, entry]));
+        resolve({ zipFile, entries, entryMap });
       });
 
-      zipFile.on('error', (e: Error) => {
-        reject(new Error(`Failed to open archive: ${e.message}`));
-      });
-
+      zipFile.on('error', reject);
       zipFile.readEntry();
     });
   });
 }
 
-
-/**
- * Extract raw image bytes for a page by index from a CBZ handle.
- */
-function getCbzPage(handle: CbzHandle, pageIndex: number): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    if (pageIndex < 0 || pageIndex >= handle.pageCount) {
-      return reject(new Error(`Page index ${pageIndex} out of range (0-${handle.pageCount - 1})`));
-    }
-
-    const yauzlEntry = handle._yauzlEntries[pageIndex];
-    handle._zipFile.openReadStream(yauzlEntry, (err, stream) => {
-      if (err) {
-        return reject(new Error(`Failed to read page ${pageIndex}: ${err.message}`));
+function readYauzlEntry(zipFile: yauzl.ZipFile, entry: yauzl.Entry): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    zipFile.openReadStream(entry, (err, stream) => {
+      if (err || !stream) {
+        reject(err ?? new Error(`Failed to stream entry: ${entry.fileName}`));
+        return;
       }
-      if (!stream) {
-        return reject(new Error(`Failed to read page ${pageIndex}: no stream`));
-      }
-
       const chunks: Buffer[] = [];
       stream.on('data', (chunk: Buffer) => chunks.push(chunk));
       stream.on('end', () => resolve(Buffer.concat(chunks)));
-      stream.on('error', (e: Error) =>
-        reject(new Error(`Failed to read page ${pageIndex}: ${e.message}`))
-      );
+      stream.on('error', reject);
     });
   });
+}
+
+async function getYauzlPage(handle: YauzlArchiveHandle, pageIndex: number): Promise<Buffer> {
+  if (pageIndex < 0 || pageIndex >= handle.pageCount) {
+    throw new Error(`Page index ${pageIndex} out of range (0-${handle.pageCount - 1})`);
+  }
+  const cached = handle._pageCache.get(pageIndex);
+  if (cached) return cached;
+
+  const entry = handle._entryMap.get(pageIndex)!;
+  try {
+    const buf = await readYauzlEntry(handle._zipFile, entry);
+    handle._pageCache.set(pageIndex, buf);
+    return buf;
+  } catch (err) {
+    throw new Error(
+      `Failed to read page ${pageIndex}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+// ===========================================================================
+// unrar backend (CBR primary)
+// ===========================================================================
+
+interface UnrarArchiveHandle extends ArchiveHandle {
+  readonly _tag: 'unrar';
+  _unrar: string;
+  _pageCache: LruByBytes<number, Buffer>;
+}
+
+function isUnrarHandle(h: ArchiveHandle): h is UnrarArchiveHandle {
+  return (h as UnrarArchiveHandle)._tag === 'unrar';
+}
+
+const UNRAR_SEARCH_PATHS = ['/usr/bin/unrar', '/usr/local/bin/unrar'];
+let _unrarBin: string | null | undefined = undefined;
+
+/**
+ * Locate the unrar binary. Checks $CB8_UNRAR_PATH, well-known paths, then
+ * $PATH. Returns null if unavailable. Result is cached after the first call.
+ */
+function findUnrarBin(): string | null {
+  if (_unrarBin !== undefined) return _unrarBin;
+
+  const fromEnv = process.env.CB8_UNRAR_PATH?.trim();
+  if (fromEnv) return (_unrarBin = fromEnv);
+
+  for (const p of UNRAR_SEARCH_PATHS) {
+    const r = spawnSync(p, ['--version'], { timeout: 3_000, windowsHide: true });
+    if (!r.error) return (_unrarBin = p);
+  }
+
+  const r = spawnSync('unrar', ['--version'], { timeout: 3_000, windowsHide: true });
+  if (!r.error) return (_unrarBin = 'unrar');
+
+  return (_unrarBin = null);
+}
+
+/**
+ * Run a command and return its stdout as a Buffer.
+ * Rejects with stderr content on non-zero exit or spawn failure.
+ */
+function spawnToBuffer(
+  file: string,
+  args: string[],
+  opts: { timeout?: number; maxBuffer?: number } = {},
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const { timeout = EXTRACT_TIMEOUT_MS, maxBuffer = 50 * 1024 * 1024 } = opts;
+    // Cast to any: execFile has many overloads and the encoding:'buffer' variant
+    // is awkward to express without explicit cast.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (execFile as any)(
+      file,
+      args,
+      { timeout, maxBuffer, encoding: 'buffer' },
+      (err: Error | null, stdout: Buffer, stderr: Buffer) => {
+        if (err) {
+          const execErr = err as Error & { killed?: boolean; signal?: string | null };
+          if (execErr.killed) {
+            reject(new Error(`${file} ${args.join(' ')} timed out after ${timeout} ms`));
+            return;
+          }
+          reject(new Error(stderr?.length ? stderr.toString().trim() : err.message));
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
+}
+
+async function listUnrarEntries(filePath: string, unrar: string): Promise<ArchiveEntry[]> {
+  const buf = await spawnToBuffer(unrar, ['lb', filePath], { timeout: LIST_TIMEOUT_MS });
+  const names = buf
+    .toString('utf8')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s && isImageFile(s));
+  const sorted = [...names].sort((a, b) => naturalCompare(a, b));
+  return sorted.map((filename, index) => ({ filename, index }));
+}
+
+async function getUnrarPage(handle: UnrarArchiveHandle, pageIndex: number): Promise<Buffer> {
+  if (pageIndex < 0 || pageIndex >= handle.pageCount) {
+    throw new Error(`Page index ${pageIndex} out of range (0-${handle.pageCount - 1})`);
+  }
+  const cached = handle._pageCache.get(pageIndex);
+  if (cached) return cached;
+
+  const targetName = handle.entries[pageIndex].filename;
+  try {
+    // `unrar p -inul` prints the file to stdout; -inul suppresses progress noise.
+    const buf = await spawnToBuffer(
+      handle._unrar,
+      ['p', '-inul', handle.filePath, targetName],
+      { timeout: EXTRACT_TIMEOUT_MS },
+    );
+    handle._pageCache.set(pageIndex, buf);
+    return buf;
+  } catch (err) {
+    throw new Error(
+      `Failed to read page ${pageIndex}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+// ===========================================================================
+// 7-Zip backend (CBR fallback + legacy)
+// ===========================================================================
+
+type SevenZipRecord = {
+  file?: string;
+  techInfo?: Map<string, string>;
+};
+
+type SevenZipStream<T> = Readable & {
+  _childProcess?: ChildProcess;
+  on(event: 'data', listener: (data: T) => void): SevenZipStream<T>;
+  on(event: 'error', listener: (err: Error) => void): SevenZipStream<T>;
+  on(event: 'end', listener: () => void): SevenZipStream<T>;
+};
+
+type SevenZipOptions = {
+  $bin?: string;
+  $cherryPick?: string | string[];
+  noWildcards?: boolean;
+  overwrite?: string;
+  techInfo?: boolean;
+  yes?: boolean;
+};
+
+type SevenZipModule = {
+  list: (archive: string, options?: SevenZipOptions) => SevenZipStream<SevenZipRecord>;
+  extract: (archive: string, output: string, options?: SevenZipOptions) => SevenZipStream<SevenZipRecord>;
+};
+
+const Seven = require('node-7z') as SevenZipModule;
+
+interface SevenZipArchiveHandle extends ArchiveHandle {
+  readonly _tag: '7z';
+  _pageCache: LruByBytes<number, Buffer>;
+}
+
+function isSevenZipHandle(h: ArchiveHandle): h is SevenZipArchiveHandle {
+  return (h as SevenZipArchiveHandle)._tag === '7z';
+}
+
+function runSevenZip<T>(stream: SevenZipStream<T>, action: string, timeoutMs: number): Promise<T[]> {
+  return new Promise((resolve, reject) => {
+    const records: T[] = [];
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      fn();
+    };
+    timeout = setTimeout(() => {
+      stream._childProcess?.kill();
+      finish(() => reject(new Error(`${action} timed out after ${timeoutMs} ms`)));
+    }, timeoutMs);
+    stream.on('data', (data) => records.push(data));
+    stream.on('error', (err) => {
+      const stderr = (err as Error & { stderr?: string }).stderr?.trim();
+      finish(() => reject(new Error(`${action} failed: ${stderr || err.message}`)));
+    });
+    stream.on('end', () => finish(() => resolve(records)));
+  });
+}
+
+function archiveBasename(filename: string): string {
+  return filename.split(/[\\/]+/).filter(Boolean).at(-1) ?? filename;
+}
+
+function isDirectory(record: SevenZipRecord): boolean {
+  const t = record.techInfo;
+  if (!t) return false;
+  return t.get('Folder') === '+' || (t.get('Attributes') ?? '').includes('D');
+}
+
+async function listSevenZipEntries(filePath: string): Promise<ArchiveEntry[]> {
+  const bin = assertSevenZipAvailable();
+  const records = await runSevenZip(
+    Seven.list(filePath, { $bin: bin, techInfo: true }),
+    `List archive ${filePath}`,
+    LIST_TIMEOUT_MS,
+  );
+  const names = records
+    .filter((r) => r.file && !isDirectory(r) && isImageFile(r.file))
+    .map((r) => r.file!)
+    .sort((a, b) => naturalCompare(a, b));
+  return names.map((filename, index) => ({ filename, index }));
+}
+
+async function openSevenZipArchive(filePath: string, format: ArchiveHandle['format']): Promise<SevenZipArchiveHandle> {
+  try {
+    const entries = await listSevenZipEntries(filePath);
+    return {
+      filePath, format, _tag: '7z', entries, pageCount: entries.length,
+      _pageCache: new LruByBytes<number, Buffer>({ maxBytes: PAGE_CACHE_MAX_BYTES, sizeOf: (b) => b.length }),
+    };
+  } catch (err) {
+    throw new Error(`Failed to open archive: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function findExtractedFile(tempDir: string, expectedName: string): Promise<string> {
+  const expectedPath = path.join(tempDir, expectedName);
+  try { await fsp.access(expectedPath); return expectedPath; } catch { /* fall through */ }
+  const dirents = await fsp.readdir(tempDir, { withFileTypes: true });
+  const files = dirents.filter((d) => d.isFile()).map((d) => d.name);
+  if (files.length === 1) return path.join(tempDir, files[0]);
+  throw new Error(`extracted file ${expectedName} not found`);
+}
+
+async function getSevenZipPage(handle: SevenZipArchiveHandle, pageIndex: number): Promise<Buffer> {
+  if (pageIndex < 0 || pageIndex >= handle.pageCount) {
+    throw new Error(`Page index ${pageIndex} out of range (0-${handle.pageCount - 1})`);
+  }
+  const cached = handle._pageCache.get(pageIndex);
+  if (cached) return cached;
+
+  const targetName = handle.entries[pageIndex].filename;
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cb8-7z-page-'));
+  try {
+    const bin = assertSevenZipAvailable();
+    await runSevenZip(
+      Seven.extract(handle.filePath, tempDir, {
+        $bin: bin, $cherryPick: targetName, noWildcards: true, overwrite: 'a', yes: true,
+      }),
+      `Extract page ${pageIndex} from ${handle.filePath}`,
+      EXTRACT_TIMEOUT_MS,
+    );
+    const extractedPath = await findExtractedFile(tempDir, archiveBasename(targetName));
+    const buf = await fsp.readFile(extractedPath);
+    handle._pageCache.set(pageIndex, buf);
+    return buf;
+  } catch (err) {
+    throw new Error(`Failed to read page ${pageIndex}: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => { /* ignore */ });
+  }
+}
+
+// ===========================================================================
+// Public API
+// ===========================================================================
+
+/**
+ * Open a CBZ (ZIP) archive using the native yauzl backend.
+ */
+export async function openCbz(filePath: string): Promise<ArchiveHandle> {
+  try {
+    const { zipFile, entries, entryMap } = await openYauzlZip(filePath);
+    const handle: YauzlArchiveHandle = {
+      filePath, format: 'cbz', _tag: 'yauzl',
+      _zipFile: zipFile, _entryMap: entryMap,
+      entries, pageCount: entries.length,
+      _pageCache: new LruByBytes<number, Buffer>({ maxBytes: PAGE_CACHE_MAX_BYTES, sizeOf: (b) => b.length }),
+    };
+    return handle;
+  } catch (err) {
+    throw new Error(`Failed to open archive: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Open a CBR (RAR) archive.
+ * Prefers unrar (faster, RAR5-reliable); falls back to 7-Zip if unavailable.
+ */
+export async function openCbr(filePath: string): Promise<ArchiveHandle> {
+  const unrar = findUnrarBin();
+  if (unrar) {
+    try {
+      const entries = await listUnrarEntries(filePath, unrar);
+      const handle: UnrarArchiveHandle = {
+        filePath, format: 'cbr', _tag: 'unrar', _unrar: unrar,
+        entries, pageCount: entries.length,
+        _pageCache: new LruByBytes<number, Buffer>({ maxBytes: PAGE_CACHE_MAX_BYTES, sizeOf: (b) => b.length }),
+      };
+      return handle;
+    } catch (err) {
+      console.warn(
+        `[CB8] unrar failed for "${path.basename(filePath)}", falling back to 7-Zip: `
+        + (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  }
+  return openSevenZipArchive(filePath, 'cbr');
 }
 
 /**
@@ -118,45 +441,37 @@ function getCbzPage(handle: CbzHandle, pageIndex: number): Promise<Buffer> {
  */
 export async function open(filePath: string): Promise<ArchiveHandle> {
   const ext = filePath.split('.').pop()?.toLowerCase();
-  if (ext === 'cbz') {
-    return openCbz(filePath);
-  }
-  if (ext === 'cbr') {
-    return openCbr(filePath);
-  }
+  if (ext === 'cbz') return openCbz(filePath);
+  if (ext === 'cbr') return openCbr(filePath);
   throw new Error(`Unsupported file format: .${ext}`);
 }
 
 /**
- * Get raw image bytes for a page by index.
- * JXL images are transparently decoded to PNG.
+ * Get raw image bytes for a page by index. JXL images are decoded to PNG.
  */
 export async function getPage(handle: ArchiveHandle, pageIndex: number): Promise<Buffer> {
   let raw: Buffer;
-  if (isCbzHandle(handle)) {
-    raw = await getCbzPage(handle, pageIndex);
-  } else if (isCbrHandle(handle)) {
-    raw = await getCbrPage(handle, pageIndex);
+  if (isYauzlHandle(handle)) {
+    raw = await getYauzlPage(handle, pageIndex);
+  } else if (isUnrarHandle(handle)) {
+    raw = await getUnrarPage(handle, pageIndex);
+  } else if (isSevenZipHandle(handle)) {
+    raw = await getSevenZipPage(handle, pageIndex);
   } else {
-    throw new Error(`Unknown archive format: ${handle.format}`);
+    throw new Error(`Unknown archive backend for format: ${handle.format}`);
   }
-
   const ext = handle.entries[pageIndex].filename.split('.').pop() || '';
   return decodeImage(raw, ext);
 }
 
 /**
- * Get the cover image from an archive using cover selection logic.
+ * Get the cover image from an archive.
  */
 export async function getCoverImage(handle: ArchiveHandle): Promise<Buffer> {
-  const imageEntries: ImageEntry[] = handle.entries.map((e) => ({
-    filename: e.filename,
-    index: e.index,
-  }));
-  const cover = selectCoverImage(imageEntries);
-  if (!cover) {
-    throw new Error('No images found in archive');
-  }
+  const cover = selectCoverImage(
+    handle.entries.map((e): ImageEntry => ({ filename: e.filename, index: e.index })),
+  );
+  if (!cover) throw new Error('No images found in archive');
   return getPage(handle, cover.index);
 }
 
@@ -164,194 +479,10 @@ export async function getCoverImage(handle: ArchiveHandle): Promise<Buffer> {
  * Close an archive handle and release resources.
  */
 export async function close(handle: ArchiveHandle): Promise<void> {
-  if (isCbzHandle(handle)) {
+  if (isYauzlHandle(handle)) {
     handle._zipFile.close();
-  } else if (isCbrHandle(handle)) {
-    // Drop cached pages so they can't outlive the handle.
     handle._pageCache.clear();
-    // File-mode also created a temp dir for on-disk extraction; clean it
-    // up. Best-effort: a stray dir under /tmp is harmless if removal fails.
-    if (handle._mode === 'file') {
-      await fsp.rm(handle._tempDir, { recursive: true, force: true }).catch(() => { /* ignore */ });
-    }
-  }
-}
-
-
-// --- CBR (RAR) support ---
-
-import * as fsp from 'node:fs/promises';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import { createExtractorFromData, createExtractorFromFile, type Extractor } from 'node-unrar-js';
-import { LruByBytes } from '../shared/lru';
-
-/**
- * Per-archive in-memory cap for cached decompressed pages. RAR pages
- * decompress on every extract() call — solid archives in particular have
- * to re-walk the dictionary — so a small LRU pays off heavily for back-
- * navigation and adjacent prefetch. Keep the cap modest so a few open
- * archives don't dominate memory.
- */
-const CBR_PAGE_CACHE_MAX_BYTES = 64 * 1024 * 1024; // 64 MiB
-
-/**
- * Above this size we open the archive in file-mode (extractor reads from
- * disk on demand) instead of slurping the whole file into a Buffer.
- *
- * Two reasons:
- *   - Node's `fsp.readFile` errors with `ERR_FS_FILE_TOO_LARGE` at ≥ 2 GiB.
- *   - V8 caps `ArrayBuffer` length at ~4 GiB, so even chunked reads
- *     wouldn't fit a 5 GiB archive into one buffer.
- *
- * File-mode trades RAM for a temp directory + per-page disk round-trip
- * (the extractor writes each requested file into the temp dir, we read
- * it back as bytes, then unlink). The 64 MiB LRU page cache absorbs
- * sequential and back-navigation reads.
- */
-const HUGE_ARCHIVE_THRESHOLD = 2_000_000_000;
-
-interface CbrHandleBase extends ArchiveHandle {
-  format: 'cbr';
-  /** LRU page cache, byte-budgeted. */
-  _pageCache: LruByBytes<number, Buffer>;
-}
-
-interface CbrDataHandle extends CbrHandleBase {
-  _mode: 'data';
-  _extractor: Extractor<Uint8Array>;
-}
-
-interface CbrFileHandle extends CbrHandleBase {
-  _mode: 'file';
-  _extractor: Extractor;
-  _tempDir: string;
-}
-
-type CbrHandle = CbrDataHandle | CbrFileHandle;
-
-function isCbrHandle(handle: ArchiveHandle): handle is CbrHandle {
-  return handle.format === 'cbr';
-}
-
-/**
- * Open a CBR (RAR) archive. Picks data-mode (whole archive in RAM, fast
- * lazy extract) for normal-sized archives and file-mode (extractor reads
- * from disk) for >2 GiB archives that wouldn't fit in a single buffer.
- */
-export async function openCbr(filePath: string): Promise<ArchiveHandle> {
-  let size = Infinity;
-  try {
-    size = (await fsp.stat(filePath)).size;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to open archive: ${msg}`);
-  }
-
-  let handle: CbrHandle;
-  try {
-    handle = size > HUGE_ARCHIVE_THRESHOLD
-      ? await openCbrFileMode(filePath)
-      : await openCbrDataMode(filePath);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to open archive: ${msg}`);
-  }
-
-  const fileList = handle._extractor.getFileList();
-  const imageNames: string[] = [];
-  for (const header of fileList.fileHeaders) {
-    if (!header.flags.directory && isImageFile(header.name)) {
-      imageNames.push(header.name);
-    }
-  }
-  imageNames.sort((a, b) => naturalCompare(a, b));
-  const entries: ArchiveEntry[] = imageNames.map((filename, index) => ({ filename, index }));
-
-  // Mutate the in-progress handle with metadata. (Type-stable: entries +
-  // pageCount are the only fields we set late.)
-  (handle as { entries: ArchiveEntry[] }).entries = entries;
-  (handle as { pageCount: number }).pageCount = entries.length;
-  return handle;
-}
-
-async function openCbrDataMode(filePath: string): Promise<CbrDataHandle> {
-  const fileData = await fsp.readFile(filePath);
-  const archiveData = fileData.buffer.slice(
-    fileData.byteOffset,
-    fileData.byteOffset + fileData.byteLength,
-  ) as ArrayBuffer;
-  const extractor = await createExtractorFromData({ data: archiveData });
-  return {
-    filePath,
-    format: 'cbr',
-    entries: [],
-    pageCount: 0,
-    _mode: 'data',
-    _extractor: extractor,
-    _pageCache: new LruByBytes<number, Buffer>({
-      maxBytes: CBR_PAGE_CACHE_MAX_BYTES,
-      sizeOf: (b) => b.length,
-    }),
-  };
-}
-
-async function openCbrFileMode(filePath: string): Promise<CbrFileHandle> {
-  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cb8-cbr-'));
-  const extractor = await createExtractorFromFile({ filepath: filePath, targetPath: tempDir });
-  return {
-    filePath,
-    format: 'cbr',
-    entries: [],
-    pageCount: 0,
-    _mode: 'file',
-    _extractor: extractor,
-    _tempDir: tempDir,
-    _pageCache: new LruByBytes<number, Buffer>({
-      maxBytes: CBR_PAGE_CACHE_MAX_BYTES,
-      sizeOf: (b) => b.length,
-    }),
-  };
-}
-
-function cachePage(handle: CbrHandle, pageIndex: number, buf: Buffer): Buffer {
-  // LruByBytes handles MRU bumping + byte-budgeted eviction internally.
-  handle._pageCache.set(pageIndex, buf);
-  return buf;
-}
-
-async function getCbrPage(handle: CbrHandle, pageIndex: number): Promise<Buffer> {
-  if (pageIndex < 0 || pageIndex >= handle.pageCount) {
-    throw new Error(`Page index ${pageIndex} out of range (0-${handle.pageCount - 1})`);
-  }
-
-  // Cache hit — `get` already bumps to MRU.
-  const cached = handle._pageCache.get(pageIndex);
-  if (cached) return cached;
-
-  const targetName = handle.entries[pageIndex].filename;
-
-  try {
-    if (handle._mode === 'data') {
-      const extracted = handle._extractor.extract({ files: [targetName] });
-      for (const file of extracted.files) {
-        if (file.fileHeader.name === targetName && file.extraction) {
-          return cachePage(handle, pageIndex, Buffer.from(file.extraction));
-        }
-      }
-      throw new Error('entry not found');
-    }
-
-    // File-mode: extract() writes the requested entry under tempDir, then
-    // we read the bytes back off disk and unlink so tempDir stays small.
-    const extracted = handle._extractor.extract({ files: [targetName] });
-    // Consume the iterator — that's what actually triggers the extraction.
-    for (const _file of extracted.files) { void _file; }
-    const onDisk = path.join(handle._tempDir, targetName);
-    const buf = await fsp.readFile(onDisk);
-    fsp.unlink(onDisk).catch(() => { /* best effort */ });
-    return cachePage(handle, pageIndex, buf);
-  } catch (err) {
-    throw new Error(`Failed to read page ${pageIndex}: ${err instanceof Error ? err.message : String(err)}`);
+  } else if (isUnrarHandle(handle) || isSevenZipHandle(handle)) {
+    handle._pageCache.clear();
   }
 }

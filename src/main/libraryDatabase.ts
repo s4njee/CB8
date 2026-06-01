@@ -18,6 +18,7 @@ import * as progress from './db/progress';
 import * as libraries from './db/libraries';
 import * as folders from './db/folders';
 import * as comics from './db/comics';
+import * as maintenance from './db/maintenance';
 
 export class LibraryDatabase {
   private db: Database.Database;
@@ -143,7 +144,46 @@ export class LibraryDatabase {
   getFolderComics(folderId: number, options: QueryOptions = {}): QueryResult {
     return folders.getFolderComics(this.db, folderId, options);
   }
+  getFolderSeriesGroups(userId: number | null, folderId: number, options: Parameters<typeof folders.getFolderSeriesGroups>[3] = {}) {
+    return folders.getFolderSeriesGroups(this.db, userId, folderId, options);
+  }
+  getFolderVolumeGroups(userId: number | null, folderId: number, seriesKey: string, options: Parameters<typeof folders.getFolderVolumeGroups>[4] = {}) {
+    return folders.getFolderVolumeGroups(this.db, userId, folderId, seriesKey, options);
+  }
+  getFolderChapterGroups(userId: number | null, folderId: number, seriesKey: string, volumeKey: string, options: Parameters<typeof folders.getFolderChapterGroups>[5] = {}) {
+    return folders.getFolderChapterGroups(this.db, userId, folderId, seriesKey, volumeKey, options);
+  }
+  getFolderVolumeComicsForUser(
+    userId: number | null,
+    folderId: number,
+    seriesKey: string,
+    volumeKey: string,
+    chapterKey: string | null,
+    options: Parameters<typeof folders.getFolderVolumeComicsForUser>[6] = {},
+  ) {
+    return folders.getFolderVolumeComicsForUser(this.db, userId, folderId, seriesKey, volumeKey, chapterKey, options);
+  }
   getComicFolderIds(comicId: number): number[] { return folders.getComicFolderIds(this.db, comicId); }
+
+  // Global (library-wide) hierarchy — no folder scope, used by search/browse view.
+  getGlobalSeriesGroups(userId: number | null, options: Parameters<typeof folders.getGlobalSeriesGroups>[2] = {}) {
+    return folders.getGlobalSeriesGroups(this.db, userId, options);
+  }
+  getGlobalVolumeGroups(userId: number | null, seriesKey: string, options: Parameters<typeof folders.getGlobalVolumeGroups>[3] = {}) {
+    return folders.getGlobalVolumeGroups(this.db, userId, seriesKey, options);
+  }
+  getGlobalChapterGroups(userId: number | null, seriesKey: string, volumeKey: string, options: Parameters<typeof folders.getGlobalChapterGroups>[4] = {}) {
+    return folders.getGlobalChapterGroups(this.db, userId, seriesKey, volumeKey, options);
+  }
+  getGlobalVolumeComicsForUser(
+    userId: number | null,
+    seriesKey: string,
+    volumeKey: string,
+    chapterKey: string | null,
+    options: Parameters<typeof folders.getGlobalVolumeComicsForUser>[5] = {},
+  ) {
+    return folders.getGlobalVolumeComicsForUser(this.db, userId, seriesKey, volumeKey, chapterKey, options);
+  }
 
   // --- users ---
   createUser(username: string, passwordHash: string, isAdmin: boolean) {
@@ -205,4 +245,8 @@ export class LibraryDatabase {
   addFavorite(userId: number, comicId: number): void { favorites.addFavorite(this.db, userId, comicId); }
   removeFavorite(userId: number, comicId: number): void { favorites.removeFavorite(this.db, userId, comicId); }
   isFavorite(userId: number, comicId: number): boolean { return favorites.isFavorite(this.db, userId, comicId); }
+
+  // --- maintenance ---
+  /** Wipe all catalog rows; preserves users, sessions, app_meta. */
+  clearLibrary(): maintenance.ClearLibraryResult { return maintenance.clearLibrary(this.db); }
 }
