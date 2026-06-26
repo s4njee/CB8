@@ -5,7 +5,7 @@ Mobile-first, with a polished desktop experience and an optional *hybrid* mode t
 self-hosted CB8 server.
 
 <p align="center">
-  <img src="screenshots/ipad-library.png" width="88%" alt="CB8 library on iPad">
+  <img src="assets/icon/cb8_icon.png" width="180" alt="CB8 app icon">
 </p>
 
 ## Features
@@ -30,8 +30,11 @@ Adaptive phone layout with a bottom nav bar, and the dark-themed EPUB reader.
 </p>
 
 ### On a tablet
-On a wide screen the app switches to a sidebar rail and a denser grid (iPad at the top of this README; Android tablet below).
+On a wide screen the app switches to a sidebar rail and a denser grid — iPad and Android tablet.
 
+<p align="center">
+  <img src="screenshots/ipad-library.png" width="88%" alt="CB8 library on iPad">
+</p>
 <p align="center">
   <img src="screenshots/android-tablet.png" width="88%" alt="CB8 library on an Android tablet">
 </p>
