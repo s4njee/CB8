@@ -1,6 +1,8 @@
-# TODO — Ship CB8-Next as a Desktop App (macOS / Windows / Linux)
+# TODO — Ship CB8-Next Cross-Platform (Desktop + Mobile)
 
-Turn the existing iOS-first Flutter app into a polished desktop application.
+Most of this list is about turning the existing iOS-first Flutter app into a polished
+desktop application (macOS / Windows / Linux); mobile (iOS / Android) deployment polish
+is tracked in its own section near the end.
 The platform scaffolds (`macos/`, `windows/`, `linux/`) already exist, and most
 dependencies are desktop-ready. This list is ordered by phase; do Phase 0–2
 before worrying about packaging.
@@ -20,9 +22,14 @@ The macOS app now **builds, launches, and all three readers work natively**:
   shared `reader_keyboard.dart` (HardwareKeyboard handler, beats Scrollable focus).
 - **Window**: min size + sensible default in `MainFlutterWindow.swift` (no collapse).
 
+**Phase 3** (mouse + keyboard input) and **Phase 4** (window management, native menu
+bar, fullscreen, responsive shell, and window-frame persistence via
+`setFrameAutosaveName`) are now complete — see those sections for specifics. One
+deferred, low-priority nit: PDF *keyboard* zoom over the giant multi-page layout
+(pinch/trackpad zoom works).
+
 Remaining for a *shippable* macOS build: code-sign + notarize + `.dmg` (Phase 6),
-macOS menu bar / fullscreen polish (Phase 4), drag-and-drop import (Phase 5).
-Windows & Linux are untouched.
+drag-and-drop import (Phase 5). Windows & Linux are untouched.
 
 ## Compatibility snapshot (from current `pubspec.yaml`)
 
@@ -62,23 +69,24 @@ Windows & Linux are untouched.
 
 ## Phase 3 — Input adaptation (mouse + keyboard)
 The readers are touch-first (`onTapUp` zones, swipe, pinch). Add desktop input:
-- [ ] **Keyboard nav** (all readers): ←/→ or PageUp/PageDown = prev/next page; Space = next; Home/End = first/last; Esc = back. Use a `Shortcuts`/`Actions` or `Focus`+`KeyboardListener` wrapper.
-- [ ] **Zoom**: Ctrl/Cmd + `+`/`-`/`0`, and Ctrl/Cmd + mouse-wheel for pinch-zoom equivalents (PDF/CBZ `photo_view`/pdfrx).
-- [ ] **Scroll**: ensure mouse-wheel scrolls the vertical/scroll reader; show **scrollbars** (desktop users expect them — wrap lists in `Scrollbar`).
-- [ ] **Click zones**: keep left/right-third click = page turn (works with mouse already), but add hover cursor affordances.
-- [ ] **Right-click context menu**: map the existing long-press action sheet to right-click on cards.
-- [ ] **Hover states** on cards/buttons (desktop expectation).
+- [x] **Keyboard nav** (all readers): ←/→/Space/PageUp-Dn/Home/End/Esc via the shared `reader_keyboard.dart` (HardwareKeyboard handler — beats the embedded Scrollable's focus).
+- [x] **Zoom**: Cmd + `=`/`-`/`0` wired in every reader; Cmd + mouse-wheel on PDF. EPUB font-size zoom and PDF/CBZ pinch + trackpad zoom work.
+  - ⚠️ **Known low-priority limitation (deferred):** PDF *keyboard* zoom (Cmd +/−) doesn't reliably move the view over the giant multi-page horizontal page layout — `zoomOnLocalPosition` silently no-ops there and `setZoom(centerPosition, …)` didn't visibly change it either. Pinch / two-finger-scroll zoom works, so this is cosmetic. Revisit if users ask.
+- [x] **Scroll/scrollbars**: `_CbScrollBehavior` in `app.dart` shows scrollbars on desktop; mouse-wheel scrolls the vertical reader.
+- [x] **Click zones + hover cursor**: paged readers split into left/right `_TapZone`s with a click cursor (`MouseRegion`); centre toggles chrome.
+- [x] **Right-click context menu**: cards map the long-press action sheet onto `onSecondaryTapUp` (right-click).
+- [x] **Hover states**: cards scale up on hover (`MouseRegion` + `AnimatedScale`).
 
 ## Phase 4 — Window & responsive UX
-- [ ] **Window management** (add `window_manager` or the new Flutter windowing): set min size (~800×600), sensible default size, app title; persist size/position across launches.
-- [ ] **Responsive shell**: use a `NavigationRail`/sidebar on wide windows instead of the bottom `NavigationBar`; scale the library grid columns by width (already breakpoint-based — verify at desktop widths).
-- [ ] **macOS menu bar**: add a `PlatformMenuBar` (File: Import…, Open…; View: reading modes, fullscreen; Help). Wire to existing actions.
-- [ ] Remove/adjust mobile-only chrome (`SafeArea` top insets, status-bar padding) on desktop.
-- [ ] Fullscreen / presentation mode for the reader.
+- [x] **Window management**: min size (480×600) + sensible default (1000×760) in `MainFlutterWindow.swift`; **size/position now persist across launches** via `setFrameAutosaveName` (restores saved frame, falls back to the default on first run).
+- [x] **Responsive shell**: `NavigationRail` when wide / bottom `NavigationBar` when narrow (≥768px breakpoint); library grid columns scale by width.
+- [x] **macOS menu bar**: `PlatformMenuBar` — CB8 (About/Quit), File (Import… ⌘O), View (Enter Full Screen). Wired to the existing import action.
+- [~] **Remove mobile-only chrome** (`SafeArea`/status-bar padding): desktop window insets are 0 so the reader bars already sit flush — effectively N/A; revisit if any screen shows stray top padding.
+- [x] **Fullscreen / presentation mode**: `f` key + an AppBar/top-bar button in every reader call native `NSWindow.toggleFullScreen` over the `cb8/window` MethodChannel.
 
 ## Phase 5 — File import on desktop
-- [ ] Verify `file_picker` opens native file + folder dialogs on each OS (multi-select CBZ/PDF/EPUB; folder import).
-- [ ] **Drag-and-drop**: add `desktop_drop` so users can drop files/folders onto the window to import.
+- [ ] Verify `file_picker` opens native file + folder dialogs on each OS (multi-select CBZ/PDF/EPUB; folder import). *(macOS multi-file picker works; folder-picker path not separately tested.)*
+- [x] **Drag-and-drop**: `desktop_drop` wired in `app_shell.dart` (desktop-only `DropTarget` with a drop overlay) → `ImportController.importDropped` expands dropped folders, filters to CBZ/PDF/EPUB, and ingests. Sandbox covers dropped-file reads via the existing `files.user-selected.read-write` entitlement (Finder drags get an implicit grant). *Builds, links the native plugin, launches clean; the drop gesture itself still needs a manual check (couldn't drive the desktop this session).*
 - [ ] Consider a configurable library root on desktop (vs the app sandbox), since desktop users manage files directly.
 
 ## Phase 6 — Packaging, signing & distribution
@@ -99,6 +107,47 @@ The readers are touch-first (`onTapUp` zones, swipe, pinch). Add desktop input:
 - [ ] App auto-update story (Sparkle/macOS, Squirrel/Windows, or just release notes).
 - [ ] Crash/error reporting + logging to a per-OS log file.
 - [ ] Accessibility pass (focus order, screen-reader labels) at desktop scale.
+
+---
+
+## Mobile deployment (iOS / Android)
+This app is **mobile-first** — the desktop work above is additive. These are the
+deployment-readiness / polish items for shipping the iOS and Android builds.
+State below reflects the current `ios/` and `android/` config (checked 2026-06-26).
+
+### Shared
+- [ ] **App icons + splash**: no `flutter_launcher_icons` / `flutter_native_splash` wired yet — add them and generate icon sets + launch screens for both platforms (still the default Flutter icon).
+- [ ] **Display name**: Android label is still `cb8_flutter`; set a proper "CB8" name on both (iOS already has `CFBundleDisplayName`).
+- [ ] **Versioning**: drive store `versionName`/`versionCode` (Android) and `CFBundle*Version` (iOS) from `pubspec.yaml` `version:`; pick a bump strategy.
+- [ ] **Open-in / file associations**: register CBZ/PDF/EPUB so the OS share sheet / Files can hand a file to the importer (import is in-app only today).
+- [ ] **`.local` server reachability**: the app connects to `mars.local:8002` over **plain HTTP** — see the per-platform cleartext/ATS + local-network items below (this is the most likely "works in debug, fails in release" trap).
+
+### Phase 9 — iOS (TestFlight / App Store)
+- [ ] **Signing**: Apple Developer team + bundle id + provisioning set in `Runner.xcodeproj` (currently unset for distribution).
+- [ ] **Tighten ATS**: `Info.plist` currently sets `NSAllowsArbitraryLoads = true` (wide open). Scope it to the server host (`NSExceptionDomains`) or use `NSAllowsLocalNetworking`; App Store review pushes back on blanket arbitrary loads.
+- [ ] **Local-network permission**: add `NSLocalNetworkUsageDescription` (+ `NSBonjourServices` if discovering) — connecting to a `.local` host triggers the iOS 14+ local-network prompt; without the string the connection silently fails.
+- [ ] **App privacy manifest**: add the app's own `PrivacyInfo.xcprivacy` (only a Pod's exists today) — declare required-reason APIs (UserDefaults, file timestamps) and "no data collected"; required by App Store.
+- [ ] **App icon set** (`Assets.xcassets/AppIcon`, all sizes) + launch screen.
+- [ ] **Usage strings** for any `file_picker`/photo access actually used (document picker needs none; add photo strings only if reached).
+- [ ] **Files-app integration**: `UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace` if users should drop files into the app's Documents folder.
+- [ ] **Deployment target / iPad**: target is iOS 13.0 — confirm that's intended; sanity-check iPad size classes + supported orientations.
+- [ ] **Ship**: `flutter build ipa` → App Store Connect / TestFlight; content rating + privacy-policy URL.
+
+### Phase 10 — Android (Play Store)
+- [ ] **Cleartext to the server** *(blocker for release)*: no `usesCleartextTraffic` / `networkSecurityConfig` set — Android 9+ blocks the `mars.local:8002` HTTP call in release. Add a `network_security_config.xml` allowing that host (or move to HTTPS).
+- [ ] **INTERNET permission**: the main `AndroidManifest.xml` has no `uses-permission` — INTERNET is only present via the debug manifest, so **release builds can't reach the server**. Add `<uses-permission android:name="android.permission.INTERNET"/>` to the main manifest.
+- [ ] **Release signing**: `signingConfig` is still `debug`. Create a keystore + `key.properties` (git-ignored) and a release `signingConfig` in `android/app/build.gradle`.
+- [ ] **SDK levels**: `minSdk/targetSdk/compileSdk` inherit the Flutter defaults — pin and confirm `targetSdk` meets the current Play floor.
+- [ ] **Adaptive icon** (foreground/background + monochrome) across mipmap densities; splash.
+- [ ] **R8/ProGuard**: enable release shrinking + keep rules for drift/sqlite3, pdfrx (pdfium), and the inappwebview EPUB engine; verify a release build still reads all three formats.
+- [ ] **16 KB page size**: confirm bundled native libs (sqlite3, pdfium) are 16 KB-aligned for the Android 15 requirement.
+- [ ] **Edge-to-edge / predictive back**: handle the Android 15 edge-to-edge default; opt into predictive back if desired.
+- [ ] **Ship**: `flutter build appbundle` → Play Console listing, data-safety form, content rating.
+
+### Phase 11 — Mobile testing
+- [ ] On a real iOS + a real Android device: import CBZ/PDF/EPUB → cover → open → page (touch) → progress persists on reopen.
+- [ ] Server (hybrid) mode over the LAN: add the CB8 connection, log in, browse, read, confirm progress sync.
+- [ ] **Release-build** smoke test on both (signed, shrinking on) — this is what surfaces the ATS / cleartext / INTERNET / ProGuard issues that debug builds hide.
 
 ---
 

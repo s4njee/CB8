@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
+import '../../../core/window_control.dart';
 import '../../../data/local_files.dart';
 import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
@@ -194,6 +197,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         onPrev: () => _turn(forward: false),
         onFirst: () => _jumpToPage(0),
         onLast: () => _jumpToPage(_pageCount > 0 ? _pageCount - 1 : 0),
+        onToggleFullscreen: WindowControl.toggleFullscreen,
         child: Stack(
           children: [
             if (_error != null)
@@ -296,6 +300,12 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ),
+            if (Platform.isMacOS)
+              IconButton(
+                tooltip: 'Toggle fullscreen (f)',
+                icon: const Icon(Icons.fullscreen, color: Colors.white),
+                onPressed: WindowControl.toggleFullscreen,
+              ),
             PopupMenuButton<ReadingMode>(
               tooltip: 'Reading mode',
               icon: Icon(_mode.icon, color: Colors.white),

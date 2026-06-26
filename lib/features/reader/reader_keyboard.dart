@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Wraps a reader so desktop keyboard keys drive page navigation.
+/// Wraps a reader so desktop keyboard keys drive page navigation, zoom, and
+/// fullscreen.
 ///
-/// Right/Down/PageDown/Space = next, Left/Up/PageUp = previous,
-/// Home/End = first/last, Escape = back. The touch tap-zones still work; this
-/// just adds the keys desktop users expect.
+/// - Right/Down/PageDown/Space = next, Left/Up/PageUp = previous
+/// - Home/End = first/last, Escape = back
+/// - Cmd/Ctrl + `=`/`-`/`0` = zoom in / out / reset (if callbacks given)
+/// - `f` = toggle fullscreen (if callback given)
 ///
+/// The touch tap-zones still work; this just adds the keys desktop users expect.
 /// Uses a [HardwareKeyboard] handler rather than a [Focus]/[Shortcuts] wrapper
 /// because the readers embed a `Scrollable` (PhotoView's PageView, pdfrx) that
 /// grabs focus and consumes the arrow keys before an ancestor would see them.
-/// The hardware handler runs ahead of the focus system, so the keys reach us
-/// regardless of which inner widget currently holds focus.
 class ReaderKeyboard extends StatefulWidget {
   const ReaderKeyboard({
     super.key,
@@ -20,6 +21,10 @@ class ReaderKeyboard extends StatefulWidget {
     required this.onPrev,
     this.onFirst,
     this.onLast,
+    this.onZoomIn,
+    this.onZoomOut,
+    this.onZoomReset,
+    this.onToggleFullscreen,
   });
 
   final Widget child;
@@ -27,6 +32,10 @@ class ReaderKeyboard extends StatefulWidget {
   final VoidCallback onPrev;
   final VoidCallback? onFirst;
   final VoidCallback? onLast;
+  final VoidCallback? onZoomIn;
+  final VoidCallback? onZoomOut;
+  final VoidCallback? onZoomReset;
+  final VoidCallback? onToggleFullscreen;
 
   @override
   State<ReaderKeyboard> createState() => _ReaderKeyboardState();
@@ -48,6 +57,29 @@ class _ReaderKeyboardState extends State<ReaderKeyboard> {
   bool _onKey(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
     final key = event.logicalKey;
+    final keyboard = HardwareKeyboard.instance;
+    final cmd = keyboard.isMetaPressed || keyboard.isControlPressed;
+
+    // Cmd/Ctrl-modified: zoom controls.
+    if (cmd) {
+      if (key == LogicalKeyboardKey.equal ||
+          key == LogicalKeyboardKey.add ||
+          key == LogicalKeyboardKey.numpadAdd) {
+        return _fire(widget.onZoomIn);
+      }
+      if (key == LogicalKeyboardKey.minus || key == LogicalKeyboardKey.numpadSubtract) {
+        return _fire(widget.onZoomOut);
+      }
+      if (key == LogicalKeyboardKey.digit0 || key == LogicalKeyboardKey.numpad0) {
+        return _fire(widget.onZoomReset);
+      }
+      // Leave other Cmd/Ctrl combos (Cmd+W, Cmd+Q, …) to the system.
+      return false;
+    }
+
+    if (key == LogicalKeyboardKey.keyF) {
+      return _fire(widget.onToggleFullscreen);
+    }
     if (key == LogicalKeyboardKey.arrowRight ||
         key == LogicalKeyboardKey.arrowDown ||
         key == LogicalKeyboardKey.pageDown ||
@@ -74,6 +106,13 @@ class _ReaderKeyboardState extends State<ReaderKeyboard> {
       return true;
     }
     return false;
+  }
+
+  /// Invoke [cb] if present and report the key as handled; otherwise ignore it.
+  bool _fire(VoidCallback? cb) {
+    if (cb == null) return false;
+    cb();
+    return true;
   }
 
   @override

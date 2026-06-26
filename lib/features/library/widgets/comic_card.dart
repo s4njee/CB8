@@ -8,7 +8,10 @@ import '../../../data/models/comic_summary.dart';
 ///
 /// 2:3 cover with a format badge (top-right), favorite heart (bottom-right),
 /// a progress bar along the bottom edge, then title + page count below.
-class ComicCard extends StatelessWidget {
+///
+/// On desktop the card lifts slightly on hover and opens the action menu on
+/// right-click (same as long-press on touch).
+class ComicCard extends StatefulWidget {
   const ComicCard({super.key, required this.comic, this.onTap, this.onLongPress});
 
   final ComicSummary comic;
@@ -16,13 +19,30 @@ class ComicCard extends StatelessWidget {
   final VoidCallback? onLongPress;
 
   @override
+  State<ComicCard> createState() => _ComicCardState();
+}
+
+class _ComicCardState extends State<ComicCard> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      borderRadius: BorderRadius.circular(kCbRadius),
-      child: Column(
+    final comic = widget.comic;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        // Right-click opens the same menu as long-press.
+        onSecondaryTapUp: widget.onLongPress == null ? null : (_) => widget.onLongPress!(),
+        child: AnimatedScale(
+          scale: _hover ? 1.03 : 1.0,
+          duration: const Duration(milliseconds: 120),
+          child: InkWell(
+            onTap: widget.onTap,
+            onLongPress: widget.onLongPress,
+            borderRadius: BorderRadius.circular(kCbRadius),
+            child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Cover flexes to fill the space left after the text, so the card
@@ -77,6 +97,9 @@ class ComicCard extends StatelessWidget {
             style: theme.textTheme.labelSmall?.copyWith(color: CbColors.mutedForeground),
           ),
         ],
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -1,4 +1,8 @@
+import 'dart:io';
+
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_theme.dart';
@@ -42,6 +46,7 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   int _index = 0;
+  bool _dragging = false; // desktop drag-and-drop hover state
 
   @override
   void initState() {
@@ -130,44 +135,124 @@ class _AppShellState extends ConsumerState<AppShell> {
       ],
     );
 
-    if (wide) {
-      return Scaffold(
-        appBar: appBar,
-        body: Row(
-          children: [
-            NavigationRail(
+    final Widget shell = wide
+        ? Scaffold(
+            appBar: appBar,
+            body: Row(
+              children: [
+                NavigationRail(
+                  selectedIndex: _index,
+                  onDestinationSelected: (i) => setState(() => _index = i),
+                  labelType: NavigationRailLabelType.all,
+                  backgroundColor: CbColors.surface,
+                  destinations: [
+                    for (final d in _destinations)
+                      NavigationRailDestination(
+                        icon: Icon(d.icon),
+                        selectedIcon: Icon(d.selectedIcon),
+                        label: Text(d.label),
+                      ),
+                  ],
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(child: dest.body),
+              ],
+            ),
+          )
+        : Scaffold(
+            appBar: appBar,
+            body: dest.body,
+            bottomNavigationBar: NavigationBar(
               selectedIndex: _index,
               onDestinationSelected: (i) => setState(() => _index = i),
-              labelType: NavigationRailLabelType.all,
-              backgroundColor: CbColors.surface,
               destinations: [
                 for (final d in _destinations)
-                  NavigationRailDestination(
+                  NavigationDestination(
                     icon: Icon(d.icon),
                     selectedIcon: Icon(d.selectedIcon),
-                    label: Text(d.label),
+                    label: d.label,
                   ),
               ],
             ),
-            const VerticalDivider(width: 1),
-            Expanded(child: dest.body),
+          );
+
+    // Native macOS menu bar (no-op on other platforms — renders just `child`).
+    return PlatformMenuBar(
+      menus: [
+        PlatformMenu(
+          label: 'CB8',
+          menus: [
+            const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
+            const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.quit),
           ],
         ),
-      );
-    }
+        PlatformMenu(
+          label: 'File',
+          menus: [
+            PlatformMenuItem(
+              label: 'Import Files…',
+              shortcut: const SingleActivator(LogicalKeyboardKey.keyO, meta: true),
+              onSelected: importing
+                  ? null
+                  : () => ref.read(importControllerProvider.notifier).pickAndImport(),
+            ),
+          ],
+        ),
+        const PlatformMenu(
+          label: 'View',
+          menus: [
+            PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.toggleFullScreen),
+          ],
+        ),
+      ],
+      child: _wrapWithDropTarget(context, shell),
+    );
+  }
 
-    return Scaffold(
-      appBar: appBar,
-      body: dest.body,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: [
-          for (final d in _destinations)
-            NavigationDestination(
-              icon: Icon(d.icon),
-              selectedIcon: Icon(d.selectedIcon),
-              label: d.label,
+  /// On desktop, lets users drop CBZ/PDF/EPUB files (or folders) onto the window
+  /// to import them. A no-op passthrough on mobile (desktop_drop has no iOS).
+  Widget _wrapWithDropTarget(BuildContext context, Widget child) {
+    if (!(Platform.isMacOS || Platform.isWindows || Platform.isLinux)) return child;
+    final scheme = Theme.of(context).colorScheme;
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _dragging = true),
+      onDragExited: (_) => setState(() => _dragging = false),
+      onDragDone: (detail) {
+        setState(() => _dragging = false);
+        final paths = detail.files.map((f) => f.path).where((p) => p.isNotEmpty).toList();
+        if (paths.isNotEmpty) {
+          ref.read(importControllerProvider.notifier).importDropped(paths);
+        }
+      },
+      child: Stack(
+        children: [
+          child,
+          if (_dragging)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ColoredBox(
+                  color: scheme.primary.withValues(alpha: 0.10),
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 22),
+                      decoration: BoxDecoration(
+                        color: CbColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: scheme.primary, width: 2),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.file_download_outlined, size: 28),
+                          SizedBox(width: 12),
+                          Text('Drop CBZ / PDF / EPUB to import',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
         ],
       ),

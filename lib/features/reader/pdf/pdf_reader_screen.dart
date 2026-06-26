@@ -1,9 +1,13 @@
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import '../../../core/window_control.dart';
 import '../../../data/local_files.dart';
 import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
@@ -122,22 +126,49 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
     _controller.goToPage(pageNumber: target, anchor: PdfPageAnchor.all);
   }
 
-  void _handleTap(ReadingMode mode, Offset position) {
-    final width = MediaQuery.sizeOf(context).width;
-    if (mode != ReadingMode.scroll && position.dx < width * 0.33) {
-      _turn(mode, forward: false);
-    } else if (mode != ReadingMode.scroll && position.dx > width * 0.67) {
-      _turn(mode, forward: true);
-    } else {
-      setState(() => _chrome = !_chrome);
-    }
-  }
-
   void _jumpTo(int page) {
     _controller.goToPage(
       pageNumber: (page + 1).clamp(1, _pageCount == 0 ? 1 : _pageCount),
       anchor: PdfPageAnchor.all,
     );
+  }
+
+  void _zoomIn() => _zoomBy(1.3);
+
+  void _zoomOut() => _zoomBy(1 / 1.3);
+
+  /// Multiplicative zoom centred on the viewport. Direct (not zoom-stop based)
+  /// so it's predictable over the custom page layout.
+  void _zoomBy(double factor) {
+    if (!_controller.isReady) return;
+    // Zoom about the current view centre using the same public path the built-in
+    // zoom-stop methods use. (zoomOnLocalPosition recomputes the centre via
+    // globalToDocument(localToGlobal(..)!)! and silently no-ops if either is
+    // null — which it was over this huge multi-page horizontal layout.)
+    final target =
+        (_controller.currentZoom * factor).clamp(_controller.minScale, _controller.maxScale);
+    _controller.setZoom(_controller.centerPosition, target);
+  }
+
+  /// Reset zoom by re-fitting the current page to the viewport.
+  void _zoomReset() {
+    if (!_controller.isReady) return;
+    _controller.goToPage(
+      pageNumber: _controller.pageNumber ?? _page + 1,
+      anchor: PdfPageAnchor.all,
+    );
+  }
+
+  /// Cmd/Ctrl + mouse-wheel zooms (matches the trackpad pinch).
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final keyboard = HardwareKeyboard.instance;
+    if (!keyboard.isMetaPressed && !keyboard.isControlPressed) return;
+    if (event.scrollDelta.dy < 0) {
+      _zoomIn();
+    } else if (event.scrollDelta.dy > 0) {
+      _zoomOut();
+    }
   }
 
   @override
@@ -151,6 +182,12 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
         onPrev: () => _turn(mode, forward: false),
         onFirst: () => _jumpTo(0),
         onLast: () => _jumpTo(_pageCount > 0 ? _pageCount - 1 : 0),
+        onZoomIn: _zoomIn,
+        onZoomOut: _zoomOut,
+        onZoomReset: _zoomReset,
+        onToggleFullscreen: WindowControl.toggleFullscreen,
+        child: Listener(
+        onPointerSignal: _onPointerSignal,
         child: Stack(
         children: [
           if (_error != null)
@@ -198,16 +235,41 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
             ),
             // Tap layer ABOVE the viewer: captures taps (turn page / toggle
             // chrome) while pan/zoom drags fall through to the viewer below.
+            // Paged modes split into left/right turn zones (with a click cursor
+            // on desktop) and a centre zone that toggles the chrome.
             Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onTapUp: (d) => _handleTap(mode, d.localPosition),
-              ),
+              child: mode == ReadingMode.scroll
+                  ? GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onTapUp: (_) => setState(() => _chrome = !_chrome),
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: _TapZone(
+                            cursor: SystemMouseCursors.click,
+                            onTap: () => _turn(mode, forward: false),
+                          ),
+                        ),
+                        Expanded(
+                          child: _TapZone(
+                            onTap: () => setState(() => _chrome = !_chrome),
+                          ),
+                        ),
+                        Expanded(
+                          child: _TapZone(
+                            cursor: SystemMouseCursors.click,
+                            onTap: () => _turn(mode, forward: true),
+                          ),
+                        ),
+                      ],
+                    ),
             ),
           ],
           if (_chrome) _topBar(context, mode),
           if (_chrome && path != null) _bottomBar(context),
         ],
+        ),
         ),
       ),
     );
@@ -235,6 +297,12 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ),
+            if (Platform.isMacOS)
+              IconButton(
+                tooltip: 'Toggle fullscreen (f)',
+                icon: const Icon(Icons.fullscreen, color: Colors.white),
+                onPressed: WindowControl.toggleFullscreen,
+              ),
             PopupMenuButton<ReadingMode>(
               tooltip: 'Reading mode',
               icon: Icon(mode.icon, color: Colors.white),
@@ -290,6 +358,27 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
             Text('${_page + 1} / $count', style: const TextStyle(color: Colors.white)),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A translucent tap target with an optional desktop hover cursor. Taps fall
+/// through to the viewer below (so pan/zoom still work) while turning the page
+/// or toggling the chrome on a clean tap-up.
+class _TapZone extends StatelessWidget {
+  const _TapZone({required this.onTap, this.cursor = MouseCursor.defer});
+
+  final VoidCallback onTap;
+  final MouseCursor cursor;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: cursor,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapUp: (_) => onTap(),
       ),
     );
   }

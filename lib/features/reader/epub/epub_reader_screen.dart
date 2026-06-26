@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/local_files.dart';
 import '../../../data/models/comic_summary.dart';
+import '../../../core/window_control.dart';
 import '../../../data/repositories/providers.dart';
 import '../comic/reading_mode.dart';
 import '../reader_keyboard.dart';
@@ -226,6 +227,12 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
             icon: const Icon(Icons.text_fields),
             onPressed: path == null ? null : _openTypographySheet,
           ),
+          if (Platform.isMacOS)
+            IconButton(
+              tooltip: 'Toggle fullscreen (f)',
+              icon: const Icon(Icons.fullscreen),
+              onPressed: WindowControl.toggleFullscreen,
+            ),
         ],
       ),
       body: _error != null
@@ -235,6 +242,11 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
               : ReaderKeyboard(
                   onNext: () => _controller.next(),
                   onPrev: () => _controller.prev(),
+                  // Zoom maps to text size for a reflowable book.
+                  onZoomIn: () => _setFontSize((_fontSize + 2).clamp(12, 30)),
+                  onZoomOut: () => _setFontSize((_fontSize - 2).clamp(12, 30)),
+                  onZoomReset: () => _setFontSize(16),
+                  onToggleFullscreen: WindowControl.toggleFullscreen,
                   child: Column(
                   children: [
                     Expanded(

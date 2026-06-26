@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -56,6 +58,34 @@ class ImportController extends Notifier<ImportState> {
     state = const ImportState(running: true, message: 'Generating samples…');
     await _ingest(await writeSampleComics());
   }
+
+  /// Imports files/folders dropped onto the window (desktop drag-and-drop):
+  /// expands dropped directories, keeps only CBZ/PDF/EPUB, then ingests.
+  Future<void> importDropped(List<String> droppedPaths) async {
+    state = const ImportState(running: true, message: 'Importing…');
+    final files = <String>[];
+    for (final path in droppedPaths) {
+      switch (FileSystemEntity.typeSync(path)) {
+        case FileSystemEntityType.directory:
+          for (final entity in Directory(path).listSync(recursive: true, followLinks: false)) {
+            if (entity is File && _isSupported(entity.path)) files.add(entity.path);
+          }
+        case FileSystemEntityType.file:
+          if (_isSupported(path)) files.add(path);
+        default:
+          break;
+      }
+    }
+    if (files.isEmpty) {
+      state = const ImportState(running: false, message: 'No CBZ, PDF, or EPUB files in that drop');
+      return;
+    }
+    await importPaths(files);
+  }
+
+  /// True when [path]'s extension is one we ingest (case-insensitive).
+  bool _isSupported(String path) =>
+      supportedExtensions.contains(p.extension(path).replaceFirst('.', '').toLowerCase());
 
   /// Copies externally-picked files into app-owned storage, then ingests them.
   /// Copying makes paths stable across reinstalls (see [importIntoLibrary]).
