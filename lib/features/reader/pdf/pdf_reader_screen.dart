@@ -123,14 +123,31 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
     final maxPage = _pageCount > 0 ? _pageCount : cur;
     final target = forward ? cur + step : cur - step;
     if (target < 1 || target > maxPage) return;
-    _controller.goToPage(pageNumber: target, anchor: PdfPageAnchor.all);
+    _showPage(target - 1, mode);
   }
 
-  void _jumpTo(int page) {
-    _controller.goToPage(
-      pageNumber: (page + 1).clamp(1, _pageCount == 0 ? 1 : _pageCount),
-      anchor: PdfPageAnchor.all,
-    );
+  void _jumpTo(int page) => _showPage(page, ref.read(readingModeProvider));
+
+  /// Navigate so the [page0] (0-based) page is shown. In double-page mode this
+  /// fits the whole *spread* (the pair containing [page0]) so it stays centred.
+  /// Fitting a single page (`PdfPageAnchor.all`) instead would leave the spread
+  /// off-centre — shifted by whichever page of the pair you were on, which is
+  /// why it looked uncentered after switching from single-page mode.
+  void _showPage(int page0, ReadingMode mode) {
+    if (!_controller.isReady) return;
+    final count = _pageCount > 0 ? _pageCount : page0 + 1;
+    final clamped = page0.clamp(0, count - 1);
+    if (mode == ReadingMode.doublePage) {
+      final rects = _controller.layout.pageLayouts;
+      final left = (clamped ~/ 2) * 2; // left page of the pair (0-based)
+      if (left < rects.length) {
+        var area = rects[left];
+        if (left + 1 < rects.length) area = area.expandToInclude(rects[left + 1]);
+        _controller.goToArea(rect: area, anchor: PdfPageAnchor.all);
+        return;
+      }
+    }
+    _controller.goToPage(pageNumber: clamped + 1, anchor: PdfPageAnchor.all);
   }
 
   void _zoomIn() => _zoomBy(1.3);
@@ -153,10 +170,7 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
   /// Reset zoom by re-fitting the current page to the viewport.
   void _zoomReset() {
     if (!_controller.isReady) return;
-    _controller.goToPage(
-      pageNumber: _controller.pageNumber ?? _page + 1,
-      anchor: PdfPageAnchor.all,
-    );
+    _showPage((_controller.pageNumber ?? _page + 1) - 1, ref.read(readingModeProvider));
   }
 
   /// Cmd/Ctrl + mouse-wheel zooms (matches the trackpad pinch).
@@ -214,13 +228,9 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
                   if (mounted) setState(() => _pageCount = document.pages.length);
                   // The viewer's own initial goToPage runs before the viewport is
                   // measured, so the resume page can open zoomed-in past fit.
-                  // Re-fit once a frame after ready, when sizing is settled.
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    controller.goToPage(
-                      pageNumber: (_page + 1).clamp(1, document.pages.length),
-                      anchor: PdfPageAnchor.all,
-                    );
-                  });
+                  // Re-fit once a frame after ready, when sizing is settled — and
+                  // in double-page mode this centres the whole spread.
+                  WidgetsBinding.instance.addPostFrameCallback((_) => _showPage(_page, mode));
                 },
                 onPageChanged: (pageNumber) {
                   if (pageNumber == null) return;
