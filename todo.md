@@ -113,39 +113,58 @@ The readers are touch-first (`onTapUp` zones, swipe, pinch). Add desktop input:
 ## Mobile deployment (iOS / Android)
 This app is **mobile-first** — the desktop work above is additive. These are the
 deployment-readiness / polish items for shipping the iOS and Android builds.
-State below reflects the current `ios/` and `android/` config (checked 2026-06-26).
+
+### ✅ iOS status — runs & all three readers verified on the iPhone 17 sim (2026-06-26)
+- App **launches to the library** on iOS. Fixed a regression: the Phase 4
+  `PlatformMenuBar` (about/quit/fullscreen *provided* items) **threw on iOS**
+  ("no platform provided menu for …about") — now guarded to macOS only (it would
+  have broken Windows/Linux too).
+- **Name** shows "CB8"; a **branded CB8 launcher icon** (white CB + coral 8 on dark,
+  via `flutter_launcher_icons`) replaces the stock Flutter logo — verified on the
+  home screen.
+- **All three readers** open / render / page on iOS: CBZ (photo_view), PDF
+  (pdfrx/pdfium), EPUB (WKWebView/epub.js) — and **reading progress persists**
+  ("Continue Reading" repopulates after backing out).
+- Library grid, cover thumbnails, format badges, and filter chips all render natively.
+- Verified via the iPhone 17 simulator + `--dart-define=SEED=true` sample content.
+- **Physical 13" iPad Air (M2)**: builds, **code-signs** (team CBCWMTN2X2), installs,
+  and **launches cleanly on the real device** (no crash — the menu-bar fix holds on
+  hardware). A pixel screenshot of the tablet layout wasn't capturable this session
+  (iOS 26.5 dropped the legacy `screenshotr` service; the modern path needs a
+  root tunnel). The iPad is ≥768 pt wide → it uses the same `NavigationRail` wide
+  layout already verified on macOS.
 
 ### Shared
-- [ ] **App icons + splash**: no `flutter_launcher_icons` / `flutter_native_splash` wired yet — add them and generate icon sets + launch screens for both platforms (still the default Flutter icon).
-- [ ] **Display name**: Android label is still `cb8_flutter`; set a proper "CB8" name on both (iOS already has `CFBundleDisplayName`).
+- [x] **App icons**: `flutter_launcher_icons` wired; CB8 wordmark (source in `assets/icon/`) regenerated iOS/Android (incl. adaptive)/macOS/web icon sets. Verified on the iOS home screen. *(Splash via `flutter_native_splash` still TODO.)*
+- [x] **Display name**: "CB8" on both (iOS `CFBundleDisplayName`, Android `android:label`). Verified on the iOS home screen.
 - [ ] **Versioning**: drive store `versionName`/`versionCode` (Android) and `CFBundle*Version` (iOS) from `pubspec.yaml` `version:`; pick a bump strategy.
 - [ ] **Open-in / file associations**: register CBZ/PDF/EPUB so the OS share sheet / Files can hand a file to the importer (import is in-app only today).
 - [ ] **`.local` server reachability**: the app connects to `mars.local:8002` over **plain HTTP** — see the per-platform cleartext/ATS + local-network items below (this is the most likely "works in debug, fails in release" trap).
 
 ### Phase 9 — iOS (TestFlight / App Store)
 - [ ] **Signing**: Apple Developer team + bundle id + provisioning set in `Runner.xcodeproj` (currently unset for distribution).
-- [ ] **Tighten ATS**: `Info.plist` currently sets `NSAllowsArbitraryLoads = true` (wide open). Scope it to the server host (`NSExceptionDomains`) or use `NSAllowsLocalNetworking`; App Store review pushes back on blanket arbitrary loads.
-- [ ] **Local-network permission**: add `NSLocalNetworkUsageDescription` (+ `NSBonjourServices` if discovering) — connecting to a `.local` host triggers the iOS 14+ local-network prompt; without the string the connection silently fails.
+- [x] **ATS** *(decision: keep open)*: `NSAllowsArbitraryLoads = true` is intentional — CB8 is a client for *user-specified self-hosted servers* (any host, possibly plain HTTP), like Plex/Jellyfin clients. Added a justifying comment for review. Don't scope to local-only — that would break remote HTTP servers.
+- [x] **Local-network permission**: added `NSLocalNetworkUsageDescription` — connecting to a `.local` host resolves over mDNS and triggers the iOS 14+ local-network prompt.
 - [ ] **App privacy manifest**: add the app's own `PrivacyInfo.xcprivacy` (only a Pod's exists today) — declare required-reason APIs (UserDefaults, file timestamps) and "no data collected"; required by App Store.
-- [ ] **App icon set** (`Assets.xcassets/AppIcon`, all sizes) + launch screen.
-- [ ] **Usage strings** for any `file_picker`/photo access actually used (document picker needs none; add photo strings only if reached).
-- [ ] **Files-app integration**: `UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace` if users should drop files into the app's Documents folder.
+- [x] **App icon set** (`Assets.xcassets/AppIcon`, all sizes) — CB8 icon generated + verified on device home screen. *(LaunchScreen storyboard still the Flutter default.)*
+- [x] **Usage strings**: confirmed not needed for the `file_picker` document-picker path (no photo access reached).
+- [x] **Files-app integration**: added `UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace`.
 - [ ] **Deployment target / iPad**: target is iOS 13.0 — confirm that's intended; sanity-check iPad size classes + supported orientations.
 - [ ] **Ship**: `flutter build ipa` → App Store Connect / TestFlight; content rating + privacy-policy URL.
 
 ### Phase 10 — Android (Play Store)
-- [ ] **Cleartext to the server** *(blocker for release)*: no `usesCleartextTraffic` / `networkSecurityConfig` set — Android 9+ blocks the `mars.local:8002` HTTP call in release. Add a `network_security_config.xml` allowing that host (or move to HTTPS).
-- [ ] **INTERNET permission**: the main `AndroidManifest.xml` has no `uses-permission` — INTERNET is only present via the debug manifest, so **release builds can't reach the server**. Add `<uses-permission android:name="android.permission.INTERNET"/>` to the main manifest.
+- [x] **Cleartext to the server** *(was a release blocker)*: added `android:usesCleartextTraffic="true"` (kept broad on purpose — same self-hosted-client reasoning as iOS ATS; a host-scoped `network_security_config.xml` would break remote HTTP servers). *Not yet exercised on an Android device/emulator.*
+- [x] **INTERNET permission** *(was a release blocker)*: added `<uses-permission android:name="android.permission.INTERNET"/>` to the main manifest. *Not yet exercised on Android.*
 - [ ] **Release signing**: `signingConfig` is still `debug`. Create a keystore + `key.properties` (git-ignored) and a release `signingConfig` in `android/app/build.gradle`.
 - [ ] **SDK levels**: `minSdk/targetSdk/compileSdk` inherit the Flutter defaults — pin and confirm `targetSdk` meets the current Play floor.
-- [ ] **Adaptive icon** (foreground/background + monochrome) across mipmap densities; splash.
+- [x] **Adaptive icon**: generated by `flutter_launcher_icons` (foreground = CB8 mark, background `#0B0B0E`) across densities. *Not visually verified on Android.* *(Splash via `flutter_native_splash` still TODO.)*
 - [ ] **R8/ProGuard**: enable release shrinking + keep rules for drift/sqlite3, pdfrx (pdfium), and the inappwebview EPUB engine; verify a release build still reads all three formats.
 - [ ] **16 KB page size**: confirm bundled native libs (sqlite3, pdfium) are 16 KB-aligned for the Android 15 requirement.
 - [ ] **Edge-to-edge / predictive back**: handle the Android 15 edge-to-edge default; opt into predictive back if desired.
 - [ ] **Ship**: `flutter build appbundle` → Play Console listing, data-safety form, content rating.
 
 ### Phase 11 — Mobile testing
-- [ ] On a real iOS + a real Android device: import CBZ/PDF/EPUB → cover → open → page (touch) → progress persists on reopen.
+- [x] **iOS** (iPhone 17 sim): seeded CBZ/PDF/EPUB → covers → opened each reader → paged (touch) → progress persisted ("Continue Reading"). Physical iPad Air: clean build/sign/install/launch (see iOS status block). *(Android device pass still pending — no emulator/device available here.)*
 - [ ] Server (hybrid) mode over the LAN: add the CB8 connection, log in, browse, read, confirm progress sync.
 - [ ] **Release-build** smoke test on both (signed, shrinking on) — this is what surfaces the ATS / cleartext / INTERNET / ProGuard issues that debug builds hide.
 

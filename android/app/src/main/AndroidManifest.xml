@@ -1,8 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Needed for the hybrid/server mode; without this in the *main* manifest,
+         release builds (debug manifest aside) can't reach the CB8 server. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="cb8_flutter"
+        android:label="CB8"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

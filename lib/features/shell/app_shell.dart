@@ -176,7 +176,12 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
           );
 
-    // Native macOS menu bar (no-op on other platforms — renders just `child`).
+    final Widget content = _wrapWithDropTarget(context, shell);
+
+    // Native macOS menu bar. Guarded to macOS: the `PlatformProvidedMenuItem`s
+    // (about/quit/toggleFullScreen) only exist on macOS and throw on iOS /
+    // Windows / Linux ("no platform provided menu for ...").
+    if (!Platform.isMacOS) return content;
     return PlatformMenuBar(
       menus: [
         PlatformMenu(
@@ -205,7 +210,7 @@ class _AppShellState extends ConsumerState<AppShell> {
           ],
         ),
       ],
-      child: _wrapWithDropTarget(context, shell),
+      child: content,
     );
   }
 

@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Cb8 Flutter</string>
+	<string>CB8</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -49,11 +49,24 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- The app is a client for self-hosted CB8 servers the user points it at,
+	     which may be plain HTTP on any host — so arbitrary loads are intentional
+	     (cf. Plex/Jellyfin clients). -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- Connecting to a server by its .local name (e.g. mars.local) resolves over
+	     mDNS, which triggers the iOS 14+ local-network prompt. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>CB8 connects to your CB8 server on your local network to browse and read your library.</string>
+	<!-- Expose the app's Documents folder in Files and let comics opened from
+	     other apps open in place. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
