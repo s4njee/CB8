@@ -31,6 +31,8 @@ class ConnectionSwitcher extends ConsumerWidget {
         switch (value) {
           case '__add__':
             await _showAddServer(context, ref);
+          case '__manage__':
+            await _showManageServers(context, ref);
           case '__signin__':
             final active = state.active;
             if (active != null) await _showSignIn(context, ref, active);
@@ -64,6 +66,17 @@ class ConnectionSwitcher extends ConsumerWidget {
           ),
         ],
         const PopupMenuDivider(),
+        if (state.connections.isNotEmpty)
+          const PopupMenuItem(
+            value: '__manage__',
+            child: Row(
+              children: [
+                Icon(Icons.dns_outlined, size: 18),
+                SizedBox(width: 10),
+                Text('Manage servers…'),
+              ],
+            ),
+          ),
         const PopupMenuItem(value: '__add__', child: Text('Add server…')),
       ],
       child: Padding(
@@ -106,6 +119,87 @@ Future<void> _showSignIn(BuildContext context, WidgetRef ref, Connection conn) a
     context: context,
     builder: (context) => _SignInDialog(connection: conn),
   );
+}
+
+Future<void> _showManageServers(BuildContext context, WidgetRef ref) async {
+  await showDialog<void>(
+    context: context,
+    builder: (context) => const _ManageServersDialog(),
+  );
+}
+
+/// Lists saved servers and lets the user remove them. Removing a server only
+/// forgets it on this device (and signs out of it) — the server's library is
+/// untouched. Removing the active server falls back to the on-device library.
+class _ManageServersDialog extends ConsumerWidget {
+  const _ManageServersDialog();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(connectionsProvider);
+    final servers = state.connections;
+    return AlertDialog(
+      backgroundColor: const Color(0xFF141414),
+      title: const Text('Manage servers'),
+      content: SizedBox(
+        width: 360,
+        child: servers.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('No saved servers.', style: TextStyle(color: Colors.white70)),
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final c in servers)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        c.id == state.activeId ? Icons.cloud_done_outlined : Icons.cloud_outlined,
+                        size: 20,
+                      ),
+                      title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(
+                        c.baseUrl,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: Colors.white54),
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline, color: Color(0xFFE05252)),
+                        tooltip: 'Remove ${c.name}',
+                        onPressed: () => _confirmRemove(context, ref, c),
+                      ),
+                    ),
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done')),
+      ],
+    );
+  }
+}
+
+Future<void> _confirmRemove(BuildContext context, WidgetRef ref, Connection conn) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: const Color(0xFF141414),
+      title: Text('Remove ${conn.name}?'),
+      content: const Text(
+        'Forgets this server on this device and signs you out of it. The library '
+        'on the server is not affected.',
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  await ref.read(connectionsProvider.notifier).removeConnection(conn.id);
+  ref.invalidate(sessionStatusProvider);
 }
 
 /// Sign in to an already-saved server (upgrades a guest session to a real one).
