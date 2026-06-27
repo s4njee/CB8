@@ -204,6 +204,16 @@ final activeSourceProvider = Provider<LibrarySource>((ref) {
   return ref.watch(remoteSourceProvider(active));
 });
 
+/// Auth state of the active source, for the guest-mode indicator. Null when the
+/// on-device library is active (always read/write); otherwise the active remote
+/// connection's [RemoteSessionState]. Re-runs when the active connection changes;
+/// invalidate it after a sign-in to refresh the badge.
+final sessionStatusProvider = FutureProvider<RemoteSessionState?>((ref) async {
+  final source = ref.watch(activeSourceProvider);
+  if (source is! RemoteSource) return null;
+  return source.sessionState();
+});
+
 /// UI-driven query state for the main library views.
 final libraryQueryProvider =
     NotifierProvider<LibraryQueryController, LibraryQuery>(LibraryQueryController.new);

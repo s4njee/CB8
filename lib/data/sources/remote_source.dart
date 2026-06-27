@@ -8,6 +8,23 @@ import '../models/comic_summary.dart';
 import '../models/groups.dart';
 import 'library_source.dart';
 
+/// Auth state of a [RemoteSource]'s current session — drives the guest-mode
+/// indicator and gates write features.
+enum RemoteSessionState {
+  /// A real signed-in user: full read/write.
+  authenticated,
+
+  /// Guest access only: can browse, but the server 401s writes (progress,
+  /// favorites), so nothing is saved.
+  guest,
+
+  /// No session and guest access is disabled: the server is unusable.
+  unauthenticated,
+
+  /// The session endpoint couldn't be reached.
+  offline,
+}
+
 /// Client for a CB8-compatible server (the hybrid "server mode").
 ///
 /// Endpoints and field names mirror `src/main/webServer/routes/*` and
@@ -67,29 +84,30 @@ class RemoteSource implements LibrarySource {
     } catch (_) {/* best effort */}
   }
 
-  /// Whether the session is usable at all — a real login *or* guest access.
-  /// Use this for connections added without credentials (read-only browsing).
-  Future<bool> isAuthenticated() async {
+  /// The kind of session the current cookie has on this server.
+  Future<RemoteSessionState> sessionState() async {
     try {
       final res = await _dio.get<Map<String, dynamic>>('/api/auth/session');
       final data = res.data;
-      return data?['authenticated'] == true || data?['guestAccess'] == true;
+      if (data?['authenticated'] == true) return RemoteSessionState.authenticated;
+      if (data?['guestAccess'] == true) return RemoteSessionState.guest;
+      return RemoteSessionState.unauthenticated;
     } catch (_) {
-      return false;
+      return RemoteSessionState.offline;
     }
+  }
+
+  /// Whether the session is usable at all — a real login *or* guest access.
+  /// Use this for connections added without credentials (read-only browsing).
+  Future<bool> isAuthenticated() async {
+    final s = await sessionState();
+    return s == RemoteSessionState.authenticated || s == RemoteSessionState.guest;
   }
 
   /// Whether the session belongs to a real signed-in user (not guest access).
   /// Writes (progress, favorites) require this — the server 401s guest writes —
   /// so a credentialed connection must verify with this, not [isAuthenticated].
-  Future<bool> isLoggedIn() async {
-    try {
-      final res = await _dio.get<Map<String, dynamic>>('/api/auth/session');
-      return res.data?['authenticated'] == true;
-    } catch (_) {
-      return false;
-    }
-  }
+  Future<bool> isLoggedIn() async => await sessionState() == RemoteSessionState.authenticated;
 
   /// `Cookie` header for image/file requests made outside dio (NetworkImage,
   /// pdfrx, epub viewer), so authenticated thumbnails/pages load.
