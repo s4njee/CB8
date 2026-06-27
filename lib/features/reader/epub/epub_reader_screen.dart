@@ -77,6 +77,13 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
   Timer? _readyKick;
   ReadingMode? _kickArmedFor;
 
+  // epub.js reports `relocated.progress` as 0.0 until its locations index finishes
+  // generating (signalled by onLocationLoaded). Persisting that early-zero would
+  // reset the saved page on every open, so progress writes are gated on this flag.
+  // It re-arms on a mode change, which remounts the viewer and regenerates locations.
+  bool _locationsReady = false;
+  ReadingMode? _locationsModeKey;
+
   @override
   void initState() {
     super.initState();
@@ -152,20 +159,61 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
   }
 
   void _onRelocated(EpubLocation location) {
-    _progress = location.progress.clamp(0, 1);
-    _currentCfi = location.startCfi; // resume point if the mode (and viewer) changes
+    _currentCfi = location.startCfi; // exact resume point; the CFI is always valid
+    // Until epub.js has generated its locations index, `location.progress` is 0.0
+    // even mid-book (e.g. the relocate fired while resuming into a saved CFI).
+    // Writing that back would reset the catalog's page/percentage to the start on
+    // every open, so until locations are ready we persist only the CFI and leave
+    // the page untouched. _onLocationLoaded backfills a real page once ready.
+    if (_locationsReady) {
+      _progress = location.progress.clamp(0, 1);
+      _persistProgress();
+    } else {
+      ref.read(activeSourceProvider).setProgress(
+            widget.comic.id,
+            location: location.startCfi,
+          );
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Fires once epub.js has generated its locations index — the point after which
+  /// `relocated` carries a trustworthy `progress`. epub.js does not re-emit a
+  /// relocate at this moment, so we read the current position's percentage straight
+  /// from the saved CFI and persist a real page now. This fixes both the in-reader
+  /// progress bar and the catalog progress when resuming a partially-read book.
+  Future<void> _onLocationLoaded() async {
+    _locationsReady = true;
+    final wv = _controller.webViewController;
+    final cfi = _currentCfi;
+    if (wv == null || cfi == null || cfi.isEmpty) return;
+    final raw = await wv.evaluateJavascript(
+      source: "typeof book !== 'undefined' && book.locations ? "
+          'book.locations.percentageFromCfi("$cfi") : null',
+    );
+    final pct = raw is num ? raw.toDouble() : double.tryParse('$raw');
+    if (pct == null) return;
+    _progress = pct.clamp(0, 1);
+    _persistProgress();
+    if (mounted) setState(() {});
+  }
+
+  /// Writes the current reading position (page + CFI, and `completed` at the end)
+  /// to the active source. Page is derived from the reading fraction; denom keeps
+  /// single-chapter books sane.
+  void _persistProgress() {
     final pageCount = widget.comic.pageCount;
-    // Drive the catalog progress bar from the reading fraction; keep the CFI for
-    // an exact resume. denom keeps single-chapter books sane.
     final denom = pageCount > 1 ? pageCount - 1 : 1;
     final page = (_progress * denom).round();
+    // Write an explicit bool (not `true`-or-null): paging back from the end must
+    // be able to *clear* completed, otherwise a book that ever hit ~100% stays
+    // completed forever and never returns to the Continue Reading shelf.
     ref.read(activeSourceProvider).setProgress(
           widget.comic.id,
           page: page,
-          location: location.startCfi,
-          completed: _progress >= 0.999 ? true : null,
+          location: _currentCfi,
+          completed: _progress >= 0.999,
         );
-    if (mounted) setState(() {});
   }
 
   void _setFontSize(double size) {
@@ -274,6 +322,14 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
     // Resume from wherever we are now (or the saved location on first open) so a
     // mode switch — which remounts the viewer — doesn't lose the reader's place.
     final resumeCfi = _currentCfi ?? widget.comic.lastLocation;
+    // A mode change remounts EpubViewer (ValueKey(mode)), which regenerates the
+    // locations index from scratch — so progress is briefly untrustworthy again
+    // until onLocationLoaded re-fires. Re-arm the gate so the interim relocate at
+    // progress 0 doesn't clobber the saved page.
+    if (_locationsModeKey != mode) {
+      _locationsModeKey = mode;
+      _locationsReady = false;
+    }
     final settings = _settingsFor(mode);
     // The EpubViewer remounts on each mode change (ValueKey(mode)); on macOS,
     // re-arm the ready-kick for the new WebView so the book reloads.
@@ -352,6 +408,7 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
                               _readyKick?.cancel();
                               _applyReaderOverrides();
                             },
+                            onLocationLoaded: _onLocationLoaded,
                             onRelocated: _onRelocated,
                           );
                           // Tap-to-turn. The package only wires tap zones on

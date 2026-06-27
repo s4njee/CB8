@@ -64,10 +64,12 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
 
   void _saveProgress(int page) {
     final completed = _pageCount > 0 && page >= _pageCount - 1;
+    // Explicit bool so paging back from the last page clears `completed` and the
+    // book returns to Continue Reading (a `true`-or-null write could never undo it).
     ref.read(activeSourceProvider).setProgress(
           widget.comic.id,
           page: page,
-          completed: completed ? true : null,
+          completed: completed,
         );
   }
 
