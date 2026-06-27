@@ -330,26 +330,70 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
                   child: Column(
                   children: [
                     Expanded(
-                      child: EpubViewer(
-                        // Remount on mode change so fresh displaySettings (flow/
-                        // spread) actually take effect — the live setters don't.
-                        key: ValueKey(mode),
-                        epubController: _controller,
-                        epubSource: EpubSource.fromFile(File(path)),
-                        initialCfi: (resumeCfi != null && resumeCfi.isNotEmpty) ? resumeCfi : null,
-                        displaySettings: EpubDisplaySettings(
-                          fontSize: _fontSize.round(),
-                          flow: settings.flow,
-                          spread: settings.spread,
-                          snap: true,
-                          theme: EpubTheme.dark(),
-                        ),
-                        onEpubLoaded: () {
-                          _loaded = true;
-                          _readyKick?.cancel();
-                          _applyReaderOverrides();
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final viewer = EpubViewer(
+                            // Remount on mode change so fresh displaySettings
+                            // (flow/spread) actually take effect.
+                            key: ValueKey(mode),
+                            epubController: _controller,
+                            epubSource: EpubSource.fromFile(File(path)),
+                            initialCfi:
+                                (resumeCfi != null && resumeCfi.isNotEmpty) ? resumeCfi : null,
+                            displaySettings: EpubDisplaySettings(
+                              fontSize: _fontSize.round(),
+                              flow: settings.flow,
+                              spread: settings.spread,
+                              snap: true,
+                              theme: EpubTheme.dark(),
+                            ),
+                            onEpubLoaded: () {
+                              _loaded = true;
+                              _readyKick?.cancel();
+                              _applyReaderOverrides();
+                            },
+                            onRelocated: _onRelocated,
+                          );
+                          // Tap-to-turn. The package only wires tap zones on
+                          // Android, and on iOS the WebView's native text-
+                          // selection layer wins the gesture arena and swallows
+                          // the tap — surfacing a "translate" popup instead of
+                          // turning the page. An *opaque* Flutter gesture layer on
+                          // top consumes the touch before the platform view sees
+                          // it, so the selection layer never fires and a tap in
+                          // the left/right third reliably turns the page (works on
+                          // real touches and the simulator's mouse alike). The
+                          // middle third is a dead zone, leaving room for a future
+                          // tap-to-toggle-chrome. Scroll mode keeps native drag
+                          // scrolling, so it skips the overlay entirely.
+                          if (mode == ReadingMode.scroll) return viewer;
+                          final w = constraints.maxWidth;
+                          return Stack(
+                            children: [
+                              Positioned.fill(child: viewer),
+                              Positioned(
+                                left: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: w / 3,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: _controller.prev,
+                                ),
+                              ),
+                              Positioned(
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: w / 3,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: _controller.next,
+                                ),
+                              ),
+                            ],
+                          );
                         },
-                        onRelocated: _onRelocated,
                       ),
                     ),
                     _progressBar(context),
