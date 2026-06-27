@@ -1,5 +1,5 @@
 name: cb8_flutter
-description: "A new Flutter project."
+description: "CB8 — a cross-platform comic & e-book reader (CBZ, PDF, EPUB) with an optional self-hosted server mode."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev

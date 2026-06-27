@@ -1,0 +1,16 @@
+# Release signing for the Play Store build.
+#
+# Copy this file to android/key.properties (which is git-ignored) and fill in
+# your keystore details. When android/key.properties is present, the release
+# build in app/build.gradle.kts signs with it; otherwise it falls back to the
+# debug keystore so `flutter run --release` still works locally.
+#
+# Create a keystore with:
+#   keytool -genkey -v -keystore ~/cb8-upload.jks -keyalg RSA -keysize 2048 \
+#     -validity 10000 -alias cb8-upload
+#
+# storeFile may be absolute or relative to android/app/.
+storePassword=CHANGEME
+keyPassword=CHANGEME
+keyAlias=cb8-upload
+storeFile=/absolute/path/to/cb8-upload.jks

@@ -138,7 +138,7 @@ deployment-readiness / polish items for shipping the iOS and Android builds.
 ### Shared
 - [x] **App icons + splash**: CB8 wordmark icon via `flutter_launcher_icons` (iOS / Android adaptive / macOS / web) — verified on the iOS home screen + emulator. CB8 splash (mark on `#0B0B0E`) generated for iOS + Android (incl. Android 12 + dark). ⚠️ The `flutter_native_splash` **package** is intentionally NOT a dependency — it broke the iOS *release* build (ships a malformed SPM package: "public headers directory invalid") and the Android build (its module needs compileSdk 34). Only the generated *static* splash assets are kept; re-add the package temporarily to regenerate.
 - [x] **Display name**: "CB8" on both (iOS `CFBundleDisplayName`, Android `android:label`). Verified on the iOS home screen.
-- [ ] **Versioning**: drive store `versionName`/`versionCode` (Android) and `CFBundle*Version` (iOS) from `pubspec.yaml` `version:`; pick a bump strategy.
+- [x] **Versioning**: Android `versionName`/`versionCode` and iOS `CFBundle*Version` are driven from `pubspec.yaml` `version:` (`1.0.0+1`) via `flutter.versionName`/`flutter.versionCode`. Bump the `+build` for each store upload.
 - [ ] **Open-in / file associations**: register CBZ/PDF/EPUB so the OS share sheet / Files can hand a file to the importer (import is in-app only today).
 - [ ] **`.local` server reachability**: the app connects to `mars.local:8002` over **plain HTTP** — see the per-platform cleartext/ATS + local-network items below (this is the most likely "works in debug, fails in release" trap).
 
@@ -146,7 +146,7 @@ deployment-readiness / polish items for shipping the iOS and Android builds.
 - [ ] **Signing**: Apple Developer team + bundle id + provisioning set in `Runner.xcodeproj` (currently unset for distribution).
 - [x] **ATS** *(decision: keep open)*: `NSAllowsArbitraryLoads = true` is intentional — CB8 is a client for *user-specified self-hosted servers* (any host, possibly plain HTTP), like Plex/Jellyfin clients. Added a justifying comment for review. Don't scope to local-only — that would break remote HTTP servers.
 - [x] **Local-network permission**: added `NSLocalNetworkUsageDescription` — connecting to a `.local` host resolves over mDNS and triggers the iOS 14+ local-network prompt.
-- [ ] **App privacy manifest**: add the app's own `PrivacyInfo.xcprivacy` (only a Pod's exists today) — declare required-reason APIs (UserDefaults, file timestamps) and "no data collected"; required by App Store.
+- [x] **App privacy manifest**: added `ios/Runner/PrivacyInfo.xcprivacy` (no tracking, no data collected; required-reason APIs FileTimestamp `C617.1`, UserDefaults `CA92.1`, SystemBootTime `35F9.1`, DiskSpace `E174.1`) and wired it into the Runner target's resources in `project.pbxproj` (verified bundled by a release build).
 - [x] **App icon set** (`Assets.xcassets/AppIcon`, all sizes) — CB8 icon generated + verified on device home screen. *(LaunchScreen storyboard still the Flutter default.)*
 - [x] **Usage strings**: confirmed not needed for the `file_picker` document-picker path (no photo access reached).
 - [x] **Files-app integration**: added `UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace`.
@@ -156,10 +156,10 @@ deployment-readiness / polish items for shipping the iOS and Android builds.
 ### Phase 10 — Android (Play Store)
 - [x] **Cleartext to the server** *(was a release blocker)*: added `android:usesCleartextTraffic="true"` (kept broad on purpose — same self-hosted-client reasoning as iOS ATS; a host-scoped `network_security_config.xml` would break remote HTTP servers). Manifest builds + app runs on the `cb8_tablet` emulator (actual HTTP fetch to a server not exercised — no mock running this session).
 - [x] **INTERNET permission** *(was a release blocker)*: added `<uses-permission android:name="android.permission.INTERNET"/>` to the main manifest. Builds + runs on the emulator.
-- [ ] **Release signing**: `signingConfig` is still `debug`. Create a keystore + `key.properties` (git-ignored) and a release `signingConfig` in `android/app/build.gradle`.
-- [ ] **SDK levels**: `minSdk/targetSdk/compileSdk` inherit the Flutter defaults — pin and confirm `targetSdk` meets the current Play floor.
+- [~] **Release signing**: `build.gradle.kts` now reads `android/key.properties` (git-ignored) for a real release `signingConfig`, falling back to debug when absent. Template at `android/key.properties.example`. *Remaining (needs the user): create the actual upload keystore + `key.properties`.*
+- [x] **SDK levels**: pinned explicitly — `compileSdk = 36`, `minSdk = 24`, `targetSdk = 36` (meets the current Play target-API floor).
 - [x] **Adaptive icon + splash**: adaptive icon (foreground = CB8 mark, background `#0B0B0E`) and `android12splash`/`splash` drawables (incl. dark variants) generated across densities. In-app CB8 branding verified on the `cb8_tablet` emulator (launcher-icon glyph itself not separately screenshotted).
-- [ ] **R8/ProGuard**: enable release shrinking + keep rules for drift/sqlite3, pdfrx (pdfium), and the inappwebview EPUB engine; verify a release build still reads all three formats.
+- [x] **R8/ProGuard**: `isMinifyEnabled` + `isShrinkResources` on for release, with `android/app/proguard-rules.pro` keep rules (inappwebview/webkit + sqflite; drift/sqlite3/pdfrx are Dart+FFI so R8 doesn't touch them). **Release `app-release.aab` builds clean** (icon tree-shaking intact, −99.7%). *Still to verify on-device: a release install actually opens all three formats.*
 - [ ] **16 KB page size**: confirm bundled native libs (sqlite3, pdfium) are 16 KB-aligned for the Android 15 requirement.
 - [ ] **Edge-to-edge / predictive back**: handle the Android 15 edge-to-edge default; opt into predictive back if desired.
 - [ ] **Ship**: `flutter build appbundle` → Play Console listing, data-safety form, content rating.

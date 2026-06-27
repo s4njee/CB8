@@ -1,11 +1,11 @@
 {
-    "name": "cb8_flutter",
-    "short_name": "cb8_flutter",
+    "name": "CB8",
+    "short_name": "CB8",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0B0B0E",
+    "theme_color": "#0B0B0E",
+    "description": "A cross-platform comic & e-book reader (CBZ, PDF, EPUB) with an optional self-hosted server mode.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
