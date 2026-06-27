@@ -133,21 +133,34 @@ class ConnectionsController extends Notifier<ConnectionsState> {
   /// Returns null on success or a human-readable error (rolling back the add).
   Future<String?> addAndConnect(String name, String url,
       {String? username, String? password}) async {
-    final conn = await addConnection(name, url);
+    final baseUrl = url.trim();
+    final hasCreds = username != null && username.isNotEmpty;
+    // base_url is UNIQUE and there's no separate "sign in" screen, so re-adding
+    // an already-saved server is how you attach credentials to it. Reuse the
+    // existing row instead of inserting — a duplicate INSERT throws before login
+    // ever runs, which is exactly why a guest connection couldn't be upgraded.
+    final existing = state.connections.where((c) => c.baseUrl == baseUrl).firstOrNull;
+    final conn = existing ?? await addConnection(name, baseUrl);
     final source = ref.read(remoteSourceProvider(conn));
     try {
-      if (username != null && username.isNotEmpty) {
+      if (hasCreds) {
         await source.login(username, password ?? '');
       }
-      if (!await source.isAuthenticated()) {
-        await removeConnection(conn.id);
-        return 'Could not authenticate. Check the URL and credentials.';
+      // With credentials, require a *real* login — guest access can't save
+      // progress (writes 401), so silently accepting it would just recreate the
+      // "nothing persists" bug. Without credentials, guest access is fine.
+      final ok = hasCreds ? await source.isLoggedIn() : await source.isAuthenticated();
+      if (!ok) {
+        if (existing == null) await removeConnection(conn.id);
+        return hasCreds
+            ? 'Sign-in failed. Check the username and password.'
+            : 'Could not connect. Check the URL.';
       }
-      if (username != null && username.isNotEmpty) await setLastUsername(conn.id, username);
+      if (hasCreds) await setLastUsername(conn.id, username);
       await setActive(conn.id);
       return null;
     } catch (e) {
-      await removeConnection(conn.id);
+      if (existing == null) await removeConnection(conn.id);
       return 'Connection failed: ${_short(e)}';
     }
   }

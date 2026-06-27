@@ -67,12 +67,25 @@ class RemoteSource implements LibrarySource {
     } catch (_) {/* best effort */}
   }
 
-  /// Whether the current cookie is an authenticated (or guest-allowed) session.
+  /// Whether the session is usable at all — a real login *or* guest access.
+  /// Use this for connections added without credentials (read-only browsing).
   Future<bool> isAuthenticated() async {
     try {
       final res = await _dio.get<Map<String, dynamic>>('/api/auth/session');
       final data = res.data;
       return data?['authenticated'] == true || data?['guestAccess'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Whether the session belongs to a real signed-in user (not guest access).
+  /// Writes (progress, favorites) require this — the server 401s guest writes —
+  /// so a credentialed connection must verify with this, not [isAuthenticated].
+  Future<bool> isLoggedIn() async {
+    try {
+      final res = await _dio.get<Map<String, dynamic>>('/api/auth/session');
+      return res.data?['authenticated'] == true;
     } catch (_) {
       return false;
     }
@@ -172,11 +185,19 @@ class RemoteSource implements LibrarySource {
 
   @override
   Future<void> setProgress(String id, {int? page, String? location, bool? completed}) async {
-    await _dio.put('/api/comics/$id/progress', data: {
-      'page': ?page,
-      'location': ?location,
-      'completed': ?completed,
-    });
+    // Best-effort and fire-and-forget from the readers: a failed write (e.g. a
+    // 401 from a guest/expired session) must never surface as an unhandled
+    // exception that crashes the reader. Swallow but log.
+    try {
+      await _dio.put('/api/comics/$id/progress', data: {
+        'page': ?page,
+        'location': ?location,
+        'completed': ?completed,
+      });
+    } catch (e) {
+      // ignore: avoid_print
+      print('setProgress failed for $id: $e');
+    }
   }
 
   @override
