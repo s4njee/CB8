@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,8 +6,11 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/theme_controller.dart';
 import '../import/import_controller.dart';
 
-/// Settings — for the foundation this exposes the accent-theme picker (CB8's
-/// theme menu). Connections, import, and reader prefs land in later milestones.
+/// Settings: appearance (accent color) and library import.
+///
+/// Server connections are managed from the app-bar connection switcher
+/// (`ConnectionSwitcher`), not here. Sample-comic generation is a debug-only aid
+/// and is hidden in release builds.
 class SettingsScreen extends ConsumerWidget {
   /// Creates the Settings screen.
   const SettingsScreen({super.key});
@@ -34,12 +38,8 @@ class SettingsScreen extends ConsumerWidget {
             ],
           ),
           const Divider(height: 40),
-          const ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.cloud_outlined),
-            title: Text('Connections'),
-            subtitle: Text('Connect to a CB8 server — coming soon'),
-          ),
+          const Text('Library', style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.file_download_outlined),
@@ -51,16 +51,19 @@ class SettingsScreen extends ConsumerWidget {
               Navigator.of(context).maybePop();
             },
           ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.auto_awesome_outlined),
-            title: const Text('Load sample comics'),
-            subtitle: const Text('Generate a few demo CBZ books to try the reader'),
-            onTap: () {
-              ref.read(importControllerProvider.notifier).importSamples();
-              Navigator.of(context).maybePop();
-            },
-          ),
+          // Synthetic sample content is a development aid only — hidden in
+          // release builds.
+          if (kDebugMode)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.auto_awesome_outlined),
+              title: const Text('Load sample comics'),
+              subtitle: const Text('Generate demo CBZ books (debug builds only)'),
+              onTap: () {
+                ref.read(importControllerProvider.notifier).importSamples();
+                Navigator.of(context).maybePop();
+              },
+            ),
         ],
       ),
     );
