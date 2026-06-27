@@ -21,12 +21,16 @@ import 'comic_page_source.dart';
 ///     Flutter's image cache retry endlessly, storming pdfium with more failing
 ///     calls until it crashed.
 class PdfPageSource implements ComicPageSource {
+  /// Wraps an open [PdfDocument]; [renderWidth] is the target raster width.
   PdfPageSource(this._doc, {this.renderWidth = 1600});
 
   final PdfDocument _doc;
+
+  /// Target width (px) each page is rasterized to before fit-to-screen scaling.
   final double renderWidth;
   final _RenderGate _gate = _RenderGate();
 
+  /// Opens a PDF from a file path and wraps it as a page source.
   static Future<PdfPageSource> openFile(String path) async {
     return PdfPageSource(await PdfDocument.openFile(path));
   }

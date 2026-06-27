@@ -12,9 +12,13 @@ import 'library_grid.dart';
 /// and series browsers. Cards open the reader on tap and the action sheet on
 /// long-press.
 class BrowseGridScreen extends ConsumerWidget {
+  /// Creates a titled grid showing the results of [query].
   const BrowseGridScreen({super.key, required this.title, required this.query});
 
+  /// App-bar title.
   final String title;
+
+  /// Query whose results are displayed.
   final LibraryQuery query;
 
   @override

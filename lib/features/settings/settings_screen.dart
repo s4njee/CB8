@@ -8,6 +8,7 @@ import '../import/import_controller.dart';
 /// Settings — for the foundation this exposes the accent-theme picker (CB8's
 /// theme menu). Connections, import, and reader prefs land in later milestones.
 class SettingsScreen extends ConsumerWidget {
+  /// Creates the Settings screen.
   const SettingsScreen({super.key});
 
   @override

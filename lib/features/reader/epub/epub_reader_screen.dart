@@ -17,12 +17,21 @@ import '../reader_keyboard.dart';
 /// `font-family` theme override. The CSS lists web-safe fallbacks so the book
 /// renders consistently across iOS/Android/macOS WebViews.
 enum EpubFont {
+  /// Sans-serif family (default).
   sansSerif('Sans Serif', 'Helvetica, Arial, sans-serif'),
+
+  /// Serif family.
   serif('Serif', 'Georgia, "Times New Roman", serif'),
+
+  /// Monospace family.
   mono('Monospace', 'Menlo, Consolas, monospace');
 
   const EpubFont(this.label, this.css);
+
+  /// Menu label for the font.
   final String label;
+
+  /// CSS `font-family` value injected into the epub.js content.
   final String css;
 }
 
@@ -31,8 +40,10 @@ enum EpubFont {
 /// paginated reflow, font-size/family control, light/dark theming, and CFI
 /// locations that map directly onto our `lastLocation` column for resume.
 class EpubReaderScreen extends ConsumerStatefulWidget {
+  /// Creates an EPUB reader for [comic].
   const EpubReaderScreen({super.key, required this.comic});
 
+  /// The book to open.
   final ComicSummary comic;
 
   @override

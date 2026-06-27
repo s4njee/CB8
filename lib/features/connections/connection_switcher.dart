@@ -7,6 +7,7 @@ import '../../data/repositories/providers.dart';
 /// App-bar control that shows the active connection and lets the user switch
 /// between the on-device library and saved CB8 servers (or add one).
 class ConnectionSwitcher extends ConsumerWidget {
+  /// Creates the connection switcher control.
   const ConnectionSwitcher({super.key});
 
   @override

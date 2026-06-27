@@ -26,8 +26,10 @@ import '../reader_keyboard.dart';
 /// Pinch-zoom is built in. Tap zones (left/right thirds) turn pages in the paged
 /// modes; the centre toggles the chrome.
 class PdfReaderScreen extends ConsumerStatefulWidget {
+  /// Creates a PDF reader for [comic].
   const PdfReaderScreen({super.key, required this.comic});
 
+  /// The PDF to open.
   final ComicSummary comic;
 
   @override

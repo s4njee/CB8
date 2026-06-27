@@ -17,6 +17,7 @@ const _accentPrefKey = 'accent_theme';
 final accentThemeProvider =
     NotifierProvider<AccentThemeController, AccentTheme>(AccentThemeController.new);
 
+/// Loads and persists the selected [AccentTheme] in shared preferences.
 class AccentThemeController extends Notifier<AccentTheme> {
   @override
   AccentTheme build() {
@@ -28,6 +29,7 @@ class AccentThemeController extends Notifier<AccentTheme> {
     );
   }
 
+  /// Selects and persists the accent theme.
   void select(AccentTheme accent) {
     ref.read(sharedPrefsProvider).setString(_accentPrefKey, accent.name);
     state = accent;

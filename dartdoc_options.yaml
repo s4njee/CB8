@@ -1,0 +1,16 @@
+# Configuration for `dart doc` (dartdoc 9.x). See https://dart.dev/go/dartdoc-options-file.
+#
+# The package README.md renders as the documentation landing page.
+#
+# Note: the generated Drift code (database.g.dart) is a `part of`
+# data/db/database.dart, so its row/companion/table classes share that library
+# with the hand-written table definitions and appear in the docs alongside them
+# (as in any Drift package). dartdoc 9.0.4 ignores `nodoc` file globs for
+# part-file elements, so there is no config-only way to hide just the generated
+# half without dropping the documented schema too.
+dartdoc:
+  # Treat unresolved doc references and broken links as build-failing errors so
+  # the generated HTML stays trustworthy.
+  errors:
+    - unresolved-doc-reference
+    - broken-link

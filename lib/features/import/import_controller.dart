@@ -14,13 +14,22 @@ import 'series_parser.dart';
 
 /// Progress/result of an import run, surfaced to the UI.
 class ImportState {
+  /// Creates an import-progress snapshot.
   const ImportState({this.running = false, this.message, this.imported = 0, this.failed = 0});
 
+  /// Whether an import is currently running.
   final bool running;
+
+  /// Status text for the UI, if any.
   final String? message;
+
+  /// Number of files imported so far.
   final int imported;
+
+  /// Number of files that failed to import.
   final int failed;
 
+  /// Returns a copy with the given fields overridden.
   ImportState copyWith({bool? running, String? message, int? imported, int? failed}) =>
       ImportState(
         running: running ?? this.running,
@@ -30,6 +39,7 @@ class ImportState {
       );
 }
 
+/// Exposes the [ImportController] and its current [ImportState].
 final importControllerProvider =
     NotifierProvider<ImportController, ImportState>(ImportController.new);
 

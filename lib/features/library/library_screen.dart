@@ -14,8 +14,10 @@ import 'widgets/library_grid.dart';
 /// The "All" / home view: a media-type filter row, an optional continue-reading
 /// shelf, and the responsive cover grid. Mirrors CB8's `AllPage`.
 class LibraryScreen extends ConsumerWidget {
+  /// Creates the home/library view.
   const LibraryScreen({super.key, this.title = 'All'});
 
+  /// App-bar title.
   final String title;
 
   @override

@@ -14,12 +14,14 @@ enum ReadingMode {
   /// Two pages side-by-side; tap left/right to turn by spread.
   doublePage;
 
+  /// Human-readable label for the reading-mode menu.
   String get label => switch (this) {
         ReadingMode.scroll => 'Vertical scroll',
         ReadingMode.single => 'Single page',
         ReadingMode.doublePage => 'Two pages',
       };
 
+  /// Menu icon representing the mode.
   IconData get icon => switch (this) {
         ReadingMode.scroll => Icons.view_day_outlined,
         ReadingMode.single => Icons.crop_portrait,
@@ -29,9 +31,11 @@ enum ReadingMode {
 
 const _readerModeKey = 'reader_mode';
 
+/// The globally-persisted comic [ReadingMode].
 final readingModeProvider =
     NotifierProvider<ReadingModeController, ReadingMode>(ReadingModeController.new);
 
+/// Loads and persists the active [ReadingMode] in shared preferences.
 class ReadingModeController extends Notifier<ReadingMode> {
   @override
   ReadingMode build() {
@@ -42,6 +46,7 @@ class ReadingModeController extends Notifier<ReadingMode> {
     );
   }
 
+  /// Sets and persists the reading mode.
   void set(ReadingMode mode) {
     ref.read(sharedPreferencesProvider).setString(_readerModeKey, mode.name);
     state = mode;

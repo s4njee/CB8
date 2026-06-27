@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 /// because the readers embed a `Scrollable` (PhotoView's PageView, pdfrx) that
 /// grabs focus and consumes the arrow keys before an ancestor would see them.
 class ReaderKeyboard extends StatefulWidget {
+  /// Wraps [child], routing keyboard shortcuts to the given callbacks.
   const ReaderKeyboard({
     super.key,
     required this.child,
@@ -27,14 +28,31 @@ class ReaderKeyboard extends StatefulWidget {
     this.onToggleFullscreen,
   });
 
+  /// The wrapped reader content.
   final Widget child;
+
+  /// Advance one page (Right/Down/PageDown/Space).
   final VoidCallback onNext;
+
+  /// Go back one page (Left/Up/PageUp).
   final VoidCallback onPrev;
+
+  /// Jump to the first page (Home); omit to disable.
   final VoidCallback? onFirst;
+
+  /// Jump to the last page (End); omit to disable.
   final VoidCallback? onLast;
+
+  /// Zoom in (Cmd/Ctrl+`=`); omit to disable.
   final VoidCallback? onZoomIn;
+
+  /// Zoom out (Cmd/Ctrl+`-`); omit to disable.
   final VoidCallback? onZoomOut;
+
+  /// Reset zoom (Cmd/Ctrl+`0`); omit to disable.
   final VoidCallback? onZoomReset;
+
+  /// Toggle fullscreen (`f`); omit to disable.
   final VoidCallback? onToggleFullscreen;
 
   @override

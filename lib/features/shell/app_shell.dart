@@ -38,6 +38,7 @@ const _destinations = <_Destination>[
 /// App chrome with adaptive navigation: a bottom [NavigationBar] on phones and a
 /// [NavigationRail] on wide layouts — the CB8 TabBar/Sidebar split.
 class AppShell extends ConsumerStatefulWidget {
+  /// Creates the app shell.
   const AppShell({super.key});
 
   @override

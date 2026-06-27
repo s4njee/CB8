@@ -12,10 +12,16 @@ import '../../../data/models/comic_summary.dart';
 /// On desktop the card lifts slightly on hover and opens the action menu on
 /// right-click (same as long-press on touch).
 class ComicCard extends StatefulWidget {
+  /// Creates a library tile for [comic].
   const ComicCard({super.key, required this.comic, this.onTap, this.onLongPress});
 
+  /// The item this card represents.
   final ComicSummary comic;
+
+  /// Called when the card is tapped (opens the reader).
   final VoidCallback? onTap;
+
+  /// Called on long-press / right-click (opens the action sheet).
   final VoidCallback? onLongPress;
 
   @override

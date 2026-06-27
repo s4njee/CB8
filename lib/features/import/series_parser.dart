@@ -9,12 +9,19 @@ library;
 
 /// Parsed series metadata; any field may be null when unknown.
 class SeriesInfo {
+  /// Creates parsed series metadata.
   const SeriesInfo({this.seriesName, this.volumeNumber, this.chapterNumber});
 
+  /// Series name, or null if none was parsed.
   final String? seriesName;
+
+  /// Volume number, or null if none was parsed.
   final double? volumeNumber;
+
+  /// Chapter number, or null if none was parsed.
   final double? chapterNumber;
 
+  /// The empty result (all fields null).
   static const empty = SeriesInfo();
 }
 

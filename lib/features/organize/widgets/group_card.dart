@@ -7,6 +7,7 @@ import '../../../core/theme/app_theme.dart';
 /// A cover-topped card for a collection or series group: cover (or fallback
 /// icon), title, and a count subtitle. Mirrors CB8's FolderCard/GroupCard.
 class GroupCard extends StatelessWidget {
+  /// Creates a group card.
   const GroupCard({
     super.key,
     required this.title,
@@ -16,10 +17,19 @@ class GroupCard extends StatelessWidget {
     this.fallbackIcon = Icons.folder_outlined,
   });
 
+  /// Group name.
   final String title;
+
+  /// Secondary line, typically an item count.
   final String subtitle;
+
+  /// Called when the card is tapped.
   final VoidCallback onTap;
+
+  /// Representative cover bytes; falls back to [fallbackIcon] when null.
   final Uint8List? cover;
+
+  /// Icon shown when there is no [cover].
   final IconData fallbackIcon;
 
   @override

@@ -11,6 +11,7 @@ import 'widgets/group_card.dart';
 /// Collections tab — user-created named collections (CB8 "libraries"). Create a
 /// collection here; add books to it from a book's long-press menu.
 class CollectionsScreen extends ConsumerWidget {
+  /// Creates the Collections tab.
   const CollectionsScreen({super.key});
 
   Future<void> _create(BuildContext context, WidgetRef ref) async {

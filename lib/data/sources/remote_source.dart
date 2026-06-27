@@ -16,6 +16,7 @@ import 'library_source.dart';
 /// and auth is a better-auth session cookie. The shared [CookieJar] (one per app,
 /// scoped by host) keeps the session across requests and app restarts.
 class RemoteSource implements LibrarySource {
+  /// Creates a client for the server at [baseUrl], sharing [cookieJar] for auth.
   RemoteSource({
     required this.id,
     required this.name,
@@ -43,7 +44,10 @@ class RemoteSource implements LibrarySource {
 
   static String _trimSlash(String s) => s.endsWith('/') ? s.substring(0, s.length - 1) : s;
 
+  /// The configured dio client (cookie-managed), for advanced/direct calls.
   Dio get dio => _dio;
+
+  /// The normalized server base URL (no trailing slash).
   String get baseUrl => _baseUrl;
 
   @override
@@ -56,6 +60,7 @@ class RemoteSource implements LibrarySource {
     await _dio.post('/api/auth/login', data: {'username': username, 'password': password});
   }
 
+  /// Sign out (best effort — ignores network/server errors).
   Future<void> logout() async {
     try {
       await _dio.post('/api/auth/logout');
@@ -83,8 +88,13 @@ class RemoteSource implements LibrarySource {
 
   // --- URLs ---
 
+  /// Cover thumbnail URL for a comic.
   String thumbnailUrl(String comicId) => '$_baseUrl/api/comics/$comicId/thumbnail';
+
+  /// Page-image URL for a zero-based page of a comic.
   String pageUrl(String comicId, int page) => '$_baseUrl/api/comics/$comicId/pages/$page';
+
+  /// Full-file (book) download URL for a comic.
   String fileUrl(String comicId) => '$_baseUrl/api/comics/$comicId/file';
 
   ComicSummary _fromJson(Map<String, dynamic> j, Map<String, String> headers) {

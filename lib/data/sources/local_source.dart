@@ -10,6 +10,7 @@ import 'library_source.dart';
 /// Search currently uses a `LIKE` scan over title/series/author; the FTS5
 /// virtual table from the plan is a follow-up in the library milestone.
 class LocalSource implements LibrarySource {
+  /// Wraps the app's Drift [AppDatabase].
   LocalSource(this._db);
 
   final AppDatabase _db;

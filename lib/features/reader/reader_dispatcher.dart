@@ -16,8 +16,10 @@ import 'pdf/pdf_reader_screen.dart';
 /// always reflects the latest saved progress, while the chosen reader stays
 /// stable for the duration of the reading session.
 class ReaderDispatcher extends ConsumerStatefulWidget {
+  /// Creates a dispatcher that opens the item with [comicId].
   const ReaderDispatcher({super.key, required this.comicId});
 
+  /// Id of the catalog item to open.
   final String comicId;
 
   @override

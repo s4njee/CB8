@@ -21,8 +21,10 @@ import 'reading_mode.dart';
 /// (vertical scroll / single page / two-page spread) chosen via a toolbar menu
 /// and persisted globally. Works against local archives or a remote page source.
 class ComicReaderScreen extends ConsumerStatefulWidget {
+  /// Creates a comic reader for [comic].
   const ComicReaderScreen({super.key, required this.comic});
 
+  /// The comic to open (local CBZ/PDF or a remote page source).
   final ComicSummary comic;
 
   @override

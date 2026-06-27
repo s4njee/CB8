@@ -11,6 +11,7 @@ import 'widgets/library_grid.dart';
 /// Recent tab — everything that's been opened, most-recent first. Mirrors CB8's
 /// "Recently Read".
 class RecentScreen extends ConsumerWidget {
+  /// Creates the Recent tab.
   const RecentScreen({super.key});
 
   static const _query = LibraryQuery(

@@ -6,12 +6,19 @@ import 'comic_card.dart';
 /// Responsive cover grid — port of CB8's `LibraryGrid.tsx` breakpoints
 /// (2 cols on phones up to ~8 on very wide screens).
 class LibraryGrid extends StatelessWidget {
+  /// Creates a responsive cover grid for [comics].
   const LibraryGrid({super.key, required this.comics, this.onOpen, this.onLongPress});
 
+  /// Items to display.
   final List<ComicSummary> comics;
+
+  /// Called when a cover is tapped.
   final void Function(ComicSummary)? onOpen;
+
+  /// Called on long-press (opens the action sheet).
   final void Function(ComicSummary)? onLongPress;
 
+  /// Column count for a given available [width], matching CB8's breakpoints.
   static int columnsFor(double width) {
     if (width >= 1536) return 8;
     if (width >= 1280) return 6;

@@ -12,6 +12,7 @@ import 'series_parser.dart';
 
 /// What a probe of a single file yields, ready to insert into the catalog.
 class ProbeResult {
+  /// Creates a probe result for one ingested file.
   ProbeResult({
     required this.mediaType,
     required this.pageCount,
@@ -19,15 +20,26 @@ class ProbeResult {
     required this.series,
   });
 
+  /// `comic` or `book` — see [MediaTypes].
   final String mediaType;
+
+  /// Page (comic/PDF) or content-document (EPUB) count.
   final int pageCount;
+
+  /// JPEG-encoded cover thumbnail, or null if none could be extracted.
   final Uint8List? coverJpg;
+
+  /// Series/volume/chapter parsed from the filename.
   final SeriesInfo series;
 }
 
-/// Extensions we ingest in v1. CBR/RAR deferred (see plan).
+/// Comic archive extensions we ingest in v1. CBR/RAR deferred (see plan).
 const comicExtensions = {'cbz'};
+
+/// Book extensions we ingest in v1.
 const bookExtensions = {'pdf', 'epub'};
+
+/// Union of all importable extensions.
 const supportedExtensions = {...comicExtensions, ...bookExtensions};
 
 /// Cover target box — matches CB8's 240x360 thumbnails.

@@ -76,6 +76,19 @@ flutter run --dart-define=SEED=true
 
 Supported targets: **iOS**, **Android**, **macOS** (verified) — **Windows** / **Linux** desktop scaffolds exist; EPUB on Linux needs a WebView strategy (see `todo.md`).
 
+## API documentation
+
+The Dart source is documented with `///` doc comments throughout. Generate the
+browsable HTML API reference with:
+
+```bash
+dart doc                             # output in doc/api/, open doc/api/index.html
+```
+
+Configuration lives in [`dartdoc_options.yaml`](dartdoc_options.yaml); it fails
+the build on broken doc references. The generated `doc/api/` is build output and
+is not checked in.
+
 ## Project status
 
 Active personal project. Local reading + library organization and hybrid server mode work across iOS, Android, and macOS. Remaining work (store packaging/signing, the Linux EPUB engine, polish) is tracked in [`todo.md`](todo.md).

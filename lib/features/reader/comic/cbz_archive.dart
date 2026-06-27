@@ -12,16 +12,19 @@ const cbzImageExtensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'};
 /// Holds the decoded archive in memory and extracts page bytes on demand; the
 /// reader keeps one instance alive for the duration of a reading session.
 class CbzArchive {
+  /// Wraps the already-sorted page entries (see [open]/[pagesOf]).
   CbzArchive(this._pages);
 
   final List<ArchiveFile> _pages;
 
+  /// Number of image pages in the archive.
   int get pageCount => _pages.length;
 
   /// Decompressed bytes for page [index].
   Uint8List pageBytes(int index) =>
       Uint8List.fromList(_pages[index].content as List<int>);
 
+  /// Reads and decodes the CBZ (zip) at [path] into an in-memory archive.
   static Future<CbzArchive> open(String path) async {
     final bytes = await File(path).readAsBytes();
     return CbzArchive(pagesOf(ZipDecoder().decodeBytes(bytes)));

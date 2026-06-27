@@ -9,6 +9,7 @@ import '../library/widgets/browse_grid_screen.dart';
 /// Tags tab — a chip cloud of all tags with counts. Tapping a tag opens its
 /// filtered grid. Mirrors CB8's tag row.
 class TagsScreen extends ConsumerWidget {
+  /// Creates the Tags tab.
   const TagsScreen({super.key});
 
   @override

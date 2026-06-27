@@ -5,6 +5,7 @@ import 'dart:typed_data';
 /// Both [LocalSource] (Drift rows) and [RemoteSource] (CB8 REST JSON) map into
 /// this so screens never branch on where content came from.
 class ComicSummary {
+  /// Creates a source-agnostic catalog entry.
   const ComicSummary({
     required this.id,
     required this.title,
@@ -24,8 +25,13 @@ class ComicSummary {
     this.imageHeaders,
   });
 
+  /// Stable id within the active source.
   final String id;
+
+  /// Display title.
   final String title;
+
+  /// Total pages (comic/PDF) or content documents (EPUB).
   final int pageCount;
 
   /// 'comic' or 'book' (see [MediaTypes]).
@@ -37,13 +43,25 @@ class ComicSummary {
   /// Remote cover endpoint (remote source).
   final String? coverUrl;
 
+  /// Last page read (comics/PDF); null if never opened.
   final int? lastPage;
+
+  /// Last EPUB CFI (or other locator); null for paged formats / unopened.
   final String? lastLocation;
+
+  /// Whether the item has been read to the end.
   final bool completed;
+
+  /// Whether the item is favorited.
   final bool isFavorite;
 
+  /// Parsed series name, if any.
   final String? seriesName;
+
+  /// Parsed volume number, if any.
   final double? volumeNumber;
+
+  /// Parsed chapter number, if any.
   final double? chapterNumber;
 
   /// Lowercase file extension without the dot ('cbz' | 'pdf' | 'epub'), for the
@@ -58,6 +76,8 @@ class ComicSummary {
   /// for a remote item. Null for local items.
   final Map<String, String>? imageHeaders;
 
+  /// Returns a copy with [sourceUri] overridden (used after resolving a remote
+  /// download to a local temp path).
   ComicSummary copyWith({String? sourceUri}) => ComicSummary(
         id: id,
         title: title,
@@ -77,11 +97,12 @@ class ComicSummary {
         imageHeaders: imageHeaders,
       );
 
-  /// Fraction read in [0,1], for the progress bar drawn on the card.
+  /// Fraction read in the range 0..1, for the progress bar drawn on the card.
   double get progress {
     if (pageCount <= 0 || lastPage == null) return completed ? 1 : 0;
     return (lastPage! / (pageCount - 1)).clamp(0, 1);
   }
 
+  /// Whether reading has started but isn't finished.
   bool get inProgress => progress > 0 && !completed;
 }

@@ -7,6 +7,7 @@ import 'core/theme/theme_controller.dart';
 /// Root widget: a dark-themed, router-driven MaterialApp themed from the
 /// selected CB8 accent.
 class Cb8App extends ConsumerWidget {
+  /// Creates the root app widget.
   const Cb8App({super.key});
 
   @override

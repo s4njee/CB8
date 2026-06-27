@@ -3,13 +3,41 @@ import '../models/groups.dart';
 
 /// How the library is sorted. Mirrors CB8's sort options
 /// (`src/main/webServer/routes/comics.ts`).
-enum LibrarySort { title, dateAdded, fileSize, pageCount, lastRead }
+enum LibrarySort {
+  /// Alphabetical by title.
+  title,
+
+  /// By import date.
+  dateAdded,
+
+  /// By file size on disk.
+  fileSize,
+
+  /// By total page count.
+  pageCount,
+
+  /// By most-recent read time.
+  lastRead,
+}
 
 /// Read-status facet, mirroring CB8's filter strips.
-enum ReadStatus { all, unread, inProgress, completed }
+enum ReadStatus {
+  /// No read-status filter.
+  all,
+
+  /// Never opened.
+  unread,
+
+  /// Opened but not finished.
+  inProgress,
+
+  /// Read to the end.
+  completed,
+}
 
 /// Query parameters shared by every source.
 class LibraryQuery {
+  /// Creates a catalog query; all parameters are optional with sensible defaults.
   const LibraryQuery({
     this.search,
     this.mediaType,
@@ -25,11 +53,16 @@ class LibraryQuery {
     this.offset = 0,
   });
 
+  /// Free-text search over title/metadata; null or empty matches everything.
   final String? search;
 
   /// 'comic' | 'book' | null (= all).
   final String? mediaType;
+
+  /// Read-status facet to filter by.
   final ReadStatus readStatus;
+
+  /// Restrict to favorited items only.
   final bool favoritesOnly;
 
   /// Restrict to comics carrying this tag.
@@ -44,9 +77,16 @@ class LibraryQuery {
   /// Restrict to comics that have been opened (have a last-read timestamp).
   final bool hasBeenRead;
 
+  /// Sort key.
   final LibrarySort sort;
+
+  /// Sort direction; true = descending.
   final bool descending;
+
+  /// Maximum rows to return (page size).
   final int limit;
+
+  /// Row offset for paging.
   final int offset;
 
   // Sentinel so copyWith can tell "leave unchanged" apart from "set to null".
@@ -54,6 +94,8 @@ class LibraryQuery {
   // chip sets mediaType to null, which `?? this.mediaType` would silently keep.
   static const Object _keep = Object();
 
+  /// Returns a copy with the given fields overridden. Nullable fields use a
+  /// [_keep] sentinel so passing `null` explicitly clears them.
   LibraryQuery copyWith({
     Object? search = _keep,
     Object? mediaType = _keep,

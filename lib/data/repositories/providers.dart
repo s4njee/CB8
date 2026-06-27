@@ -36,22 +36,31 @@ const _activeConnectionKey = 'active_connection';
 
 /// Saved connections + which one is active. Drives [activeSourceProvider].
 class ConnectionsState {
+  /// Creates a connections state, defaulting to the local source as active.
   const ConnectionsState({this.connections = const [], this.activeId = Connection.localId});
+
+  /// Saved remote connections.
   final List<Connection> connections;
+
+  /// Id of the active source ([Connection.localId] for the on-device library).
   final String activeId;
 
+  /// Returns a copy with the given fields overridden.
   ConnectionsState copyWith({List<Connection>? connections, String? activeId}) => ConnectionsState(
         connections: connections ?? this.connections,
         activeId: activeId ?? this.activeId,
       );
 
+  /// The active remote [Connection], or null when the local source is active.
   Connection? get active =>
       activeId == Connection.localId ? null : connections.where((c) => c.id == activeId).firstOrNull;
 }
 
+/// Holds the saved connections and the active selection.
 final connectionsProvider =
     NotifierProvider<ConnectionsController, ConnectionsState>(ConnectionsController.new);
 
+/// Loads, mutates, and persists [ConnectionsState] (saved servers + active id).
 class ConnectionsController extends Notifier<ConnectionsState> {
   AppDatabase get _db => ref.read(databaseProvider);
   SharedPreferences get _prefs => ref.read(sharedPreferencesProvider);
@@ -82,6 +91,7 @@ class ConnectionsController extends Notifier<ConnectionsState> {
     );
   }
 
+  /// Inserts a new connection row and reloads state, returning the saved model.
   Future<Connection> addConnection(String name, String baseUrl) async {
     final id = await _db.into(_db.connections).insert(
           ConnectionsCompanion.insert(name: name.trim(), baseUrl: baseUrl.trim()),
@@ -90,6 +100,7 @@ class ConnectionsController extends Notifier<ConnectionsState> {
     return state.connections.firstWhere((c) => c.id == id.toString());
   }
 
+  /// Deletes a connection, falling back to the local source if it was active.
   Future<void> removeConnection(String id) async {
     final intId = int.tryParse(id);
     if (intId != null) {
@@ -100,11 +111,13 @@ class ConnectionsController extends Notifier<ConnectionsState> {
     await _load(nextActive);
   }
 
+  /// Switches the active source and persists the choice.
   Future<void> setActive(String id) async {
     await _prefs.setString(_activeConnectionKey, id);
     state = state.copyWith(activeId: id);
   }
 
+  /// Remembers the last username used for a connection (pre-fills next login).
   Future<void> setLastUsername(String id, String username) async {
     final intId = int.tryParse(id);
     if (intId == null) return;
@@ -179,15 +192,25 @@ final activeSourceProvider = Provider<LibrarySource>((ref) {
 final libraryQueryProvider =
     NotifierProvider<LibraryQueryController, LibraryQuery>(LibraryQueryController.new);
 
+/// Mutable query state for the main library views (search, filters, sort).
 class LibraryQueryController extends Notifier<LibraryQuery> {
   @override
   LibraryQuery build() => const LibraryQuery();
 
+  /// Sets the search term; empty/blank clears it.
   void setSearch(String? value) =>
       state = state.copyWith(search: (value?.isEmpty ?? true) ? null : value);
+
+  /// Filters by media type ('comic' | 'book' | null for all).
   void setMediaType(String? value) => state = state.copyWith(mediaType: value);
+
+  /// Sets the read-status facet.
   void setReadStatus(ReadStatus value) => state = state.copyWith(readStatus: value);
+
+  /// Toggles the favorites-only filter.
   void toggleFavorites() => state = state.copyWith(favoritesOnly: !state.favoritesOnly);
+
+  /// Sets the sort key and optional direction.
   void setSort(LibrarySort sort, {bool? descending}) =>
       state = state.copyWith(sort: sort, descending: descending);
 }
