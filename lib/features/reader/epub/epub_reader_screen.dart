@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
@@ -36,6 +37,43 @@ enum EpubFont {
   final String css;
 }
 
+/// Page color scheme for the EPUB reader, injected as a `background`/`color`
+/// theme override into the epub.js content (and mirrored onto the scaffold so
+/// the letterboxing around the page matches).
+enum EpubReaderTheme {
+  /// Dark — light text on a near-black page (default).
+  dark('Dark', Icons.dark_mode, 0xFF121212, 0xFFFFFFFF),
+
+  /// Light — black text on white.
+  light('Light', Icons.light_mode, 0xFFFFFFFF, 0xFF000000),
+
+  /// Sepia — warm paper tone with brown ink, easier on the eyes at night.
+  sepia('Sepia', Icons.local_cafe, 0xFFF4ECD8, 0xFF5B4636);
+
+  const EpubReaderTheme(this.label, this.icon, this._bg, this._fg);
+
+  /// Menu label.
+  final String label;
+
+  /// Menu icon.
+  final IconData icon;
+
+  final int _bg;
+  final int _fg;
+
+  /// Page background color.
+  Color get background => Color(_bg);
+
+  /// Text color.
+  Color get foreground => Color(_fg);
+
+  /// CSS hex (`#rrggbb`) for the page background.
+  String get bgCss => '#${(_bg & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
+
+  /// CSS hex (`#rrggbb`) for the text color.
+  String get fgCss => '#${(_fg & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
+}
+
 /// Reflowable EPUB reader — port of CB8's `EpubReader`, which used epub.js.
 /// `flutter_epub_viewer` runs the same epub.js engine in a WebView, so we get
 /// paginated reflow, font-size/family control, light/dark theming, and CFI
@@ -58,7 +96,10 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
   double _progress = 0; // 0..1
   double _fontSize = 16; // px
   EpubFont _fontFamily = EpubFont.sansSerif;
-  bool _lightMode = false;
+  EpubReaderTheme _theme = EpubReaderTheme.dark;
+
+  // Latest non-empty text selection, surfaced as a "Look up" bar (dictionary).
+  String _selectedText = '';
   // Latest reading position (epub.js CFI). The package's live setFlow/setSpread
   // are broken — they interpolate the enum, sending JS "EpubFlow.scrolled" rather
   // than "scrolled" — so a mode change instead remounts EpubViewer with fresh
@@ -257,21 +298,19 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
     _applyReaderOverrides();
   }
 
-  void _setLightMode(bool light) {
-    setState(() => _lightMode = light);
+  void _setTheme(EpubReaderTheme theme) {
+    setState(() => _theme = theme);
     _applyReaderOverrides();
   }
 
   void _applyReaderOverrides() {
     final wv = _controller.webViewController;
     if (wv == null) return;
-    final bg = _lightMode ? '#ffffff' : '#121212';
-    final fg = _lightMode ? '#000000' : '#ffffff';
     wv.evaluateJavascript(
       source: "if(window.rendition&&rendition.themes){"
           "rendition.themes.override('font-family','${_fontFamily.css}',true);"
-          "rendition.themes.override('background','$bg',true);"
-          "rendition.themes.override('color','$fg',true);}",
+          "rendition.themes.override('background','${_theme.bgCss}',true);"
+          "rendition.themes.override('color','${_theme.fgCss}',true);}",
     );
   }
 
@@ -282,12 +321,39 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
       builder: (context) => _TypographySheet(
         fontSize: _fontSize,
         fontFamily: _fontFamily,
-        lightMode: _lightMode,
+        theme: _theme,
         onFontSize: _setFontSize,
         onFontFamily: _setFontFamily,
-        onLightMode: _setLightMode,
+        onTheme: _setTheme,
       ),
     );
+  }
+
+  /// Handle an epub.js text selection: remember the (trimmed) text so the
+  /// "Look up" bar appears. Long passages aren't dictionary words, so cap it.
+  void _onTextSelected(EpubTextSelection selection) {
+    final text = selection.selectedText.trim();
+    if (text.isEmpty || text.length > 60) return;
+    if (text == _selectedText) return;
+    setState(() => _selectedText = text);
+  }
+
+  void _dismissLookup() {
+    if (_selectedText.isEmpty) return;
+    setState(() => _selectedText = '');
+    _controller.clearSelection();
+  }
+
+  void _openDictionary() {
+    final term = _selectedText;
+    if (term.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF141414),
+      isScrollControlled: true,
+      builder: (context) => _DictionarySheet(term: term),
+    );
+    _dismissLookup();
   }
 
   /// A mode change remounts [EpubViewer] (via its `ValueKey(mode)`), which
@@ -319,7 +385,7 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
     _syncViewerForBuild(mode, path);
     final settings = _settingsFor(mode);
     return Scaffold(
-      backgroundColor: _lightMode ? Colors.white : Colors.black,
+      backgroundColor: _theme.background,
       appBar: AppBar(
         backgroundColor: const Color(0xFF141414),
         foregroundColor: Colors.white,
@@ -369,8 +435,18 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
                               flow: settings.flow,
                               spread: settings.spread,
                               snap: true,
-                              theme: EpubTheme.dark(),
+                              theme: EpubTheme.custom(
+                                backgroundDecoration:
+                                    BoxDecoration(color: _theme.background),
+                                foregroundColor: _theme.foreground,
+                              ),
                             ),
+                            onTextSelected: _onTextSelected,
+                            onDeselection: () {
+                              if (_selectedText.isNotEmpty) {
+                                setState(() => _selectedText = '');
+                              }
+                            },
                             onEpubLoaded: () {
                               _loaded = true;
                               _readyKick?.cancel();
@@ -422,10 +498,43 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
                         },
                       ),
                     ),
+                    if (_selectedText.isNotEmpty) _lookupBar(context),
                     _progressBar(context),
                   ],
                 ),
                 ),
+    );
+  }
+
+  /// Slim bar shown while text is selected: tap to look the selection up in the
+  /// dictionary, or dismiss it.
+  Widget _lookupBar(BuildContext context) {
+    return Material(
+      color: const Color(0xFF1E1E1E),
+      child: InkWell(
+        onTap: _openDictionary,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              const Icon(Icons.menu_book_outlined, color: Colors.white70, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Look up “$_selectedText”',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+                onPressed: _dismissLookup,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -468,25 +577,26 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
   }
 }
 
-/// Bottom sheet for EPUB typography: text size, font family, and light/dark mode.
-/// Holds its own copy of each setting (seeded from the reader) so the controls
-/// update instantly, and forwards every change to the reader via the callbacks.
+/// Bottom sheet for EPUB typography: text size, font family, and page theme
+/// (dark / light / sepia). Holds its own copy of each setting (seeded from the
+/// reader) so the controls update instantly, and forwards every change to the
+/// reader via the callbacks.
 class _TypographySheet extends StatefulWidget {
   const _TypographySheet({
     required this.fontSize,
     required this.fontFamily,
-    required this.lightMode,
+    required this.theme,
     required this.onFontSize,
     required this.onFontFamily,
-    required this.onLightMode,
+    required this.onTheme,
   });
 
   final double fontSize;
   final EpubFont fontFamily;
-  final bool lightMode;
+  final EpubReaderTheme theme;
   final ValueChanged<double> onFontSize;
   final ValueChanged<EpubFont> onFontFamily;
-  final ValueChanged<bool> onLightMode;
+  final ValueChanged<EpubReaderTheme> onTheme;
 
   @override
   State<_TypographySheet> createState() => _TypographySheetState();
@@ -495,7 +605,7 @@ class _TypographySheet extends StatefulWidget {
 class _TypographySheetState extends State<_TypographySheet> {
   late double _fontSize = widget.fontSize;
   late EpubFont _fontFamily = widget.fontFamily;
-  late bool _lightMode = widget.lightMode;
+  late EpubReaderTheme _theme = widget.theme;
 
   @override
   Widget build(BuildContext context) {
@@ -540,20 +650,189 @@ class _TypographySheetState extends State<_TypographySheet> {
                 ),
             ],
           ),
-          const SizedBox(height: 12),
-          SwitchListTile(
-            title: const Text('Light mode'),
-            secondary: Icon(
-              _lightMode ? Icons.light_mode : Icons.dark_mode,
-              color: Colors.white70,
-            ),
-            value: _lightMode,
-            onChanged: (v) {
-              setState(() => _lightMode = v);
-              widget.onLightMode(v);
-            },
-            contentPadding: EdgeInsets.zero,
+          const SizedBox(height: 16),
+          const Text('Theme', style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final theme in EpubReaderTheme.values)
+                ChoiceChip(
+                  avatar: Icon(theme.icon, size: 18),
+                  label: Text(theme.label),
+                  selected: _theme == theme,
+                  onSelected: (_) {
+                    setState(() => _theme = theme);
+                    widget.onTheme(theme);
+                  },
+                ),
+            ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One part-of-speech grouping of definitions, as returned by dictionaryapi.dev.
+class _Meaning {
+  _Meaning(this.partOfSpeech, this.definitions);
+  final String partOfSpeech;
+  final List<String> definitions;
+}
+
+/// Bottom sheet that looks [term] up in the free, key-less dictionaryapi.dev
+/// dictionary and renders the part-of-speech groupings, with graceful loading /
+/// not-found / offline states. Network-only and unauthenticated, so it never
+/// touches the catalog or a CB8 server.
+class _DictionarySheet extends StatefulWidget {
+  const _DictionarySheet({required this.term});
+
+  final String term;
+
+  @override
+  State<_DictionarySheet> createState() => _DictionarySheetState();
+}
+
+class _DictionarySheetState extends State<_DictionarySheet> {
+  bool _loading = true;
+  String? _phonetic;
+  List<_Meaning> _meanings = [];
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _lookup();
+  }
+
+  Future<void> _lookup() async {
+    final word = widget.term.trim();
+    try {
+      final res = await Dio().get<dynamic>(
+        'https://api.dictionaryapi.dev/api/v2/entries/en/${Uri.encodeComponent(word)}',
+        options: Options(
+          // A missing word returns 404 with a JSON body; treat that as "no
+          // definition" rather than throwing.
+          validateStatus: (s) => s != null && s < 500,
+          receiveTimeout: const Duration(seconds: 10),
+        ),
+      );
+      if (!mounted) return;
+      final data = res.data;
+      if (res.statusCode != 200 || data is! List || data.isEmpty) {
+        setState(() {
+          _loading = false;
+          _message = 'No dictionary entry for “$word”.';
+        });
+        return;
+      }
+      final meanings = <_Meaning>[];
+      String? phonetic;
+      for (final entry in data) {
+        if (entry is! Map) continue;
+        phonetic ??= (entry['phonetic'] as String?)?.trim();
+        final rawMeanings = entry['meanings'];
+        if (rawMeanings is! List) continue;
+        for (final m in rawMeanings) {
+          if (m is! Map) continue;
+          final pos = (m['partOfSpeech'] as String?) ?? '';
+          final defs = <String>[];
+          final rawDefs = m['definitions'];
+          if (rawDefs is List) {
+            for (final d in rawDefs) {
+              final text = d is Map ? d['definition'] as String? : null;
+              if (text != null && text.trim().isNotEmpty) defs.add(text.trim());
+              if (defs.length >= 3) break; // keep each grouping compact
+            }
+          }
+          if (defs.isNotEmpty) meanings.add(_Meaning(pos, defs));
+        }
+      }
+      setState(() {
+        _loading = false;
+        _phonetic = (phonetic != null && phonetic.isNotEmpty) ? phonetic : null;
+        _meanings = meanings;
+        if (meanings.isEmpty) _message = 'No definition found for “$word”.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _message = 'Could not reach the dictionary. Check your connection.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.6),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Flexible(
+                    child: Text(
+                      widget.term,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (_phonetic != null) ...[
+                    const SizedBox(width: 10),
+                    Text(_phonetic!, style: const TextStyle(color: Colors.white54, fontSize: 14)),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 12),
+              Flexible(child: _content()),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _content() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_message != null) {
+      return Text(_message!, style: const TextStyle(color: Colors.white70));
+    }
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final meaning in _meanings) ...[
+            Text(
+              meaning.partOfSpeech,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontStyle: FontStyle.italic,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            for (var i = 0; i < meaning.definitions.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6, left: 4),
+                child: Text('${i + 1}. ${meaning.definitions[i]}',
+                    style: const TextStyle(color: Colors.white)),
+              ),
+            const SizedBox(height: 12),
+          ],
         ],
       ),
     );
