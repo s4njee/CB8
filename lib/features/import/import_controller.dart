@@ -50,7 +50,7 @@ class ImportController extends Notifier<ImportState> {
 
   AppDatabase get _db => ref.read(databaseProvider);
 
-  /// Opens the system picker for CBZ/PDF/EPUB and ingests the chosen files.
+  /// Opens the system picker for CBZ/CBT/PDF/EPUB and ingests the chosen files.
   Future<void> pickAndImport() async {
     final result = await FilePicker.pickFiles(
       allowMultiple: true,

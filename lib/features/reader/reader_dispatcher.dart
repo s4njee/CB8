@@ -97,6 +97,7 @@ class _ReaderDispatcherState extends ConsumerState<ReaderDispatcher> {
     }
     switch (comic.extension) {
       case 'cbz':
+      case 'cbt':
         return ComicReaderScreen(comic: comic);
       case 'pdf':
         // Native pdfrx viewer: crisp vector rendering + streams large PDFs.

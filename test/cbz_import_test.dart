@@ -24,6 +24,20 @@ String _writeCbz(Directory dir, String name, int pages) {
   return path;
 }
 
+/// Builds a CBT (tar) comic with [pages] solid-color JPEG images.
+String _writeCbt(Directory dir, String name, int pages) {
+  final archive = Archive();
+  for (var i = 1; i <= pages; i++) {
+    final image = img.Image(width: 40, height: 60);
+    img.fill(image, color: img.ColorRgb8(0x10, 0x80, 0x30));
+    final jpg = img.encodeJpg(image, quality: 70);
+    archive.addFile(ArchiveFile('page$i.jpg', jpg.length, jpg));
+  }
+  final path = p.join(dir.path, name);
+  File(path).writeAsBytesSync(Uint8List.fromList(TarEncoder().encode(archive)));
+  return path;
+}
+
 void main() {
   late Directory tmp;
   setUp(() => tmp = Directory.systemTemp.createTempSync('cb8_cbz_test'));
@@ -50,6 +64,33 @@ void main() {
     // First and last pages decode to real images.
     expect(img.decodeImage(archive.pageBytes(0)), isNotNull);
     expect(img.decodeImage(archive.pageBytes(10)), isNotNull);
+  });
+
+  test('probeFile reads a CBT (tar) comic: page count and comic media type', () async {
+    final path = _writeCbt(tmp, 'Tar Series v02.cbt', 8);
+    final result = await probeFile(path);
+
+    expect(result, isNotNull);
+    expect(result!.mediaType, 'comic');
+    expect(result.pageCount, 8);
+    expect(result.coverJpg, isNotNull);
+    expect(result.series.seriesName, 'Tar Series');
+    expect(result.series.volumeNumber, 2);
+  });
+
+  test('CbzArchive opens a CBT (tar) and yields decodable pages', () async {
+    final path = _writeCbt(tmp, 'Reader.cbt', 5);
+    final archive = await CbzArchive.open(path);
+
+    expect(archive.pageCount, 5);
+    expect(img.decodeImage(archive.pageBytes(0)), isNotNull);
+    expect(img.decodeImage(archive.pageBytes(4)), isNotNull);
+  });
+
+  test('AVIF and JXL are recognized as comic page extensions', () {
+    // Newer page formats must not be silently dropped from an archive's listing
+    // (actual decode depends on the platform codec, handled by the reader).
+    expect(cbzImageExtensions, containsAll(<String>['.avif', '.jxl']));
   });
 
   test('unsupported extension returns null', () async {

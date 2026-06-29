@@ -33,8 +33,10 @@ class ProbeResult {
   final SeriesInfo series;
 }
 
-/// Comic archive extensions we ingest in v1. CBR/RAR deferred (see plan).
-const comicExtensions = {'cbz'};
+/// Comic archive extensions we ingest. CBZ (zip) and CBT (tar) are supported by
+/// the pure-Dart `archive` package; CBR (RAR) / CB7 (7-Zip) need a native
+/// decoder and are deferred.
+const comicExtensions = {'cbz', 'cbt'};
 
 /// Book extensions we ingest in v1.
 const bookExtensions = {'pdf', 'epub'};
@@ -56,6 +58,7 @@ Future<ProbeResult?> probeFile(String path) async {
   final series = parseSeriesFromFilename(p.basename(path));
   switch (ext) {
     case 'cbz':
+    case 'cbt':
       return _probeCbz(path, series);
     case 'pdf':
       return _probePdf(path, series);
@@ -68,7 +71,7 @@ Future<ProbeResult?> probeFile(String path) async {
 
 Future<ProbeResult> _probeCbz(String path, SeriesInfo series) async {
   final bytes = await File(path).readAsBytes();
-  final pages = CbzArchive.pagesOf(ZipDecoder().decodeBytes(bytes));
+  final pages = CbzArchive.pagesOf(decodeComicArchive(bytes));
 
   Uint8List? cover;
   if (pages.isNotEmpty) {

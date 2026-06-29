@@ -4,8 +4,31 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 
-/// Image entry extensions found inside comic archives.
-const cbzImageExtensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'};
+/// Image entry extensions found inside comic archives. `avif`/`jxl` are listed
+/// so newer-format pages aren't silently dropped; whether a given page actually
+/// renders depends on the platform image codec (the reader shows a placeholder
+/// for any page it can't decode).
+const cbzImageExtensions = {
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
+  '.bmp',
+  '.avif',
+  '.jxl',
+};
+
+/// Decode a comic archive's raw [bytes] into an [Archive], choosing the decoder
+/// by content so both **CBZ** (zip) and **CBT** (tar) are supported. ZIP files
+/// begin with the `PK` signature; anything else is treated as a tar.
+///
+/// CBR (RAR) and CB7 (7-Zip) are *not* handled — those formats need a native
+/// decoder that the pure-Dart `archive` package doesn't provide.
+Archive decodeComicArchive(Uint8List bytes) {
+  final isZip = bytes.length >= 2 && bytes[0] == 0x50 && bytes[1] == 0x4B;
+  return isZip ? ZipDecoder().decodeBytes(bytes) : TarDecoder().decodeBytes(bytes);
+}
 
 /// An opened CBZ archive with its image pages sorted in reading order.
 ///
@@ -37,10 +60,11 @@ class CbzArchive {
     return content is Uint8List ? content : Uint8List.fromList(content as List<int>);
   }
 
-  /// Reads and decodes the CBZ (zip) at [path] into an in-memory archive.
+  /// Reads and decodes the comic archive (CBZ/zip or CBT/tar) at [path] into an
+  /// in-memory archive.
   static Future<CbzArchive> open(String path) async {
     final bytes = await File(path).readAsBytes();
-    return CbzArchive(pagesOf(ZipDecoder().decodeBytes(bytes)));
+    return CbzArchive(pagesOf(decodeComicArchive(bytes)));
   }
 
   /// The image entries of [archive], sorted naturally (page2 before page10).
