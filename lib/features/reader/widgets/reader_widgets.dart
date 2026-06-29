@@ -44,13 +44,33 @@ class ReaderMessage extends StatelessWidget {
 /// Returns a [Positioned], so place it directly inside the reader's [Stack].
 class ReaderTopBar extends StatelessWidget {
   /// Creates the top bar for [title] showing reading [mode].
-  const ReaderTopBar({super.key, required this.title, required this.mode});
+  const ReaderTopBar({
+    super.key,
+    required this.title,
+    required this.mode,
+    this.upscaleEnabled,
+    this.onToggleUpscale,
+    this.extraActions = const [],
+  });
 
   /// The book/comic title.
   final String title;
 
   /// The current reading mode (drives the mode-menu icon and check).
   final ReadingMode mode;
+
+  /// Reader-specific actions inserted before the reading-mode menu (e.g. the
+  /// comic reader's direction / cover-first toggles). Empty for readers that
+  /// have none.
+  final List<Widget> extraActions;
+
+  /// When non-null, shows an "HD" (Real-ESRGAN) toggle reflecting this on/off
+  /// state. Null hides the toggle entirely (e.g. local files or the PDF reader,
+  /// which can't be server-upscaled).
+  final bool? upscaleEnabled;
+
+  /// Called when the HD toggle is tapped. Only used when [upscaleEnabled] is set.
+  final VoidCallback? onToggleUpscale;
 
   @override
   Widget build(BuildContext context) {
@@ -75,6 +95,16 @@ class ReaderTopBar extends StatelessWidget {
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ),
+            if (onToggleUpscale != null)
+              IconButton(
+                tooltip: upscaleEnabled! ? 'HD upscaling on' : 'HD upscaling off',
+                icon: Icon(
+                  Icons.auto_awesome,
+                  color: upscaleEnabled! ? Theme.of(context).colorScheme.primary : Colors.white,
+                ),
+                onPressed: onToggleUpscale,
+              ),
+            ...extraActions,
             if (Platform.isMacOS)
               IconButton(
                 tooltip: 'Toggle fullscreen (f)',

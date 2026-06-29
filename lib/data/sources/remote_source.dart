@@ -122,8 +122,12 @@ class RemoteSource implements LibrarySource {
   /// Cover thumbnail URL for a comic.
   String thumbnailUrl(String comicId) => '$_baseUrl/api/comics/$comicId/thumbnail';
 
-  /// Page-image URL for a zero-based page of a comic.
-  String pageUrl(String comicId, int page) => '$_baseUrl/api/comics/$comicId/pages/$page';
+  /// Page-image URL for a zero-based page of a comic. When [upscale] is set,
+  /// requests the server's GPU-upscaled ("HD", Real-ESRGAN) variant via
+  /// `?upscale=1` — comics only; the server falls back to the standard page if
+  /// the upscale service is down.
+  String pageUrl(String comicId, int page, {bool upscale = false}) =>
+      '$_baseUrl/api/comics/$comicId/pages/$page${upscale ? '?upscale=1' : ''}';
 
   /// Full-file (book) download URL for a comic.
   String fileUrl(String comicId) => '$_baseUrl/api/comics/$comicId/file';
