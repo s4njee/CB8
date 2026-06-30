@@ -1,0 +1,74 @@
+name: Deploy wiki to GitHub Pages
+
+# Builds the Nextra docs in webui/packaging/wiki-nextra and publishes the static
+# export to GitHub Pages. The same source also ships as an nginx container for
+# k8s; that build serves at the domain root, while this one is prefixed with the
+# repo name (PAGES_BASE_PATH) because project Pages live at /<repo>.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'webui/packaging/wiki-nextra/**'
+      - '.github/workflows/wiki-pages.yml'
+  workflow_dispatch:
+
+# Allow the deploy job to publish to Pages via OIDC.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; don't cancel an in-flight publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui/packaging/wiki-nextra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: webui/packaging/wiki-nextra/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Build static export
+        run: pnpm build
+        env:
+          # Project Pages serve under /<repo>; prefix assets and links to match.
+          PAGES_BASE_PATH: /${{ github.event.repository.name }}
+
+      # GitHub Pages serves the artifact directly (no Jekyll), but .nojekyll is a
+      # zero-risk guard so the _next/ directory is never stripped.
+      - name: Disable Jekyll
+        run: touch out/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: webui/packaging/wiki-nextra/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
