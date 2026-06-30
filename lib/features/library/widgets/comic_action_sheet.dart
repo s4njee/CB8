@@ -4,6 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
+import '../../../data/sources/remote_source.dart';
+import '../../import/import_controller.dart';
+import '../../import/media_probe.dart' show supportedExtensions;
+import '../metadata_edit_screen.dart';
 
 /// Long-press action sheet for a catalog item: favorite, manage tags, and add to
 /// collections. All edits go through the active source, so the library refreshes
@@ -32,7 +36,24 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
   List<String> _tags = [];
   Set<String> _memberLibraries = {};
   bool _favorite = false;
+  bool _wantToRead = false;
   bool _loading = true;
+  bool _downloaded = false;
+  bool _downloading = false;
+  double? _downloadProgress;
+
+  /// Whether the active source supports owner-style management (edit/delete/
+  /// want-to-read). False for remote servers — those rows are then hidden.
+  bool get _canManage => ref.read(activeSourceProvider).supportsLibraryManagement;
+
+  /// Whether this item can be downloaded for offline use: the active source is a
+  /// server and the format is one the on-device readers can open. Hidden for the
+  /// local library (already on device) and for formats like CBR/MOBI.
+  bool get _canDownload {
+    final source = ref.read(activeSourceProvider);
+    return source is RemoteSource &&
+        supportedExtensions.contains(widget.comic.extension);
+  }
 
   @override
   void initState() {
@@ -45,10 +66,19 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
     final source = ref.read(activeSourceProvider);
     final tags = await source.tagsForComic(widget.comic.id);
     final libs = await source.librariesForComic(widget.comic.id);
+    final want = _canManage ? await source.isWantToRead(widget.comic.id) : false;
+    final downloaded = source is RemoteSource &&
+            supportedExtensions.contains(widget.comic.extension)
+        ? await ref
+            .read(importControllerProvider.notifier)
+            .isDownloaded(source, widget.comic)
+        : false;
     if (!mounted) return;
     setState(() {
       _tags = tags;
       _memberLibraries = libs;
+      _wantToRead = want;
+      _downloaded = downloaded;
       _loading = false;
     });
   }
@@ -62,6 +92,84 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
   void _toggleFavorite() {
     setState(() => _favorite = !_favorite);
     ref.read(activeSourceProvider).setFavorite(widget.comic.id, _favorite);
+  }
+
+  void _toggleWantToRead() {
+    setState(() => _wantToRead = !_wantToRead);
+    ref.read(activeSourceProvider).setWantToRead(widget.comic.id, _wantToRead);
+  }
+
+  Future<void> _download() async {
+    final source = ref.read(activeSourceProvider);
+    if (source is! RemoteSource) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _downloading = true;
+      _downloadProgress = null;
+    });
+    try {
+      final outcome =
+          await ref.read(importControllerProvider.notifier).downloadFromServer(
+        source,
+        widget.comic,
+        onProgress: (received, total) {
+          if (!mounted) return;
+          setState(() => _downloadProgress = total > 0 ? received / total : null);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _downloading = false;
+        _downloaded = true;
+      });
+      messenger.showSnackBar(SnackBar(
+        content: Text(outcome == DownloadOutcome.alreadyDownloaded
+            ? 'Already on this device'
+            : 'Saved to this device — find it under “This device”'),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _downloading = false);
+      final msg = e is UnsupportedError
+          ? (e.message ?? 'That format can’t be read on this device')
+          : 'Download failed — check your connection and try again';
+      messenger.showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _editMetadata() async {
+    final navigator = Navigator.of(context);
+    final saved = await navigator.push<bool>(
+      MaterialPageRoute(
+        builder: (_) => MetadataEditScreen(
+          comicId: widget.comic.id,
+          comicTitle: widget.comic.title,
+        ),
+      ),
+    );
+    if (saved == true && mounted) navigator.maybePop();
+  }
+
+  Future<void> _delete() async {
+    final navigator = Navigator.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF141414),
+        title: const Text('Delete from library?'),
+        content: Text(
+          'Removes “${widget.comic.title}” from your library. This also deletes '
+          'the imported file from this device.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref.read(activeSourceProvider).deleteComic(widget.comic.id);
+    if (mounted) navigator.maybePop();
   }
 
   Future<void> _addTag(String raw) async {
@@ -125,6 +233,49 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
               title: Text(_favorite ? 'Favorited' : 'Add to favorites'),
               onTap: _toggleFavorite,
             ),
+            if (_canDownload)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: _downloading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, value: _downloadProgress),
+                      )
+                    : Icon(
+                        _downloaded ? Icons.download_done : Icons.download_outlined,
+                        color: _downloaded
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
+                title: Text(_downloading
+                    ? 'Downloading…'
+                    : (_downloaded ? 'On this device' : 'Download to device')),
+                subtitle: Text(_downloading
+                    ? (_downloadProgress == null
+                        ? 'Starting…'
+                        : '${(_downloadProgress! * 100).round()}%')
+                    : (_downloaded
+                        ? 'Available offline'
+                        : 'Save for offline reading')),
+                onTap: (_downloading || _downloaded) ? null : _download,
+              ),
+            if (_canManage) ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(_wantToRead ? Icons.bookmark_added : Icons.bookmark_add_outlined,
+                    color: _wantToRead ? Theme.of(context).colorScheme.primary : null),
+                title: Text(_wantToRead ? 'On your want-to-read shelf' : 'Want to read'),
+                onTap: _toggleWantToRead,
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit metadata'),
+                onTap: _editMetadata,
+              ),
+            ],
             const Divider(),
             if (_loading)
               const Padding(
@@ -188,6 +339,16 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
                       ),
                 orElse: () => const SizedBox(height: 8),
               ),
+              if (_canManage) ...[
+                const Divider(),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.delete_outline, color: Color(0xFFEF4444)),
+                  title: const Text('Delete from library',
+                      style: TextStyle(color: Color(0xFFEF4444))),
+                  onTap: _delete,
+                ),
+              ],
             ],
           ],
         ),

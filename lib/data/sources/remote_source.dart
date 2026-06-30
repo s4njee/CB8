@@ -4,6 +4,7 @@ import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 
+import '../models/comic_metadata.dart';
 import '../models/comic_summary.dart';
 import '../models/groups.dart';
 import 'library_source.dart';
@@ -54,6 +55,9 @@ class RemoteSource implements LibrarySource {
   final String id;
   @override
   final String name;
+
+  @override
+  bool get supportsLibraryManagement => false;
 
   final String _baseUrl;
   final Dio _dio;
@@ -231,6 +235,34 @@ class RemoteSource implements LibrarySource {
     }
   }
 
+  // --- Library management (unsupported on the server contract) ---
+  //
+  // The CB8 REST API has no routes for editing metadata, deleting items, the
+  // want-to-read shelf, or duplicate detection. These are on-device-library
+  // features; the UI gates them behind [supportsLibraryManagement] (false here),
+  // so these implementations are inert fallbacks.
+
+  @override
+  Future<ComicMetadata?> getMetadata(String id) async => null;
+
+  @override
+  Future<void> updateMetadata(String id, ComicMetadata meta) async {}
+
+  @override
+  Future<void> deleteComic(String id) async {}
+
+  @override
+  Future<bool> isWantToRead(String id) async => false;
+
+  @override
+  Future<void> setWantToRead(String id, bool want) async {}
+
+  @override
+  Future<List<ComicSummary>> wantToRead({int limit = 50}) async => const [];
+
+  @override
+  Future<List<DuplicateGroup>> findDuplicates() async => const [];
+
   // --- Organization ---
 
   @override
@@ -297,9 +329,15 @@ class RemoteSource implements LibrarySource {
   @override
   Future<List<SeriesGroup>> listSeries() async => const [];
 
-  /// Download a remote book (PDF/EPUB) to [destPath] for local reading.
-  Future<void> downloadFile(String comicId, String destPath) async {
-    await _dio.download(fileUrl(comicId), destPath);
+  /// Download a remote item's original file to [destPath] for local reading.
+  /// [onReceiveProgress] reports `(received, total)` bytes as they arrive (total
+  /// is -1 when the server sends no content-length).
+  Future<void> downloadFile(
+    String comicId,
+    String destPath, {
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    await _dio.download(fileUrl(comicId), destPath, onReceiveProgress: onReceiveProgress);
     // Ensure the file exists and is non-empty.
     if (!await File(destPath).exists()) {
       throw Exception('Download produced no file');

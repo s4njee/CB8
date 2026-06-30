@@ -56,7 +56,7 @@ these is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 - [ ] **Mihon/Tachiyomi extension API** (browse CB8 as a source in those apps)
 - [ ] **Kobo sync** (Kavita-style native Kobo device sync)
 - [ ] **KOReader progress sync**
-- [ ] **Managed offline downloads** — pin items for offline on mobile (currently remote books only cache to a temp file per open)
+- [~] **Managed offline downloads** — **"Download to device"** saves a server item (CBZ/PDF/EPUB) into the on-device library for full offline reading: per-item from the action sheet, or **bulk "Download all"** for a whole collection / series-folder / tag (cancellable, with progress). Pinning/managing the download set as a distinct view still TODO
 - [ ] **Send-to-device / email** a book
 
 ## Platform & app
