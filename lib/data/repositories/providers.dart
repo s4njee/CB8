@@ -341,6 +341,19 @@ Future<int> clearContinueReading(WidgetRef ref) async {
   return inProgress.length;
 }
 
+/// "Want to read" / on-deck shelf for the active source. Empty for sources that
+/// don't support library management (remote servers), so the shelf simply hides.
+final wantToReadProvider = FutureProvider<List<ComicSummary>>((ref) async {
+  ref.watch(libraryChangesProvider); // re-run on any catalog change
+  return ref.watch(activeSourceProvider).wantToRead();
+});
+
+/// Likely-duplicate groups for the active source (Settings → Find duplicates).
+final duplicatesProvider = FutureProvider<List<DuplicateGroup>>((ref) async {
+  ref.watch(libraryChangesProvider);
+  return ref.watch(activeSourceProvider).findDuplicates();
+});
+
 /// Comics for an arbitrary query — used by the tag/collection/series browsers
 /// (each passes its own filtered [LibraryQuery]).
 final browseComicsProvider =
@@ -376,6 +389,7 @@ final seriesProvider = FutureProvider<List<SeriesGroup>>((ref) async {
 void invalidateLibraryProviders(WidgetRef ref) {
   ref.invalidate(comicsListProvider);
   ref.invalidate(continueReadingProvider);
+  ref.invalidate(wantToReadProvider);
   ref.invalidate(browseComicsProvider);
   ref.invalidate(tagsProvider);
   ref.invalidate(librariesProvider);

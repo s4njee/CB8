@@ -1,3 +1,4 @@
+import '../models/comic_metadata.dart';
 import '../models/comic_summary.dart';
 import '../models/groups.dart';
 
@@ -137,6 +138,13 @@ abstract interface class LibrarySource {
   /// Human label shown in the connection selector.
   String get name;
 
+  /// Whether this source supports owner-style library management — editing
+  /// metadata, deleting items, the want-to-read shelf, duplicate detection, and
+  /// watched folders. True for the on-device library; false for a remote CB8
+  /// server (those features have no place in the server's REST contract). The UI
+  /// reads this capability instead of branching on the concrete source type.
+  bool get supportsLibraryManagement;
+
   /// Paged catalog query.
   Future<List<ComicSummary>> listComics(LibraryQuery query);
 
@@ -156,6 +164,37 @@ abstract interface class LibrarySource {
 
   /// Toggle favorite state.
   Future<void> setFavorite(String id, bool favorite);
+
+  // --- Metadata editing ---
+
+  /// Full editable metadata for an item, or null if it doesn't exist. Only
+  /// meaningful when [supportsLibraryManagement] is true.
+  Future<ComicMetadata?> getMetadata(String id);
+
+  /// Persist edited [meta] for an item. No-op when the source can't manage
+  /// metadata (see [supportsLibraryManagement]).
+  Future<void> updateMetadata(String id, ComicMetadata meta);
+
+  /// Remove an item from the catalog (and delete its owned file for the local
+  /// source). No-op when the source can't manage its library.
+  Future<void> deleteComic(String id);
+
+  // --- Want-to-read / on-deck shelf ---
+
+  /// Whether [id] is on the want-to-read shelf.
+  Future<bool> isWantToRead(String id);
+
+  /// Add/remove [id] to/from the want-to-read shelf.
+  Future<void> setWantToRead(String id, bool want);
+
+  /// The want-to-read shelf — queued items, most-recently-added first.
+  Future<List<ComicSummary>> wantToRead({int limit = 50});
+
+  // --- Duplicate detection ---
+
+  /// Groups of likely-duplicate items (by identical size/page-count or matching
+  /// title). Empty when the source can't introspect duplicates.
+  Future<List<DuplicateGroup>> findDuplicates();
 
   // --- Organization: tags ---
 

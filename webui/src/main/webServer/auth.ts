@@ -22,12 +22,29 @@ import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import type { Pool } from 'pg';
 import { sendEmail } from './emailSender';
+import { createLogger } from '../logger';
 import {
   authResetPasswordLink,
+  diagnoseUntrustedOrigin,
+  isUsableSecret,
   resolveAuthBaseURL,
   trustedOriginsForBaseURL,
   withSameHostOrigin,
 } from './authHelpers';
+
+const log = createLogger('auth');
+
+/**
+ * Whether to trust reverse-proxy forwarding headers (`X-Forwarded-Host` /
+ * `X-Forwarded-Proto`) when computing same-origin trust. Off by default: these
+ * headers are only trustworthy behind a proxy that overwrites them, and a
+ * directly-exposed server must not honor client-supplied values. Set
+ * `CB8_TRUST_PROXY_HEADERS=1` when CB8 sits behind a reverse proxy so the public
+ * origin is trusted without enumerating it in BETTER_AUTH_TRUSTED_ORIGINS.
+ */
+function trustProxyHeaders(): boolean {
+  return process.env.CB8_TRUST_PROXY_HEADERS === '1';
+}
 
 // The full inferred type of `betterAuth(...)` depends on the exact options
 // passed; caching it as the generic return type causes variance errors between
@@ -94,12 +111,12 @@ let _auth: AuthInstance | null = null;
  */
 async function resolveSecret(pool: Pool): Promise<string> {
   const fromEnv = process.env.BETTER_AUTH_SECRET;
-  if (fromEnv && fromEnv.length >= 32) return fromEnv;
+  if (isUsableSecret(fromEnv)) return fromEnv;
 
   const AUTH_SECRET_KEY = 'auth_secret';
   const result = await pool.query<{ value: string }>('SELECT value FROM app_meta WHERE key = $1', [AUTH_SECRET_KEY]);
-  const row = result.rows[0];
-  if (row?.value && row.value.length >= 32) return row.value;
+  const stored = result.rows[0]?.value;
+  if (isUsableSecret(stored)) return stored;
 
   // Generate a new secret, persist it so the next restart reuses it.
   const newSecret = crypto.randomBytes(32).toString('hex');
@@ -250,15 +267,24 @@ function buildAuth(database: Pool, secret: string) {
     ],
     // Per-request trusted origins: always include the configured static set,
     // and additionally trust the Origin header when it points at the same
-    // host as the incoming request (i.e. the SPA we just served). This makes
-    // NodePort/LoadBalancer/Ingress deploys work without curating every
-    // possible host:port pair in env vars.
+    // host as the incoming request (i.e. the SPA we just served). Behind a
+    // reverse proxy (CB8_TRUST_PROXY_HEADERS=1) the forwarded host/proto are
+    // also honored, so NodePort/LoadBalancer/Ingress/proxy deploys work without
+    // curating every possible host:port pair in env vars.
     trustedOrigins: (request) => {
-      return withSameHostOrigin(
+      const origin = request?.headers.get('origin');
+      const proxied = trustProxyHeaders();
+      const trusted = withSameHostOrigin(
         resolveTrustedOrigins(),
-        request?.headers.get('origin'),
+        origin,
         request?.headers.get('host'),
+        proxied ? request?.headers.get('x-forwarded-host') : null,
+        proxied ? request?.headers.get('x-forwarded-proto') : null,
       );
+      // Turn the silent "cross-site" rejection into an actionable log line.
+      const problem = diagnoseUntrustedOrigin(trusted, origin);
+      if (problem) log.warn(problem);
+      return trusted;
     },
   });
 }

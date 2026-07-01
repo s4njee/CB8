@@ -21,7 +21,7 @@ which implementation is live.
 | On‑device DB | Drift (`drift` / `drift_flutter`) over SQLite |
 | Remote HTTP | `dio` + `dio_cookie_manager` + `cookie_jar` |
 | PDF rendering | `pdfrx` (native, vector) |
-| EPUB rendering | `flutter_epub_viewer` (epub.js in a WebView) |
+| EPUB rendering | `flutter_readium` (Readium toolkit — native navigator, iOS/Android) |
 | Comic images | `photo_view` (paged/zoom) + `scrollable_positioned_list` (vertical) |
 | Persistence | `shared_preferences` (settings), `path_provider` (storage dirs) |
 | Archives / images / pdf gen | `archive`, `image`, `pdf` (import + sample generation) |
@@ -225,7 +225,7 @@ All three readers share:
 | --- | --- | --- | --- |
 | `ComicReaderScreen` | photo_view / positioned list | `ComicPageSource` | `LocalCbzPageSource` (archive bytes) or `RemotePageSource` (page URLs) |
 | `PdfReaderScreen` | `pdfrx` | the file | custom page layout per reading mode; tap zones over the viewer |
-| `EpubReaderScreen` | `flutter_epub_viewer` (epub.js/WebView) | the file | CFI-based resume; see §9 gotchas |
+| `EpubReaderScreen` | `flutter_readium` (Readium navigator) | the file | Locator-based resume; paginated single/two-column (see §9) |
 
 `ComicPageSource` (`reader/comic/comic_page_source.dart`) is the small
 abstraction that lets the comic reader be source-agnostic about *where each page
@@ -281,17 +281,18 @@ records each item's position fingerprint and hides it until the position changes
   change on reinstall, so library files are stored as paths **relative** to
   `getApplicationSupportDirectory()` and resolved at runtime; imports are copied
   in so the app owns them.
-- **macOS EPUB workaround** (`epub/epub_reader_screen.dart`): on macOS WKWebView
-  blocks epub.js's sibling-dir `<script>` sub-resources, so the reader injects
-  the libs from bundled assets and drives the package's loader itself. iOS loads
-  them natively.
-- **EPUB resume is CFI-based and finicky.** epub.js reports `progress` as 0 until
-  its locations index is generated, so progress writes are gated on an
-  `onLocationLoaded` flag; a teardown/Back relocate is ignored (it fires at the
-  book start and would clobber the saved position); and a **watchdog** falls back
-  to page 1 if a stale/invalid CFI never produces a relocate (which otherwise
-  shows a black page). Mode changes remount the viewer (the package's live
-  flow/spread setters are broken) and resume from the current CFI.
+- **EPUB is Readium-based and mobile-only** (`epub/epub_reader_screen.dart`). The
+  reader uses `flutter_readium` (the Readium toolkit's native navigator) on
+  iOS/Android — there is no macOS build of it, so macOS is dropped for EPUB.
+  Reading position is a Readium **Locator**, serialized into `lastLocation`;
+  legacy epub.js CFIs don't parse as Locators, so a book opened for the first
+  time after the switch resets to the start. EPUB is **paginated-only** (single /
+  two-column) — Readium's scroll mode is per-resource so it isn't offered (see
+  `later.md`). The navigator paginates for the platform view's bounds at load
+  time, so the reader re-navigates to the current Locator once after the view
+  settles, to re-paginate at the real size. Building it requires Flutter's Swift
+  Package Manager disabled (CocoaPods links the Readium pods), iOS 15+, and
+  Android core-library desugaring (`desugar_jdk_libs` 2.1.5+).
 - **Guest writes 401.** This is by design on the server; the client surfaces it
   (guest badge + sign-in) and never crashes on it.
 

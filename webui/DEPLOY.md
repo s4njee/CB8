@@ -16,16 +16,20 @@ built (or rebuilt) and tagged `cb8:latest`, then the container recreated.
 
 | Thing | Location on 248 |
 | --- | --- |
-| Compose file + `.env` (port, auth secret, mount paths) | `~/cb8-compose/` |
+| Compose file + `.env` (port, secrets, mount paths) | `~/cb8-compose/` |
 | Source/build scratch dir (ephemeral, recreated each deploy) | `~/cb8-build/` |
-| SQLite library + thumbnail cache (the only stateful data) | `/srv/cb8/data` → container `/var/lib/cb8` |
+| Postgres data — catalog, covers, users/sessions, search vectors, job queue (**the durable state**) | `cb8-postgres-data` Docker volume |
+| Image cache + uploaded archives (regenerable) | `/srv/cb8/data` → container `/var/lib/cb8` |
 | Comics library (read-only source) | `/mnt/raid6/comics` → `/comics` |
 | Ebooks library (read-only source) | `/mnt/raid6/ebooks` → `/ebooks` |
 
-`~/cb8-compose/.env` holds `CB8_PUBLISH_PORT=4218` and, crucially,
-`BETTER_AUTH_SECRET`. **Recreating the container via this compose file keeps
-that secret stable**, so existing login sessions survive a redeploy. Do not
-`docker run` the image by hand — you'd lose the secret and log everyone out.
+The compose stack is three services — `cb8-postgres`, `cb8` (API), and
+`cb8-worker` — mirroring the k8s topology. `~/cb8-compose/.env` holds
+`CB8_PUBLISH_PORT=4218`, `CB8_DB_PASSWORD` (the Postgres password, baked into
+`DATABASE_URL`), and, crucially, `BETTER_AUTH_SECRET`. **Recreating via this
+compose file keeps the secret and DB password stable**, so existing logins and
+the Postgres volume survive a redeploy. Do not `docker run` the image by hand —
+you'd lose the secret and log everyone out.
 
 The image build runs entirely inside the Dockerfile (`pnpm install` →
 `pnpm build:standalone`, which via the `prebuild:standalone` hook also runs
@@ -75,9 +79,11 @@ ssh sanjee@192.168.1.248 \
   'cd ~/cb8-compose && docker compose up -d --force-recreate'
 ```
 
-`--force-recreate` guarantees the container restarts onto the new image even
-though the tag name is unchanged. The data volume (`/srv/cb8/data`) and the
-`.env` (port 4218, `BETTER_AUTH_SECRET`) are untouched.
+`--force-recreate` guarantees the containers restart onto the new image even
+though the tag name is unchanged. The Postgres volume (`cb8-postgres-data`), the
+cache dir (`/srv/cb8/data`), and the `.env` (port, `CB8_DB_PASSWORD`,
+`BETTER_AUTH_SECRET`) are untouched. The `cb8-worker` service is recreated onto
+the new image alongside the API.
 
 ### 5. Verify
 
@@ -102,9 +108,19 @@ ssh sanjee@192.168.1.248 'docker tag cb8:latest cb8:prev'
 ssh sanjee@192.168.1.248 'docker tag cb8:prev cb8:latest && cd ~/cb8-compose && docker compose up -d --force-recreate'
 ```
 
-The library data is never modified by a redeploy, so a rollback is image-only.
-Back up `/srv/cb8/data/library.sqlite` (SQLite online-backup or stop-the-container)
-before any change you consider risky.
+The durable data lives in Postgres and is never modified by an image redeploy,
+so a rollback is image-only. Back up the catalog with `pg_dump` before any change
+you consider risky:
+
+```sh
+ssh sanjee@192.168.1.248 \
+  'docker exec cb8-postgres pg_dump -U cb8 -d cb8' > cb8-$(date +%F).sql
+```
+
+Restore into a fresh stack with `docker exec -i cb8-postgres psql -U cb8 -d cb8`.
+The on-disk library files under `/mnt/raid6` are the original source and are
+never written to, so the catalog can also be rebuilt from scratch by re-adding
+the library paths and rescanning.
 
 ## Notes / gotchas
 

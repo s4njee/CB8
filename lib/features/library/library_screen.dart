@@ -38,6 +38,7 @@ class LibraryScreen extends ConsumerWidget {
         slivers: [
           SliverToBoxAdapter(child: _FilterRow(query: query)),
           const SliverToBoxAdapter(child: _ContinueShelf()),
+          const SliverToBoxAdapter(child: _WantToReadShelf()),
           comicsAsync.when(
             loading: () => const SliverFillRemaining(
               child: Center(child: CircularProgressIndicator()),
@@ -183,6 +184,49 @@ class _ContinueShelf extends ConsumerWidget {
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Text('Continue Reading',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            ),
+            SizedBox(
+              height: 210,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: items.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, i) => SizedBox(
+                  width: 120,
+                  child: ComicCard(
+                    comic: items[i],
+                    onTap: () => context.push('/read/${items[i].id}'),
+                    onLongPress: () => showComicActionSheet(context, items[i]),
+                  ),
+                ),
+              ),
+            ),
+            const Divider(height: 24),
+          ],
+        );
+      },
+      orElse: () => const SizedBox.shrink(),
+    );
+  }
+}
+
+class _WantToReadShelf extends ConsumerWidget {
+  const _WantToReadShelf();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final shelf = ref.watch(wantToReadProvider);
+    return shelf.maybeWhen(
+      data: (items) {
+        if (items.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Text('Want to Read',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             ),
             SizedBox(

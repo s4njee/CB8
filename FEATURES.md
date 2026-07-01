@@ -38,15 +38,15 @@ these is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 - [ ] **Multi-user accounts** with per-user progress and permissions/roles
 - [ ] **Reading lists** — ordered, cross-series curated lists
-- [ ] **Want-to-read / on-deck** shelf
+- [x] **Want-to-read / on-deck** shelf — local "Want to Read" shelf on the All tab (toggle from the action sheet)
 - [ ] **Ratings & reviews**
 - [ ] **Reading stats dashboard** — time read, pages, streaks, per-series progress
 - [ ] **Saved / smart filters** (persisted, composable query filters)
-- [ ] **Metadata editing UI** — edit title, series, authors, tags, summary in-app
-- [ ] **External metadata scraping** — ComicVine / Google Books / AniList / Open Library
-- [ ] **ComicInfo.xml & EPUB OPF ingestion** for rich metadata (genres, age rating, people, publisher)
-- [ ] **Multiple libraries / watched folders** with scheduled rescans and file-watching
-- [ ] **Duplicate detection**
+- [x] **Metadata editing UI** — edit title, series, volume/chapter, author, artist, genre, year, summary in-app
+- [~] **External metadata scraping** — keyless Google Books / Open Library search in the editor; ComicVine / Anilist still need API keys
+- [x] **ComicInfo.xml & EPUB OPF ingestion** — title, series, volume/chapter, people, genre, year, summary parsed at import
+- [~] **Multiple libraries / watched folders** — watched folders with rescan (on add, on launch) and live file-watching on desktop; scheduled timed rescans still TODO
+- [x] **Duplicate detection** — Settings → Find duplicates (identical files / matching titles) with per-copy delete
 - [ ] **Custom / selectable covers** per item and series
 - [ ] **Age-rating / content restrictions**
 

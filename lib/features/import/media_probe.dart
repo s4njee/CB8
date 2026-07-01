@@ -1,13 +1,16 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:collection/collection.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:pdfrx/pdfrx.dart';
 
 import '../../data/db/database.dart';
 import '../reader/comic/cbz_archive.dart';
+import 'embedded_metadata.dart';
 import 'series_parser.dart';
 
 /// What a probe of a single file yields, ready to insert into the catalog.
@@ -18,6 +21,8 @@ class ProbeResult {
     required this.pageCount,
     required this.coverJpg,
     required this.series,
+    this.fileSize = 0,
+    this.embedded = EmbeddedMetadata.empty,
   });
 
   /// `comic` or `book` — see [MediaTypes].
@@ -31,6 +36,12 @@ class ProbeResult {
 
   /// Series/volume/chapter parsed from the filename.
   final SeriesInfo series;
+
+  /// Size of the source file in bytes (used for sorting and duplicate detection).
+  final int fileSize;
+
+  /// Metadata read from inside the file (ComicInfo.xml / EPUB OPF), if any.
+  final EmbeddedMetadata embedded;
 }
 
 /// Comic archive extensions we ingest. CBZ (zip) and CBT (tar) are supported by
@@ -71,18 +82,35 @@ Future<ProbeResult?> probeFile(String path) async {
 
 Future<ProbeResult> _probeCbz(String path, SeriesInfo series) async {
   final bytes = await File(path).readAsBytes();
-  final pages = CbzArchive.pagesOf(decodeComicArchive(bytes));
+  final archive = decodeComicArchive(bytes);
+  final pages = CbzArchive.pagesOf(archive);
 
   Uint8List? cover;
   if (pages.isNotEmpty) {
     final raw = pages.first.content as List<int>;
     cover = _encodeCover(img.decodeImage(Uint8List.fromList(raw)));
   }
+
+  // ComicInfo.xml is the de-facto comic metadata sidecar (ComicRack et al).
+  var embedded = EmbeddedMetadata.empty;
+  final infoEntry = archive.files.firstWhereOrNull(
+    (f) => f.isFile && p.basename(f.name).toLowerCase() == 'comicinfo.xml',
+  );
+  if (infoEntry != null && infoEntry.size > 0) {
+    try {
+      embedded = parseComicInfoXml(_decodeUtf8(infoEntry.content as List<int>));
+    } catch (_) {
+      // Malformed sidecar — fall back to filename-parsed series only.
+    }
+  }
+
   return ProbeResult(
     mediaType: MediaTypes.comic,
     pageCount: pages.length,
     coverJpg: cover,
     series: series,
+    fileSize: bytes.length,
+    embedded: embedded,
   );
 }
 
@@ -112,6 +140,7 @@ Future<ProbeResult> _probePdf(String path, SeriesInfo series) async {
       pageCount: count,
       coverJpg: cover,
       series: series,
+      fileSize: await File(path).length(),
     );
   } finally {
     await doc.dispose();
@@ -142,13 +171,32 @@ Future<ProbeResult> _probeEpub(String path, SeriesInfo series) async {
   if (coverEntry.size > 0) {
     cover = _encodeCover(img.decodeImage(Uint8List.fromList(coverEntry.content as List<int>)));
   }
+
+  // The OPF package document carries Dublin Core metadata (title/author/etc.).
+  var embedded = EmbeddedMetadata.empty;
+  final opfEntry = archive.files.firstWhereOrNull(
+    (f) => f.isFile && p.extension(f.name).toLowerCase() == '.opf',
+  );
+  if (opfEntry != null && opfEntry.size > 0) {
+    try {
+      embedded = parseOpf(_decodeUtf8(opfEntry.content as List<int>));
+    } catch (_) {
+      // Malformed OPF — skip.
+    }
+  }
+
   return ProbeResult(
     mediaType: MediaTypes.book,
     pageCount: contentDocs,
     coverJpg: cover,
     series: series,
+    fileSize: bytes.length,
+    embedded: embedded,
   );
 }
+
+/// Decodes archive entry bytes as UTF-8, tolerating malformed sequences.
+String _decodeUtf8(List<int> bytes) => utf8.decode(bytes, allowMalformed: true);
 
 /// Resize to fit within the 240x360 cover box (preserving aspect) and JPEG-encode.
 Uint8List? _encodeCover(img.Image? src) {

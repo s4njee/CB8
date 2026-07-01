@@ -1,53 +1,50 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
+import 'package:flutter_readium/flutter_readium.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/window_control.dart';
 import '../../../data/local_files.dart';
 import '../../../data/models/comic_summary.dart';
-import '../../../core/window_control.dart';
 import '../../../data/repositories/providers.dart';
 import '../comic/reading_mode.dart';
 import '../reader_keyboard.dart';
 import '../widgets/reader_widgets.dart';
 
-/// Reader-selectable font families, injected into the epub.js content as a
-/// `font-family` theme override. The CSS lists web-safe fallbacks so the book
-/// renders consistently across iOS/Android/macOS WebViews.
+/// Reader-selectable font families, mapped onto Readium's `fontFamily` preference.
 enum EpubFont {
-  /// Sans-serif family (default).
-  sansSerif('Sans Serif', 'Helvetica, Arial, sans-serif'),
+  /// Sans-serif family.
+  sansSerif('Sans Serif', 'sans-serif'),
 
-  /// Serif family.
-  serif('Serif', 'Georgia, "Times New Roman", serif'),
+  /// Serif family (default — the most book-like).
+  serif('Serif', 'serif'),
 
   /// Monospace family.
-  mono('Monospace', 'Menlo, Consolas, monospace');
+  mono('Monospace', 'monospace');
 
   const EpubFont(this.label, this.css);
 
   /// Menu label for the font.
   final String label;
 
-  /// CSS `font-family` value injected into the epub.js content.
+  /// CSS `font-family` value handed to Readium.
   final String css;
 }
 
-/// Page color scheme for the EPUB reader, injected as a `background`/`color`
-/// theme override into the epub.js content (and mirrored onto the scaffold so
-/// the letterboxing around the page matches).
+/// Page color scheme for the EPUB reader, applied via Readium's Preferences API
+/// (background/text colors) and mirrored onto the scaffold so the letterboxing
+/// around the page matches.
 enum EpubReaderTheme {
   /// Dark — light text on a near-black page (default).
-  dark('Dark', Icons.dark_mode, 0xFF121212, 0xFFFFFFFF),
+  dark('Dark', Icons.dark_mode, 0xFF121212, 0xFFE6E6E6),
 
   /// Light — black text on white.
-  light('Light', Icons.light_mode, 0xFFFFFFFF, 0xFF000000),
+  light('Light', Icons.light_mode, 0xFFFFFFFF, 0xFF111111),
 
-  /// Sepia — warm paper tone with brown ink, easier on the eyes at night.
+  /// Sepia — warm paper tone with brown ink.
   sepia('Sepia', Icons.local_cafe, 0xFFF4ECD8, 0xFF5B4636);
 
   const EpubReaderTheme(this.label, this.icon, this._bg, this._fg);
@@ -66,18 +63,16 @@ enum EpubReaderTheme {
 
   /// Text color.
   Color get foreground => Color(_fg);
-
-  /// CSS hex (`#rrggbb`) for the page background.
-  String get bgCss => '#${(_bg & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
-
-  /// CSS hex (`#rrggbb`) for the text color.
-  String get fgCss => '#${(_fg & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
 }
 
-/// Reflowable EPUB reader — port of CB8's `EpubReader`, which used epub.js.
-/// `flutter_epub_viewer` runs the same epub.js engine in a WebView, so we get
-/// paginated reflow, font-size/family control, light/dark theming, and CFI
-/// locations that map directly onto our `lastLocation` column for resume.
+/// Reflowable EPUB reader, backed by the **Readium** toolkit (via `flutter_readium`).
+///
+/// Replaces the previous epub.js/WebView reader: native pagination, robust
+/// **Locator**-based resume, and Readium's Preferences API for theme/font/size and
+/// the layout (single vs two-column vs scroll). Reading position is stored as a
+/// serialized Locator in `lastLocation`; legacy epub.js CFIs don't parse as
+/// Locators, so a book opened for the first time after the switch starts from the
+/// beginning (a one-time reset).
 class EpubReaderScreen extends ConsumerStatefulWidget {
   /// Creates an EPUB reader for [comic].
   const EpubReaderScreen({super.key, required this.comic});
@@ -90,227 +85,146 @@ class EpubReaderScreen extends ConsumerStatefulWidget {
 }
 
 class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
-  final EpubController _controller = EpubController();
-  String? _path;
+  final _reader = FlutterReadium();
+  Publication? _pub;
   String? _error;
-  double _progress = 0; // 0..1
-  double _fontSize = 16; // px
-  EpubFont _fontFamily = EpubFont.sansSerif;
+  StreamSubscription<Locator>? _sub;
+  bool _realigned = false;
+
+  Locator? _locator;
+  double _progress = 0; // 0..1 over the whole book
+
+  // Preferences (local UI state; pushed to the engine).
+  double _fontScale = 1.0; // Readium fontSize is a ratio — 1.0 = normal
+  EpubFont _font = EpubFont.serif;
   EpubReaderTheme _theme = EpubReaderTheme.dark;
 
-  // Latest non-empty text selection, surfaced as a "Look up" bar (dictionary).
-  String _selectedText = '';
-  // Latest reading position (epub.js CFI). The package's live setFlow/setSpread
-  // are broken — they interpolate the enum, sending JS "EpubFlow.scrolled" rather
-  // than "scrolled" — so a mode change instead remounts EpubViewer with fresh
-  // displaySettings (which serialize correctly), resuming from this CFI.
-  String? _currentCfi;
+  /// Resume point parsed from the stored Locator JSON. Legacy CFIs parse to null
+  /// → start from the beginning (the one-time migration reset).
+  late final Locator? _initialLocator = _parseLocator(widget.comic.lastLocation);
 
-  // --- macOS WKWebView EPUB workaround ----------------------------------
-  // flutter_epub_viewer's swipe.html pulls epub.js + jszip via sibling-dir
-  // <script src="../dist/..."> tags. On macOS, WKWebView's read-access scope
-  // blocks those sub-resources, so `ePub`/`JSZip` are never defined and the page
-  // stays blank (`book.open` throws). Same-dir epubView.js does load, and the
-  // JS→Flutter bridge works — so on macOS we inject the two libs from the bundled
-  // package assets, recreate the `book`, and call the package's `readyToLoad`
-  // handler ourselves. iOS loads the scripts natively, so none of this runs.
-  bool _loaded = false;
-  bool _injecting = false;
-  Timer? _readyKick;
-  ReadingMode? _kickArmedFor;
+  static Locator? _parseLocator(String? saved) =>
+      (saved == null || saved.isEmpty) ? null : Locator.fromJsonString(saved);
 
-  // epub.js reports `relocated.progress` as 0.0 until its locations index finishes
-  // generating (signalled by onLocationLoaded). Persisting that early-zero would
-  // reset the saved page on every open, so progress writes are gated on this flag.
-  // It re-arms on a mode change, which remounts the viewer and regenerates locations.
-  bool _locationsReady = false;
-  ReadingMode? _locationsModeKey;
-
-  // Set while the screen is being popped. Tearing down the viewer can fire a
-  // final `relocated` at the book start; persisting it would clobber the saved
-  // position with page 1 (the iOS twin of the web reader's Back-button bug).
-  bool _disposing = false;
-
-  // Resume safety net. epub.js renders nothing (a blank/black page) if the saved
-  // resume CFI is stale or invalid — `display(cfi)` just rejects, and no
-  // `relocated` ever fires. If the book loads but we never see a relocate, fall
-  // back to the first page so the reader is never stuck on black.
-  Timer? _resumeWatchdog;
-  bool _sawRelocate = false;
+  /// The current preferences, derived from the reading mode + theme + font. EPUB
+  /// is paginated-only: Two pages → two columns, otherwise one. (Readium's scroll
+  /// mode is per-chapter, so it's not offered here — see later.md.)
+  EPUBPreferences _prefs() {
+    final two = ref.read(readingModeProvider) == ReadingMode.doublePage;
+    return EPUBPreferences(
+      columnCount: two ? EpubColumnCount.two : EpubColumnCount.one,
+      scroll: false,
+      fontFamily: _font.css,
+      fontSize: _fontScale,
+      backgroundColor: _theme.background,
+      textColor: _theme.foreground,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
-    _resolve();
+    _open();
   }
 
   @override
   void dispose() {
-    _disposing = true; // ignore any teardown relocate so it can't clobber progress
-    _resumeWatchdog?.cancel();
-    _readyKick?.cancel();
+    _sub?.cancel();
+    _reader.closePublication();
     super.dispose();
   }
 
-  /// Poll until the WebView controller exists, then make sure epub.js is present
-  /// and the book gets loaded. Stops once the book reports loaded.
-  void _scheduleReadyKick() {
-    _readyKick?.cancel();
-    var attempts = 0;
-    _readyKick = Timer.periodic(const Duration(milliseconds: 600), (timer) {
-      if (!mounted || _loaded || attempts >= 12) {
-        timer.cancel();
-        return;
-      }
-      attempts++;
-      final wv = _controller.webViewController;
-      if (wv != null) _ensureEpubLoaded(wv);
-    });
-  }
-
-  /// On macOS, inject epub.js + jszip (blocked as sub-resources) and trigger the
-  /// package's loader. Runs at most once per WebView; idempotent on retries.
-  Future<void> _ensureEpubLoaded(dynamic wv) async {
-    if (_injecting || _loaded) return;
-    final hasEpub = await wv.evaluateJavascript(source: 'typeof ePub');
-    if (_loaded) return;
-    if (hasEpub != 'function') {
-      _injecting = true;
-      try {
-        const dist = 'packages/flutter_epub_viewer/lib/assets/webpage/dist';
-        final jszip = await rootBundle.loadString('$dist/jszip.min.js');
-        final epubjs = await rootBundle.loadString('$dist/epub.js');
-        await wv.evaluateJavascript(source: jszip);
-        await wv.evaluateJavascript(source: epubjs);
-        // Recreate the top-level `book` (=== window.book in a classic script)
-        // now that ePub() is callable.
-        await wv.evaluateJavascript(source: 'window.book = ePub();');
-      } finally {
-        _injecting = false;
-      }
-    }
-    // Drive the package's readyToLoad → loadBook() chain ourselves (the native
-    // flutterInAppWebViewPlatformReady event never reaches its listener here).
-    await wv.evaluateJavascript(
-      source: 'if(!window.__cb8_kick){window.__cb8_kick=1;'
-          "window.flutter_inappwebview.callHandler('readyToLoad');}",
-    );
-  }
-
-  /// Map a reading mode onto epub.js flow + spread.
-  static ({EpubFlow flow, EpubSpread spread}) _settingsFor(ReadingMode mode) => switch (mode) {
-        ReadingMode.scroll => (flow: EpubFlow.scrolled, spread: EpubSpread.none),
-        ReadingMode.single => (flow: EpubFlow.paginated, spread: EpubSpread.none),
-        ReadingMode.doublePage => (flow: EpubFlow.paginated, spread: EpubSpread.always),
-      };
-
-  Future<void> _resolve() async {
+  Future<void> _open() async {
     final uri = widget.comic.sourceUri;
     if (uri == null) {
       setState(() => _error = 'Could not open this book.');
       return;
     }
-    final abs = await resolveLibraryPath(uri);
-    if (mounted) setState(() => _path = abs);
+    try {
+      // Pass a PLAIN path — the native side prepends file:// and encodes once.
+      final abs = await resolveLibraryPath(uri);
+      // Configure the layout BEFORE opening so the navigator paginates at the
+      // right column count from the first render.
+      _reader.setDefaultPreferences(_prefs());
+      _sub = _reader.onTextLocatorChanged.listen(_onLocator);
+      final pub = await _reader.openPublication(abs);
+      if (!mounted) return;
+      setState(() => _pub = pub);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not open this book:\n$e');
+    }
   }
 
-  /// Arm the resume safety net once the book has loaded: if no `relocated` event
-  /// arrives shortly, the saved CFI failed to display, so render the first page.
-  void _armResumeWatchdog() {
-    _resumeWatchdog?.cancel();
-    if (_sawRelocate) return;
-    _resumeWatchdog = Timer(const Duration(seconds: 5), () {
-      if (!mounted || _sawRelocate || _disposing) return;
-      // No CFI → epub.js displays the book's first section.
-      _controller.webViewController
-          ?.evaluateJavascript(source: 'if(window.rendition){rendition.display();}');
+  void _onLocator(Locator l) {
+    _locator = l;
+    final tp = l.locations?.totalProgression;
+    if (tp != null) _progress = tp.clamp(0, 1);
+    _scheduleRealign();
+    _persist();
+    if (mounted) setState(() {});
+  }
+
+  /// The navigator paginates for the platform view's bounds at content-load time
+  /// — before the Flutter `Expanded` settles — which can leave the first render
+  /// mis-sized. Re-navigating to the current locator once, after the view settles,
+  /// forces a re-paginate at the real size.
+  void _scheduleRealign() {
+    if (_realigned) return;
+    final l = _locator ?? _initialLocator;
+    if (l == null) return;
+    _realigned = true;
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (mounted) _reader.goToLocator(l);
     });
   }
 
-  void _onRelocated(EpubLocation location) {
-    if (_disposing) return; // teardown relocate (often page 1) — never persist it
-    _sawRelocate = true;
-    _resumeWatchdog?.cancel(); // a real relocate arrived — resume succeeded
-    _currentCfi = location.startCfi; // exact resume point; the CFI is always valid
-    // Until epub.js has generated its locations index, `location.progress` is 0.0
-    // even mid-book (e.g. the relocate fired while resuming into a saved CFI).
-    // Writing that back would reset the catalog's page/percentage to the start on
-    // every open, so until locations are ready we persist only the CFI and leave
-    // the page untouched. _onLocationLoaded backfills a real page once ready.
-    if (_locationsReady) {
-      _progress = location.progress.clamp(0, 1);
-      _persistProgress();
-    } else {
-      ref.read(activeSourceProvider).setProgress(
-            widget.comic.id,
-            location: location.startCfi,
-          );
-    }
-    if (mounted) setState(() {});
-  }
-
-  /// Fires once epub.js has generated its locations index — the point after which
-  /// `relocated` carries a trustworthy `progress`. epub.js does not re-emit a
-  /// relocate at this moment, so we read the current position's percentage straight
-  /// from the saved CFI and persist a real page now. This fixes both the in-reader
-  /// progress bar and the catalog progress when resuming a partially-read book.
-  Future<void> _onLocationLoaded() async {
-    _locationsReady = true;
-    final wv = _controller.webViewController;
-    final cfi = _currentCfi;
-    if (wv == null || cfi == null || cfi.isEmpty) return;
-    final raw = await wv.evaluateJavascript(
-      source: "typeof book !== 'undefined' && book.locations ? "
-          'book.locations.percentageFromCfi("$cfi") : null',
-    );
-    final pct = raw is num ? raw.toDouble() : double.tryParse('$raw');
-    if (pct == null) return;
-    _progress = pct.clamp(0, 1);
-    _persistProgress();
-    if (mounted) setState(() {});
-  }
-
-  /// Writes the current reading position (page + CFI, and `completed` at the end)
-  /// to the active source. Page is derived from the reading fraction; denom keeps
-  /// single-chapter books sane.
-  void _persistProgress() {
+  /// Writes the current position (page derived from whole-book progression, the
+  /// serialized Locator, and an explicit `completed` so paging back can clear it).
+  void _persist() {
+    final l = _locator;
+    if (l == null) return;
     final pageCount = widget.comic.pageCount;
     final denom = pageCount > 1 ? pageCount - 1 : 1;
-    final page = (_progress * denom).round();
-    // Write an explicit bool (not `true`-or-null): paging back from the end must
-    // be able to *clear* completed, otherwise a book that ever hit ~100% stays
-    // completed forever and never returns to the Continue Reading shelf.
     ref.read(activeSourceProvider).setProgress(
           widget.comic.id,
-          page: page,
-          location: _currentCfi,
+          page: (_progress * denom).round(),
+          location: jsonEncode(l.toJson()),
           completed: _progress >= 0.999,
         );
   }
 
-  void _setFontSize(double size) {
-    setState(() => _fontSize = size);
-    _controller.setFontSize(fontSize: size);
+  Future<void> _applyPreferences() => _reader.setEPUBPreferences(_prefs());
+
+  void _setFontScale(double scale) {
+    setState(() => _fontScale = double.parse(scale.clamp(0.6, 2.0).toStringAsFixed(2)));
+    _applyPreferences();
   }
 
-  void _setFontFamily(EpubFont font) {
-    setState(() => _fontFamily = font);
-    _applyReaderOverrides();
+  void _setFont(EpubFont font) {
+    setState(() => _font = font);
+    _applyPreferences();
   }
 
   void _setTheme(EpubReaderTheme theme) {
     setState(() => _theme = theme);
-    _applyReaderOverrides();
+    _applyPreferences();
   }
 
-  void _applyReaderOverrides() {
-    final wv = _controller.webViewController;
-    if (wv == null) return;
-    wv.evaluateJavascript(
-      source: "if(window.rendition&&rendition.themes){"
-          "rendition.themes.override('font-family','${_fontFamily.css}',true);"
-          "rendition.themes.override('background','${_theme.bgCss}',true);"
-          "rendition.themes.override('color','${_theme.fgCss}',true);}",
+  void _openToc() {
+    final pub = _pub;
+    if (pub == null) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF141414),
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _TocSheet(
+        entries: pub.toc,
+        onTap: (link) {
+          Navigator.of(context).pop();
+          _reader.goByLink(link, pub);
+        },
+      ),
     );
   }
 
@@ -318,72 +232,25 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF141414),
-      builder: (context) => _TypographySheet(
-        fontSize: _fontSize,
-        fontFamily: _fontFamily,
+      builder: (_) => _TypographySheet(
+        fontScale: _fontScale,
+        font: _font,
         theme: _theme,
-        onFontSize: _setFontSize,
-        onFontFamily: _setFontFamily,
+        onFontScale: _setFontScale,
+        onFont: _setFont,
         onTheme: _setTheme,
       ),
     );
   }
 
-  /// Handle an epub.js text selection: remember the (trimmed) text so the
-  /// "Look up" bar appears. Long passages aren't dictionary words, so cap it.
-  void _onTextSelected(EpubTextSelection selection) {
-    final text = selection.selectedText.trim();
-    if (text.isEmpty || text.length > 60) return;
-    if (text == _selectedText) return;
-    setState(() => _selectedText = text);
-  }
-
-  void _dismissLookup() {
-    if (_selectedText.isEmpty) return;
-    setState(() => _selectedText = '');
-    _controller.clearSelection();
-  }
-
-  void _openDictionary() {
-    final term = _selectedText;
-    if (term.isEmpty) return;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF141414),
-      isScrollControlled: true,
-      builder: (context) => _DictionarySheet(term: term),
-    );
-    _dismissLookup();
-  }
-
-  /// A mode change remounts [EpubViewer] (via its `ValueKey(mode)`), which
-  /// regenerates epub.js state from scratch. Re-arm the per-mount guards here,
-  /// *during the build that swaps in the new viewer* so the resets land before
-  /// the child mounts (deferring to a post-frame callback would let the new
-  /// viewer's first relocate slip through and clobber progress):
-  ///  - close the locations gate until onLocationLoaded re-fires, and
-  ///  - on macOS, re-arm the ready-kick so the new WebView reloads the book.
-  void _syncViewerForBuild(ReadingMode mode, String? path) {
-    if (_locationsModeKey != mode) {
-      _locationsModeKey = mode;
-      _locationsReady = false;
-    }
-    if (Platform.isMacOS && path != null && _kickArmedFor != mode) {
-      _kickArmedFor = mode;
-      _loaded = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleReadyKick());
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    // Re-apply preferences when the reading mode changes (single/two-page).
+    ref.listen(readingModeProvider, (_, _) => _applyPreferences());
     final mode = ref.watch(readingModeProvider);
-    final path = _path;
-    // Resume from wherever we are now (or the saved location on first open) so a
-    // mode switch — which remounts the viewer — doesn't lose the reader's place.
-    final resumeCfi = _currentCfi ?? widget.comic.lastLocation;
-    _syncViewerForBuild(mode, path);
-    final settings = _settingsFor(mode);
+    // EPUB offers only paginated layouts; a persisted scroll mode shows as single.
+    final epubMode = mode == ReadingMode.scroll ? ReadingMode.single : mode;
+    final pub = _pub;
     return Scaffold(
       backgroundColor: _theme.background,
       appBar: AppBar(
@@ -391,11 +258,19 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
         foregroundColor: Colors.white,
         title: Text(widget.comic.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          ReadingModeMenu(mode: mode),
           IconButton(
-            tooltip: 'Text size',
+            tooltip: 'Contents',
+            icon: const Icon(Icons.toc),
+            onPressed: pub == null ? null : _openToc,
+          ),
+          ReadingModeMenu(
+            mode: epubMode,
+            modes: const [ReadingMode.single, ReadingMode.doublePage],
+          ),
+          IconButton(
+            tooltip: 'Text & theme',
             icon: const Icon(Icons.text_fields),
-            onPressed: path == null ? null : _openTypographySheet,
+            onPressed: pub == null ? null : _openTypographySheet,
           ),
           if (Platform.isMacOS)
             IconButton(
@@ -407,134 +282,27 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
       ),
       body: _error != null
           ? ReaderMessage(message: _error!)
-          : path == null
+          : pub == null
               ? const Center(child: CircularProgressIndicator())
               : ReaderKeyboard(
-                  onNext: () => _controller.next(),
-                  onPrev: () => _controller.prev(),
-                  // Zoom maps to text size for a reflowable book.
-                  onZoomIn: () => _setFontSize((_fontSize + 2).clamp(12, 30)),
-                  onZoomOut: () => _setFontSize((_fontSize - 2).clamp(12, 30)),
-                  onZoomReset: () => _setFontSize(16),
+                  onNext: () => _reader.goForward(),
+                  onPrev: () => _reader.goBackward(),
+                  onZoomIn: () => _setFontScale(_fontScale + 0.1),
+                  onZoomOut: () => _setFontScale(_fontScale - 0.1),
+                  onZoomReset: () => _setFontScale(1.0),
                   onToggleFullscreen: WindowControl.toggleFullscreen,
                   child: Column(
-                  children: [
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final viewer = EpubViewer(
-                            // Remount on mode change so fresh displaySettings
-                            // (flow/spread) actually take effect.
-                            key: ValueKey(mode),
-                            epubController: _controller,
-                            epubSource: EpubSource.fromFile(File(path)),
-                            initialCfi:
-                                (resumeCfi != null && resumeCfi.isNotEmpty) ? resumeCfi : null,
-                            displaySettings: EpubDisplaySettings(
-                              fontSize: _fontSize.round(),
-                              flow: settings.flow,
-                              spread: settings.spread,
-                              snap: true,
-                              theme: EpubTheme.custom(
-                                backgroundDecoration:
-                                    BoxDecoration(color: _theme.background),
-                                foregroundColor: _theme.foreground,
-                              ),
-                            ),
-                            onTextSelected: _onTextSelected,
-                            onDeselection: () {
-                              if (_selectedText.isNotEmpty) {
-                                setState(() => _selectedText = '');
-                              }
-                            },
-                            onEpubLoaded: () {
-                              _loaded = true;
-                              _readyKick?.cancel();
-                              _applyReaderOverrides();
-                              _armResumeWatchdog();
-                            },
-                            onLocationLoaded: _onLocationLoaded,
-                            onRelocated: _onRelocated,
-                          );
-                          // Tap-to-turn. The package only wires tap zones on
-                          // Android, and on iOS the WebView's native text-
-                          // selection layer wins the gesture arena and swallows
-                          // the tap — surfacing a "translate" popup instead of
-                          // turning the page. An *opaque* Flutter gesture layer on
-                          // top consumes the touch before the platform view sees
-                          // it, so the selection layer never fires and a tap in
-                          // the left/right third reliably turns the page (works on
-                          // real touches and the simulator's mouse alike). The
-                          // middle third is a dead zone, leaving room for a future
-                          // tap-to-toggle-chrome. Scroll mode keeps native drag
-                          // scrolling, so it skips the overlay entirely.
-                          if (mode == ReadingMode.scroll) return viewer;
-                          final w = constraints.maxWidth;
-                          return Stack(
-                            children: [
-                              Positioned.fill(child: viewer),
-                              Positioned(
-                                left: 0,
-                                top: 0,
-                                bottom: 0,
-                                width: w / 3,
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: _controller.prev,
-                                ),
-                              ),
-                              Positioned(
-                                right: 0,
-                                top: 0,
-                                bottom: 0,
-                                width: w / 3,
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: _controller.next,
-                                ),
-                              ),
-                            ],
-                          );
-                        },
+                    children: [
+                      Expanded(
+                        child: ReadiumReaderWidget(
+                          publication: pub,
+                          initialLocator: _initialLocator,
+                        ),
                       ),
-                    ),
-                    if (_selectedText.isNotEmpty) _lookupBar(context),
-                    _progressBar(context),
-                  ],
+                      _progressBar(context),
+                    ],
+                  ),
                 ),
-                ),
-    );
-  }
-
-  /// Slim bar shown while text is selected: tap to look the selection up in the
-  /// dictionary, or dismiss it.
-  Widget _lookupBar(BuildContext context) {
-    return Material(
-      color: const Color(0xFF1E1E1E),
-      child: InkWell(
-        onTap: _openDictionary,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              const Icon(Icons.menu_book_outlined, color: Colors.white70, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Look up “$_selectedText”',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, color: Colors.white54, size: 20),
-                onPressed: _dismissLookup,
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -552,7 +320,7 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
         children: [
           IconButton(
             icon: const Icon(Icons.chevron_left, color: Colors.white),
-            onPressed: () => _controller.prev(),
+            onPressed: () => _reader.goBackward(),
           ),
           Expanded(
             child: LinearProgressIndicator(
@@ -564,7 +332,7 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right, color: Colors.white),
-            onPressed: () => _controller.next(),
+            onPressed: () => _reader.goForward(),
           ),
           SizedBox(
             width: 44,
@@ -577,25 +345,79 @@ class _EpubReaderScreenState extends ConsumerState<EpubReaderScreen> {
   }
 }
 
-/// Bottom sheet for EPUB typography: text size, font family, and page theme
-/// (dark / light / sepia). Holds its own copy of each setting (seeded from the
-/// reader) so the controls update instantly, and forwards every change to the
-/// reader via the callbacks.
+/// Bottom sheet listing the book's table of contents (nested entries indented by
+/// depth). Tapping an entry navigates the reader there and closes the sheet.
+class _TocSheet extends StatelessWidget {
+  const _TocSheet({required this.entries, required this.onTap});
+
+  final List<Link> entries;
+  final ValueChanged<Link> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text('Contents',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+            ),
+            Flexible(
+              child: entries.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('This book has no table of contents.',
+                          style: TextStyle(color: Colors.white54)),
+                    )
+                  : ListView(
+                      shrinkWrap: true,
+                      children: [for (final e in entries) ..._tiles(e, 0)],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _tiles(Link link, int depth) {
+    final title = link.title?.trim() ?? '';
+    return [
+      if (title.isNotEmpty)
+        ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.only(left: 20 + depth * 16.0, right: 20),
+          title: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
+          onTap: () => onTap(link),
+        ),
+      for (final child in link.children) ..._tiles(child, depth + 1),
+    ];
+  }
+}
+
+/// Bottom sheet for EPUB typography: text size, font family, and page theme.
+/// Holds its own copy of each setting (seeded from the reader) and forwards every
+/// change via the callbacks.
 class _TypographySheet extends StatefulWidget {
   const _TypographySheet({
-    required this.fontSize,
-    required this.fontFamily,
+    required this.fontScale,
+    required this.font,
     required this.theme,
-    required this.onFontSize,
-    required this.onFontFamily,
+    required this.onFontScale,
+    required this.onFont,
     required this.onTheme,
   });
 
-  final double fontSize;
-  final EpubFont fontFamily;
+  final double fontScale;
+  final EpubFont font;
   final EpubReaderTheme theme;
-  final ValueChanged<double> onFontSize;
-  final ValueChanged<EpubFont> onFontFamily;
+  final ValueChanged<double> onFontScale;
+  final ValueChanged<EpubFont> onFont;
   final ValueChanged<EpubReaderTheme> onTheme;
 
   @override
@@ -603,8 +425,8 @@ class _TypographySheet extends StatefulWidget {
 }
 
 class _TypographySheetState extends State<_TypographySheet> {
-  late double _fontSize = widget.fontSize;
-  late EpubFont _fontFamily = widget.fontFamily;
+  late double _fontScale = widget.fontScale;
+  late EpubFont _font = widget.font;
   late EpubReaderTheme _theme = widget.theme;
 
   @override
@@ -621,12 +443,13 @@ class _TypographySheetState extends State<_TypographySheet> {
               const Text('A', style: TextStyle(fontSize: 14)),
               Expanded(
                 child: Slider(
-                  value: _fontSize,
-                  min: 12,
-                  max: 30,
+                  value: _fontScale,
+                  min: 0.6,
+                  max: 2.0,
+                  divisions: 14,
                   onChanged: (v) {
-                    setState(() => _fontSize = v);
-                    widget.onFontSize(v);
+                    setState(() => _fontScale = v);
+                    widget.onFontScale(v);
                   },
                 ),
               ),
@@ -642,10 +465,10 @@ class _TypographySheetState extends State<_TypographySheet> {
               for (final font in EpubFont.values)
                 ChoiceChip(
                   label: Text(font.label),
-                  selected: _fontFamily == font,
+                  selected: _font == font,
                   onSelected: (_) {
-                    setState(() => _fontFamily = font);
-                    widget.onFontFamily(font);
+                    setState(() => _font = font);
+                    widget.onFont(font);
                   },
                 ),
             ],
@@ -673,169 +496,3 @@ class _TypographySheetState extends State<_TypographySheet> {
     );
   }
 }
-
-/// One part-of-speech grouping of definitions, as returned by dictionaryapi.dev.
-class _Meaning {
-  _Meaning(this.partOfSpeech, this.definitions);
-  final String partOfSpeech;
-  final List<String> definitions;
-}
-
-/// Bottom sheet that looks [term] up in the free, key-less dictionaryapi.dev
-/// dictionary and renders the part-of-speech groupings, with graceful loading /
-/// not-found / offline states. Network-only and unauthenticated, so it never
-/// touches the catalog or a CB8 server.
-class _DictionarySheet extends StatefulWidget {
-  const _DictionarySheet({required this.term});
-
-  final String term;
-
-  @override
-  State<_DictionarySheet> createState() => _DictionarySheetState();
-}
-
-class _DictionarySheetState extends State<_DictionarySheet> {
-  bool _loading = true;
-  String? _phonetic;
-  List<_Meaning> _meanings = [];
-  String? _message;
-
-  @override
-  void initState() {
-    super.initState();
-    _lookup();
-  }
-
-  Future<void> _lookup() async {
-    final word = widget.term.trim();
-    try {
-      final res = await Dio().get<dynamic>(
-        'https://api.dictionaryapi.dev/api/v2/entries/en/${Uri.encodeComponent(word)}',
-        options: Options(
-          // A missing word returns 404 with a JSON body; treat that as "no
-          // definition" rather than throwing.
-          validateStatus: (s) => s != null && s < 500,
-          receiveTimeout: const Duration(seconds: 10),
-        ),
-      );
-      if (!mounted) return;
-      final data = res.data;
-      if (res.statusCode != 200 || data is! List || data.isEmpty) {
-        setState(() {
-          _loading = false;
-          _message = 'No dictionary entry for “$word”.';
-        });
-        return;
-      }
-      final meanings = <_Meaning>[];
-      String? phonetic;
-      for (final entry in data) {
-        if (entry is! Map) continue;
-        phonetic ??= (entry['phonetic'] as String?)?.trim();
-        final rawMeanings = entry['meanings'];
-        if (rawMeanings is! List) continue;
-        for (final m in rawMeanings) {
-          if (m is! Map) continue;
-          final pos = (m['partOfSpeech'] as String?) ?? '';
-          final defs = <String>[];
-          final rawDefs = m['definitions'];
-          if (rawDefs is List) {
-            for (final d in rawDefs) {
-              final text = d is Map ? d['definition'] as String? : null;
-              if (text != null && text.trim().isNotEmpty) defs.add(text.trim());
-              if (defs.length >= 3) break; // keep each grouping compact
-            }
-          }
-          if (defs.isNotEmpty) meanings.add(_Meaning(pos, defs));
-        }
-      }
-      setState(() {
-        _loading = false;
-        _phonetic = (phonetic != null && phonetic.isNotEmpty) ? phonetic : null;
-        _meanings = meanings;
-        if (meanings.isEmpty) _message = 'No definition found for “$word”.';
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _message = 'Could not reach the dictionary. Check your connection.';
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.6),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Flexible(
-                    child: Text(
-                      widget.term,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  if (_phonetic != null) ...[
-                    const SizedBox(width: 10),
-                    Text(_phonetic!, style: const TextStyle(color: Colors.white54, fontSize: 14)),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 12),
-              Flexible(child: _content()),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _content() {
-    if (_loading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-    if (_message != null) {
-      return Text(_message!, style: const TextStyle(color: Colors.white70));
-    }
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final meaning in _meanings) ...[
-            Text(
-              meaning.partOfSpeech,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
-                fontStyle: FontStyle.italic,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 4),
-            for (var i = 0; i < meaning.definitions.length; i++)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6, left: 4),
-                child: Text('${i + 1}. ${meaning.definitions[i]}',
-                    style: const TextStyle(color: Colors.white)),
-              ),
-            const SizedBox(height: 12),
-          ],
-        ],
-      ),
-    );
-  }
-}
-

@@ -28,6 +28,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Required by the Readium kotlin-toolkit (flureadium) on minSdk 24.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
@@ -74,6 +76,11 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+dependencies {
+    // Core library desugaring backports java.time/etc. used by the Readium toolkit.
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 
 flutter {

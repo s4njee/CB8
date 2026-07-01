@@ -50,11 +50,16 @@ images install this automatically. Desktop and standalone runs need `7z` on
 
 ### Quick start — Docker
 
+The standalone server needs Postgres, so the compose file brings up Postgres, the
+API, and the background worker together (mirrors `packaging/k8s`):
+
 ```sh
-docker pull ghcr.io/s4njee/cb8:latest
-# Or use the compose file from the standalone tarball:
-docker compose -f docker-compose.yaml up -d
+cd packaging/docker
+cp .env.example .env            # set CB8_DB_PASSWORD + BETTER_AUTH_SECRET
+docker compose up -d --build    # or set CB8_IMAGE to pull a prebuilt image
 ```
+
+Then open `http://<host>:4218/`, sign in as admin, and add your library paths.
 
 ### Quick start — Desktop
 
@@ -70,7 +75,8 @@ chmod +x CB8-*.AppImage
 ```sh
 tar xzf cb8-standalone.tar.gz
 npm install --omit=dev
-node standalone.mjs
+# Requires a pgvector-enabled Postgres; the schema is created on first connect.
+DATABASE_URL=postgres://cb8:<pw>@localhost:5432/cb8 node standalone.mjs
 ```
 
 ## First Run
@@ -86,7 +92,7 @@ On first launch CB8 creates a single `admin` account and stores its initial pass
 ============================================================
 ```
 
-The password remains visible in **Settings → Account** until you change it (at which point CB8 wipes the stored copy). If you lose it before changing it, sign in with the value shown there. If the row has been cleared and you don't remember the password, delete the SQLite database and let CB8 create a fresh admin on next launch — your library data lives in the same DB, so you'll need to re-scan.
+The password remains visible in **Settings → Account** until you change it (at which point CB8 wipes the stored copy). If you lose it before changing it, sign in with the value shown there. If the row has been cleared and you don't remember the password, reset the admin against the catalog database (the desktop app's SQLite file, or the server's Postgres) and let CB8 recreate a fresh admin on next launch — your catalog lives in that same database, so you'll then re-scan the library.
 
 The web UI binds to `127.0.0.1:8008` by default. To expose it to the LAN, toggle **Settings → LAN sharing** in the desktop app, or set `CB8_HOST=0.0.0.0` for headless deployments. Then reach it at `http://<your-ip>:8008`.
 

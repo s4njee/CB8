@@ -135,6 +135,43 @@ class Favorites extends Table {
   Set<Column> get primaryKey => {comicId};
 }
 
+/// "Want to read" / on-deck shelf membership. Like [Favorites] but a separate
+/// intent: books the user has queued up to read next. Local-only — the CB8
+/// server has no equivalent concept.
+class WantToRead extends Table {
+  /// Queued comic; the row is the (single-column) primary key.
+  IntColumn get comicId =>
+      integer().references(Comics, #id, onDelete: KeyAction.cascade)();
+
+  /// When the comic was added to the shelf; drives the shelf ordering.
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {comicId};
+}
+
+/// Folders the user has pointed CB8 at for automatic ingestion. A rescan walks
+/// each path for supported files and imports anything new; on desktop the app
+/// also live-watches them while running. Local-only.
+class WatchedFolders extends Table {
+  /// Auto-incrementing primary key.
+  IntColumn get id => integer().autoIncrement()();
+
+  /// Absolute filesystem path of the watched directory. Unlike imported library
+  /// files (stored relative to the app-support dir), a watched folder is an
+  /// external location the user owns, so its absolute path is stored verbatim.
+  TextColumn get path => text().unique()();
+
+  /// When the folder was last scanned, for display; null until first scan.
+  DateTimeColumn get lastScanned => dateTime().nullable()();
+
+  /// Whether the folder is rescanned automatically on app launch.
+  BoolColumn get autoScan => boolean().withDefault(const Constant(true))();
+
+  /// When the folder was added; defaults to now.
+  DateTimeColumn get dateAdded => dateTime().withDefault(currentDateAndTime)();
+}
+
 /// Named, media-typed collections — CB8's `libraries`.
 class Libraries extends Table {
   /// Auto-incrementing primary key.
@@ -243,6 +280,8 @@ class Connections extends Table {
     Bookmarks,
     ReadingHistory,
     Favorites,
+    WantToRead,
+    WatchedFolders,
     Libraries,
     LibraryComics,
     Folders,
@@ -260,7 +299,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -271,6 +310,11 @@ class AppDatabase extends _$AppDatabase {
         onUpgrade: (m, from, to) async {
           // v2 adds covering indexes for the hot library list/sort/group queries.
           if (from < 2) await _createIndexes();
+          // v3 adds the want-to-read shelf and watched-folder ingestion tables.
+          if (from < 3) {
+            await m.createTable(wantToRead);
+            await m.createTable(watchedFolders);
+          }
         },
       );
 

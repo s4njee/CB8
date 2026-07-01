@@ -179,8 +179,8 @@ class ReaderBottomBar extends StatelessWidget {
 /// and, on tap, a checked menu of all modes that writes the choice back to
 /// [readingModeProvider].
 class ReadingModeMenu extends ConsumerWidget {
-  /// Creates a reading-mode menu for [mode].
-  const ReadingModeMenu({super.key, required this.mode, this.color});
+  /// Creates a reading-mode menu for [mode], offering [modes] (defaults to all).
+  const ReadingModeMenu({super.key, required this.mode, this.color, this.modes});
 
   /// The currently-active reading mode (shown as the button icon and checked row).
   final ReadingMode mode;
@@ -189,6 +189,10 @@ class ReadingModeMenu extends ConsumerWidget {
   /// the comic/PDF overlays pass white.
   final Color? color;
 
+  /// The modes to offer. Defaults to all of them; the EPUB reader passes only
+  /// the paginated modes (Readium scroll is per-chapter — see later.md).
+  final List<ReadingMode>? modes;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return PopupMenuButton<ReadingMode>(
@@ -196,7 +200,7 @@ class ReadingModeMenu extends ConsumerWidget {
       icon: Icon(mode.icon, color: color),
       onSelected: (m) => ref.read(readingModeProvider.notifier).set(m),
       itemBuilder: (context) => [
-        for (final m in ReadingMode.values)
+        for (final m in (modes ?? ReadingMode.values))
           CheckedPopupMenuItem(
             value: m,
             checked: m == mode,

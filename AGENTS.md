@@ -85,9 +85,10 @@ test/                  tests + test/support/fake_cb8_server.dart
   on pull-to-refresh (`invalidateLibraryProviders`). Don't assume remote views auto-update.
 - **Guest writes 401 by design.** `RemoteSource.setProgress` swallows failures so the
   reader never crashes for a guest. Preserve that; surface auth state via the guest badge.
-- **EPUB resume is CFI-based and finicky** (progress gating, the relocate watchdog, mode
-  remounts). There is also a macOS WKWebView workaround for epub.js sub-resources. Read
-  ARCHITECTURE §9 before touching the EPUB reader.
+- **The EPUB reader is Readium (`flutter_readium`), iOS/Android only.** Position is a
+  Readium Locator in `lastLocation`; it's paginated-only (single/two-column — scroll is
+  per-resource, see `later.md`). Building needs Flutter SPM disabled, iOS 15+, and Android
+  `desugar_jdk_libs` 2.1.5+. Read ARCHITECTURE §9 before touching it.
 - **Storage paths are relative** to `getApplicationSupportDirectory()` (iOS container UUIDs
   change on reinstall). Never persist absolute file paths.
 

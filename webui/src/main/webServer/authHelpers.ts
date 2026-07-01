@@ -88,25 +88,105 @@ export function trustedOriginsForBaseURL(
   return Array.from(out);
 }
 
+/** First value of a (possibly comma-separated) forwarded header, trimmed. */
+function firstForwardedValue(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const first = raw.split(',')[0]?.trim();
+  return first || null;
+}
+
 /**
- * Conditionally trust a request's Origin when it matches the Host header.
- * Lets a request through when its `Origin` and `Host` refer to the same
- *          host (covers dynamic LAN access not known at startup). Invalid Origin
- *          headers are ignored.
+ * Conditionally trust a request's Origin when it matches the host the request
+ * was actually served on.
+ *
+ * Lets a request through when its `Origin` refers to the same host as either the
+ * direct `Host` header *or* a proxy-forwarded host (`X-Forwarded-Host`). A
+ * matching Origin is same-origin and therefore safe to trust without curating
+ * every `host:port` in config — this covers dynamic LAN access (by IP or
+ * `.local` name) and reverse-proxy deploys not known at startup.
+ *
+ * Security note: a same-host match is safe because a browser sets `Host` to the
+ * real target it is talking to and `Origin` to the page that issued the request;
+ * a cross-site attacker cannot make the two agree. The forwarded host/proto, by
+ * contrast, are only trustworthy behind a proxy that overwrites them, so the
+ * caller must pass `null` for them unless proxy headers are explicitly trusted.
+ *
  * @param trustedOrigins The base trusted-origin list.
  * @param origin The request `Origin` header, if present.
  * @param host The request `Host` header, if present.
- * @returns The trusted-origin list, possibly extended with the request origin.
+ * @param forwardedHost The request `X-Forwarded-Host`, if proxy headers are trusted.
+ * @param forwardedProto The request `X-Forwarded-Proto`, if proxy headers are trusted.
+ * @returns The trusted-origin list, possibly extended with the request/forwarded origin.
  */
-export function withSameHostOrigin(trustedOrigins: string[], origin: string | null | undefined, host: string | null | undefined): string[] {
+export function withSameHostOrigin(
+  trustedOrigins: string[],
+  origin: string | null | undefined,
+  host: string | null | undefined,
+  forwardedHost?: string | null,
+  forwardedProto?: string | null,
+): string[] {
   const out = new Set<string>(trustedOrigins);
+
+  const fwdHost = firstForwardedValue(forwardedHost);
+  const fwdProto = firstForwardedValue(forwardedProto);
+
+  // Hosts that count as "the same site we just served".
+  const sameSiteHosts = new Set<string>();
+  if (host) sameSiteHosts.add(host);
+  if (fwdHost) sameSiteHosts.add(fwdHost);
+
   try {
-    if (origin && host) {
+    if (origin) {
       const parsed = new URL(origin);
-      if (parsed.host === host) out.add(origin);
+      if (sameSiteHosts.has(parsed.host)) out.add(origin);
     }
   } catch {
     // Ignore invalid Origin headers.
   }
+
+  // Behind a proxy the browser's Origin is the public URL while Host is the
+  // internal upstream; reconstruct the public origin from the forwarded headers
+  // so it is trusted even when it never matches the internal Host.
+  if (fwdHost && fwdProto) {
+    out.add(`${fwdProto}://${fwdHost}`);
+  }
+
   return Array.from(out);
+}
+
+/**
+ * Explain why a login origin will be rejected, for self-diagnosing logs.
+ *
+ * Returns a human-readable message when `origin` is present but not in the
+ * computed trusted set (so better-auth will reject the sign-in as cross-site),
+ * or `null` when the origin is absent or already trusted. Purely advisory — it
+ * never changes what is trusted.
+ *
+ * @param trustedOrigins The fully computed trusted-origin list for the request.
+ * @param origin The request `Origin` header, if present.
+ * @returns An actionable message, or `null` when there is nothing to warn about.
+ */
+export function diagnoseUntrustedOrigin(
+  trustedOrigins: string[],
+  origin: string | null | undefined,
+): string | null {
+  if (!origin) return null;
+  if (trustedOrigins.includes(origin)) return null;
+  return (
+    `Login from origin "${origin}" is not trusted and will be rejected as ` +
+    `cross-site. If you reach CB8 at this address, add it to ` +
+    `BETTER_AUTH_TRUSTED_ORIGINS (comma-separated) and restart. ` +
+    `Currently trusted: ${trustedOrigins.join(', ')}`
+  );
+}
+
+/**
+ * Whether a configured/stored secret is usable (long enough to sign sessions).
+ * Centralizes the "at least 32 chars" rule so the env-over-stored precedence is
+ * testable without a live database.
+ * @param value The candidate secret, if any.
+ * @returns `true` when the value is present and at least 32 characters.
+ */
+export function isUsableSecret(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.length >= 32;
 }

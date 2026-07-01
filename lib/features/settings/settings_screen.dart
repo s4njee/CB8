@@ -6,6 +6,8 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/theme_controller.dart';
 import '../../data/repositories/providers.dart';
 import '../import/import_controller.dart';
+import '../library/duplicates_screen.dart';
+import 'watched_folders_screen.dart';
 
 /// Settings: appearance (accent color) and library import.
 ///
@@ -19,6 +21,7 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final accent = ref.watch(accentThemeProvider);
+    final canManage = ref.watch(activeSourceProvider).supportsLibraryManagement;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
@@ -52,6 +55,28 @@ class SettingsScreen extends ConsumerWidget {
               Navigator.of(context).maybePop();
             },
           ),
+          if (canManage) ...[
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Watched folders'),
+              subtitle: const Text('Auto-import comics & books from chosen folders'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const WatchedFoldersScreen()),
+              ),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.content_copy_outlined),
+              title: const Text('Find duplicates'),
+              subtitle: const Text('Spot and remove duplicate items'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const DuplicatesScreen()),
+              ),
+            ),
+          ],
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.playlist_remove_outlined),

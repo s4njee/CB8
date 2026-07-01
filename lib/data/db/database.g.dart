@@ -495,32 +495,65 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
 }
 
 class ComicRow extends DataClass implements Insertable<ComicRow> {
+  /// Auto-incrementing primary key.
   final int id;
 
   /// Platform-stable handle to the file. On desktop this is a path; on mobile it
   /// is a security-scoped URI (SAF / UIDocumentPicker) — see plan risks.
   final String uri;
+
+  /// Display title shown on cards and in the reader app bar.
   final String title;
+
+  /// Total page (comic/PDF) or content-document (EPUB) count; 0 until probed.
   final int pageCount;
+
+  /// File size in bytes, for display and sorting.
   final int fileSize;
 
   /// 240x360 JPEG cover, stored inline like CB8's `cover_thumbnail` BLOB.
   final Uint8List? coverThumbnail;
+
+  /// When the row was imported; defaults to now.
   final DateTime dateAdded;
 
   /// Reading progress. `lastPage` for comics/PDF; `lastLocation` is an EPUB CFI.
   final int? lastPage;
+
+  /// EPUB CFI (or other opaque locator) for resume; null for paged formats.
   final String? lastLocation;
+
+  /// Timestamp of the most recent read, used by the Recent shelf.
   final DateTime? lastRead;
+
+  /// Whether the book has been read to the end.
   final bool completed;
+
+  /// `comic` or `book` — see [MediaTypes].
   final String mediaType;
+
+  /// Series this entry belongs to, parsed from the filename when possible.
   final String? seriesName;
+
+  /// Volume number within the series, if parsed.
   final double? volumeNumber;
+
+  /// Chapter number within the series/volume, if parsed.
   final double? chapterNumber;
+
+  /// Author/writer metadata.
   final String? author;
+
+  /// Artist/illustrator metadata.
   final String? artist;
+
+  /// Genre label.
   final String? genre;
+
+  /// Publication year.
   final int? year;
+
+  /// Free-text synopsis.
   final String? summary;
   const ComicRow({
     required this.id,
@@ -1282,13 +1315,22 @@ class $BookmarksTable extends Bookmarks
 }
 
 class Bookmark extends DataClass implements Insertable<Bookmark> {
+  /// Auto-incrementing primary key.
   final int id;
+
+  /// Owning comic; bookmarks are deleted with their comic.
   final int comicId;
 
   /// Page index for comics/PDF, or the EPUB CFI string stuffed into [location].
   final int? page;
+
+  /// EPUB CFI (or other locator) when the format isn't page-indexed.
   final String? location;
+
+  /// Optional user note attached to the bookmark.
   final String? note;
+
+  /// Creation timestamp; defaults to now.
   final DateTime createdAt;
   const Bookmark({
     required this.id,
@@ -1654,10 +1696,19 @@ class $ReadingHistoryTable extends ReadingHistory
 
 class ReadingHistoryData extends DataClass
     implements Insertable<ReadingHistoryData> {
+  /// Auto-incrementing primary key.
   final int id;
+
+  /// Owning comic; history is deleted with its comic.
   final int comicId;
+
+  /// Action name, e.g. `open`, `page`, `complete`.
   final String action;
+
+  /// Page index the action occurred on, if applicable.
   final int? page;
+
+  /// When the action happened; defaults to now.
   final DateTime timestamp;
   const ReadingHistoryData({
     required this.id,
@@ -1934,7 +1985,10 @@ class $FavoritesTable extends Favorites
 }
 
 class Favorite extends DataClass implements Insertable<Favorite> {
+  /// Favorited comic; the row is the (single-column) primary key.
   final int comicId;
+
+  /// When the comic was favorited; defaults to now.
   final DateTime createdAt;
   const Favorite({required this.comicId, required this.createdAt});
   @override
@@ -2049,6 +2103,582 @@ class FavoritesCompanion extends UpdateCompanion<Favorite> {
     return (StringBuffer('FavoritesCompanion(')
           ..write('comicId: $comicId, ')
           ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $WantToReadTable extends WantToRead
+    with TableInfo<$WantToReadTable, WantToReadData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $WantToReadTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _comicIdMeta = const VerificationMeta(
+    'comicId',
+  );
+  @override
+  late final GeneratedColumn<int> comicId = GeneratedColumn<int>(
+    'comic_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES comics (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    defaultValue: currentDateAndTime,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [comicId, createdAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'want_to_read';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<WantToReadData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('comic_id')) {
+      context.handle(
+        _comicIdMeta,
+        comicId.isAcceptableOrUnknown(data['comic_id']!, _comicIdMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {comicId};
+  @override
+  WantToReadData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return WantToReadData(
+      comicId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}comic_id'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $WantToReadTable createAlias(String alias) {
+    return $WantToReadTable(attachedDatabase, alias);
+  }
+}
+
+class WantToReadData extends DataClass implements Insertable<WantToReadData> {
+  /// Queued comic; the row is the (single-column) primary key.
+  final int comicId;
+
+  /// When the comic was added to the shelf; drives the shelf ordering.
+  final DateTime createdAt;
+  const WantToReadData({required this.comicId, required this.createdAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['comic_id'] = Variable<int>(comicId);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  WantToReadCompanion toCompanion(bool nullToAbsent) {
+    return WantToReadCompanion(
+      comicId: Value(comicId),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory WantToReadData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return WantToReadData(
+      comicId: serializer.fromJson<int>(json['comicId']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'comicId': serializer.toJson<int>(comicId),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  WantToReadData copyWith({int? comicId, DateTime? createdAt}) =>
+      WantToReadData(
+        comicId: comicId ?? this.comicId,
+        createdAt: createdAt ?? this.createdAt,
+      );
+  WantToReadData copyWithCompanion(WantToReadCompanion data) {
+    return WantToReadData(
+      comicId: data.comicId.present ? data.comicId.value : this.comicId,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WantToReadData(')
+          ..write('comicId: $comicId, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(comicId, createdAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is WantToReadData &&
+          other.comicId == this.comicId &&
+          other.createdAt == this.createdAt);
+}
+
+class WantToReadCompanion extends UpdateCompanion<WantToReadData> {
+  final Value<int> comicId;
+  final Value<DateTime> createdAt;
+  const WantToReadCompanion({
+    this.comicId = const Value.absent(),
+    this.createdAt = const Value.absent(),
+  });
+  WantToReadCompanion.insert({
+    this.comicId = const Value.absent(),
+    this.createdAt = const Value.absent(),
+  });
+  static Insertable<WantToReadData> custom({
+    Expression<int>? comicId,
+    Expression<DateTime>? createdAt,
+  }) {
+    return RawValuesInsertable({
+      if (comicId != null) 'comic_id': comicId,
+      if (createdAt != null) 'created_at': createdAt,
+    });
+  }
+
+  WantToReadCompanion copyWith({
+    Value<int>? comicId,
+    Value<DateTime>? createdAt,
+  }) {
+    return WantToReadCompanion(
+      comicId: comicId ?? this.comicId,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (comicId.present) {
+      map['comic_id'] = Variable<int>(comicId.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WantToReadCompanion(')
+          ..write('comicId: $comicId, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $WatchedFoldersTable extends WatchedFolders
+    with TableInfo<$WatchedFoldersTable, WatchedFolder> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $WatchedFoldersTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _pathMeta = const VerificationMeta('path');
+  @override
+  late final GeneratedColumn<String> path = GeneratedColumn<String>(
+    'path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'),
+  );
+  static const VerificationMeta _lastScannedMeta = const VerificationMeta(
+    'lastScanned',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastScanned = GeneratedColumn<DateTime>(
+    'last_scanned',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _autoScanMeta = const VerificationMeta(
+    'autoScan',
+  );
+  @override
+  late final GeneratedColumn<bool> autoScan = GeneratedColumn<bool>(
+    'auto_scan',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("auto_scan" IN (0, 1))',
+    ),
+    defaultValue: const Constant(true),
+  );
+  static const VerificationMeta _dateAddedMeta = const VerificationMeta(
+    'dateAdded',
+  );
+  @override
+  late final GeneratedColumn<DateTime> dateAdded = GeneratedColumn<DateTime>(
+    'date_added',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    defaultValue: currentDateAndTime,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    path,
+    lastScanned,
+    autoScan,
+    dateAdded,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'watched_folders';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<WatchedFolder> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('path')) {
+      context.handle(
+        _pathMeta,
+        path.isAcceptableOrUnknown(data['path']!, _pathMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_pathMeta);
+    }
+    if (data.containsKey('last_scanned')) {
+      context.handle(
+        _lastScannedMeta,
+        lastScanned.isAcceptableOrUnknown(
+          data['last_scanned']!,
+          _lastScannedMeta,
+        ),
+      );
+    }
+    if (data.containsKey('auto_scan')) {
+      context.handle(
+        _autoScanMeta,
+        autoScan.isAcceptableOrUnknown(data['auto_scan']!, _autoScanMeta),
+      );
+    }
+    if (data.containsKey('date_added')) {
+      context.handle(
+        _dateAddedMeta,
+        dateAdded.isAcceptableOrUnknown(data['date_added']!, _dateAddedMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  WatchedFolder map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return WatchedFolder(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      path: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}path'],
+      )!,
+      lastScanned: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_scanned'],
+      ),
+      autoScan: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}auto_scan'],
+      )!,
+      dateAdded: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}date_added'],
+      )!,
+    );
+  }
+
+  @override
+  $WatchedFoldersTable createAlias(String alias) {
+    return $WatchedFoldersTable(attachedDatabase, alias);
+  }
+}
+
+class WatchedFolder extends DataClass implements Insertable<WatchedFolder> {
+  /// Auto-incrementing primary key.
+  final int id;
+
+  /// Absolute filesystem path of the watched directory. Unlike imported library
+  /// files (stored relative to the app-support dir), a watched folder is an
+  /// external location the user owns, so its absolute path is stored verbatim.
+  final String path;
+
+  /// When the folder was last scanned, for display; null until first scan.
+  final DateTime? lastScanned;
+
+  /// Whether the folder is rescanned automatically on app launch.
+  final bool autoScan;
+
+  /// When the folder was added; defaults to now.
+  final DateTime dateAdded;
+  const WatchedFolder({
+    required this.id,
+    required this.path,
+    this.lastScanned,
+    required this.autoScan,
+    required this.dateAdded,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['path'] = Variable<String>(path);
+    if (!nullToAbsent || lastScanned != null) {
+      map['last_scanned'] = Variable<DateTime>(lastScanned);
+    }
+    map['auto_scan'] = Variable<bool>(autoScan);
+    map['date_added'] = Variable<DateTime>(dateAdded);
+    return map;
+  }
+
+  WatchedFoldersCompanion toCompanion(bool nullToAbsent) {
+    return WatchedFoldersCompanion(
+      id: Value(id),
+      path: Value(path),
+      lastScanned: lastScanned == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastScanned),
+      autoScan: Value(autoScan),
+      dateAdded: Value(dateAdded),
+    );
+  }
+
+  factory WatchedFolder.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return WatchedFolder(
+      id: serializer.fromJson<int>(json['id']),
+      path: serializer.fromJson<String>(json['path']),
+      lastScanned: serializer.fromJson<DateTime?>(json['lastScanned']),
+      autoScan: serializer.fromJson<bool>(json['autoScan']),
+      dateAdded: serializer.fromJson<DateTime>(json['dateAdded']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'path': serializer.toJson<String>(path),
+      'lastScanned': serializer.toJson<DateTime?>(lastScanned),
+      'autoScan': serializer.toJson<bool>(autoScan),
+      'dateAdded': serializer.toJson<DateTime>(dateAdded),
+    };
+  }
+
+  WatchedFolder copyWith({
+    int? id,
+    String? path,
+    Value<DateTime?> lastScanned = const Value.absent(),
+    bool? autoScan,
+    DateTime? dateAdded,
+  }) => WatchedFolder(
+    id: id ?? this.id,
+    path: path ?? this.path,
+    lastScanned: lastScanned.present ? lastScanned.value : this.lastScanned,
+    autoScan: autoScan ?? this.autoScan,
+    dateAdded: dateAdded ?? this.dateAdded,
+  );
+  WatchedFolder copyWithCompanion(WatchedFoldersCompanion data) {
+    return WatchedFolder(
+      id: data.id.present ? data.id.value : this.id,
+      path: data.path.present ? data.path.value : this.path,
+      lastScanned: data.lastScanned.present
+          ? data.lastScanned.value
+          : this.lastScanned,
+      autoScan: data.autoScan.present ? data.autoScan.value : this.autoScan,
+      dateAdded: data.dateAdded.present ? data.dateAdded.value : this.dateAdded,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WatchedFolder(')
+          ..write('id: $id, ')
+          ..write('path: $path, ')
+          ..write('lastScanned: $lastScanned, ')
+          ..write('autoScan: $autoScan, ')
+          ..write('dateAdded: $dateAdded')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, path, lastScanned, autoScan, dateAdded);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is WatchedFolder &&
+          other.id == this.id &&
+          other.path == this.path &&
+          other.lastScanned == this.lastScanned &&
+          other.autoScan == this.autoScan &&
+          other.dateAdded == this.dateAdded);
+}
+
+class WatchedFoldersCompanion extends UpdateCompanion<WatchedFolder> {
+  final Value<int> id;
+  final Value<String> path;
+  final Value<DateTime?> lastScanned;
+  final Value<bool> autoScan;
+  final Value<DateTime> dateAdded;
+  const WatchedFoldersCompanion({
+    this.id = const Value.absent(),
+    this.path = const Value.absent(),
+    this.lastScanned = const Value.absent(),
+    this.autoScan = const Value.absent(),
+    this.dateAdded = const Value.absent(),
+  });
+  WatchedFoldersCompanion.insert({
+    this.id = const Value.absent(),
+    required String path,
+    this.lastScanned = const Value.absent(),
+    this.autoScan = const Value.absent(),
+    this.dateAdded = const Value.absent(),
+  }) : path = Value(path);
+  static Insertable<WatchedFolder> custom({
+    Expression<int>? id,
+    Expression<String>? path,
+    Expression<DateTime>? lastScanned,
+    Expression<bool>? autoScan,
+    Expression<DateTime>? dateAdded,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (path != null) 'path': path,
+      if (lastScanned != null) 'last_scanned': lastScanned,
+      if (autoScan != null) 'auto_scan': autoScan,
+      if (dateAdded != null) 'date_added': dateAdded,
+    });
+  }
+
+  WatchedFoldersCompanion copyWith({
+    Value<int>? id,
+    Value<String>? path,
+    Value<DateTime?>? lastScanned,
+    Value<bool>? autoScan,
+    Value<DateTime>? dateAdded,
+  }) {
+    return WatchedFoldersCompanion(
+      id: id ?? this.id,
+      path: path ?? this.path,
+      lastScanned: lastScanned ?? this.lastScanned,
+      autoScan: autoScan ?? this.autoScan,
+      dateAdded: dateAdded ?? this.dateAdded,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (path.present) {
+      map['path'] = Variable<String>(path.value);
+    }
+    if (lastScanned.present) {
+      map['last_scanned'] = Variable<DateTime>(lastScanned.value);
+    }
+    if (autoScan.present) {
+      map['auto_scan'] = Variable<bool>(autoScan.value);
+    }
+    if (dateAdded.present) {
+      map['date_added'] = Variable<DateTime>(dateAdded.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WatchedFoldersCompanion(')
+          ..write('id: $id, ')
+          ..write('path: $path, ')
+          ..write('lastScanned: $lastScanned, ')
+          ..write('autoScan: $autoScan, ')
+          ..write('dateAdded: $dateAdded')
           ..write(')'))
         .toString();
   }
@@ -2182,9 +2812,16 @@ class $LibrariesTable extends Libraries
 }
 
 class Library extends DataClass implements Insertable<Library> {
+  /// Auto-incrementing primary key.
   final int id;
+
+  /// Unique library name shown in the Collections tab.
   final String name;
+
+  /// Media kind this library holds — see [MediaTypes].
   final String mediaType;
+
+  /// Creation timestamp; defaults to now.
   final DateTime dateCreated;
   const Library({
     required this.id,
@@ -2445,7 +3082,10 @@ class $LibraryComicsTable extends LibraryComics
 }
 
 class LibraryComic extends DataClass implements Insertable<LibraryComic> {
+  /// Owning library; membership rows are deleted with the library.
   final int libraryId;
+
+  /// Member comic; membership rows are deleted with the comic.
   final int comicId;
   const LibraryComic({required this.libraryId, required this.comicId});
   @override
@@ -2708,9 +3348,16 @@ class $FoldersTable extends Folders with TableInfo<$FoldersTable, Folder> {
 }
 
 class Folder extends DataClass implements Insertable<Folder> {
+  /// Auto-incrementing primary key.
   final int id;
+
+  /// Folder display name.
   final String name;
+
+  /// Comic whose cover represents the folder; cleared if that comic is removed.
   final int? coverComicId;
+
+  /// Creation timestamp; defaults to now.
   final DateTime dateCreated;
   const Folder({
     required this.id,
@@ -2977,7 +3624,10 @@ class $FolderComicsTable extends FolderComics
 }
 
 class FolderComic extends DataClass implements Insertable<FolderComic> {
+  /// Owning folder; membership rows are deleted with the folder.
   final int folderId;
+
+  /// Member comic; membership rows are deleted with the comic.
   final int comicId;
   const FolderComic({required this.folderId, required this.comicId});
   @override
@@ -3189,7 +3839,10 @@ class $TagsTable extends Tags with TableInfo<$TagsTable, Tag> {
 }
 
 class Tag extends DataClass implements Insertable<Tag> {
+  /// Auto-incrementing primary key.
   final int id;
+
+  /// Unique tag label.
   final String name;
   const Tag({required this.id, required this.name});
   @override
@@ -3383,7 +4036,10 @@ class $ComicTagsTable extends ComicTags
 }
 
 class ComicTag extends DataClass implements Insertable<ComicTag> {
+  /// Tagged comic; tag links are deleted with the comic.
   final int comicId;
+
+  /// Applied tag; links are deleted with the tag.
   final int tagId;
   const ComicTag({required this.comicId, required this.tagId});
   @override
@@ -3666,10 +4322,19 @@ class $ConnectionsTable extends Connections
 }
 
 class ConnectionRow extends DataClass implements Insertable<ConnectionRow> {
+  /// Auto-incrementing primary key.
   final int id;
+
+  /// User-facing server name.
   final String name;
+
+  /// Unique base URL of the CB8-compatible backend.
   final String baseUrl;
+
+  /// Last username used to sign in, pre-filled on the next login.
   final String? lastUsername;
+
+  /// When the connection was saved; defaults to now.
   final DateTime createdAt;
   const ConnectionRow({
     required this.id,
@@ -3872,6 +4537,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $BookmarksTable bookmarks = $BookmarksTable(this);
   late final $ReadingHistoryTable readingHistory = $ReadingHistoryTable(this);
   late final $FavoritesTable favorites = $FavoritesTable(this);
+  late final $WantToReadTable wantToRead = $WantToReadTable(this);
+  late final $WatchedFoldersTable watchedFolders = $WatchedFoldersTable(this);
   late final $LibrariesTable libraries = $LibrariesTable(this);
   late final $LibraryComicsTable libraryComics = $LibraryComicsTable(this);
   late final $FoldersTable folders = $FoldersTable(this);
@@ -3888,6 +4555,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     bookmarks,
     readingHistory,
     favorites,
+    wantToRead,
+    watchedFolders,
     libraries,
     libraryComics,
     folders,
@@ -3918,6 +4587,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('favorites', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'comics',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('want_to_read', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -4071,6 +4747,24 @@ final class $$ComicsTableReferences
     ).filter((f) => f.comicId.id.sqlEquals($_itemColumn<int>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_favoritesRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$WantToReadTable, List<WantToReadData>>
+  _wantToReadRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.wantToRead,
+    aliasName: 'comics__id__want_to_read__comic_id',
+  );
+
+  $$WantToReadTableProcessedTableManager get wantToReadRefs {
+    final manager = $$WantToReadTableTableManager(
+      $_db,
+      $_db.wantToRead,
+    ).filter((f) => f.comicId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_wantToReadRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -4325,6 +5019,31 @@ class $$ComicsTableFilterComposer
           }) => $$FavoritesTableFilterComposer(
             $db: $db,
             $table: $db.favorites,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> wantToReadRefs(
+    Expression<bool> Function($$WantToReadTableFilterComposer f) f,
+  ) {
+    final $$WantToReadTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.wantToRead,
+      getReferencedColumn: (t) => t.comicId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$WantToReadTableFilterComposer(
+            $db: $db,
+            $table: $db.wantToRead,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -4699,6 +5418,31 @@ class $$ComicsTableAnnotationComposer
     return f(composer);
   }
 
+  Expression<T> wantToReadRefs<T extends Object>(
+    Expression<T> Function($$WantToReadTableAnnotationComposer a) f,
+  ) {
+    final $$WantToReadTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.wantToRead,
+      getReferencedColumn: (t) => t.comicId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$WantToReadTableAnnotationComposer(
+            $db: $db,
+            $table: $db.wantToRead,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
   Expression<T> libraryComicsRefs<T extends Object>(
     Expression<T> Function($$LibraryComicsTableAnnotationComposer a) f,
   ) {
@@ -4817,6 +5561,7 @@ class $$ComicsTableTableManager
             bool bookmarksRefs,
             bool readingHistoryRefs,
             bool favoritesRefs,
+            bool wantToReadRefs,
             bool libraryComicsRefs,
             bool foldersRefs,
             bool folderComicsRefs,
@@ -4933,6 +5678,7 @@ class $$ComicsTableTableManager
                 bookmarksRefs = false,
                 readingHistoryRefs = false,
                 favoritesRefs = false,
+                wantToReadRefs = false,
                 libraryComicsRefs = false,
                 foldersRefs = false,
                 folderComicsRefs = false,
@@ -4944,6 +5690,7 @@ class $$ComicsTableTableManager
                     if (bookmarksRefs) db.bookmarks,
                     if (readingHistoryRefs) db.readingHistory,
                     if (favoritesRefs) db.favorites,
+                    if (wantToReadRefs) db.wantToRead,
                     if (libraryComicsRefs) db.libraryComics,
                     if (foldersRefs) db.folders,
                     if (folderComicsRefs) db.folderComics,
@@ -5009,6 +5756,27 @@ class $$ComicsTableTableManager
                                 table,
                                 p0,
                               ).favoritesRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.comicId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (wantToReadRefs)
+                        await $_getPrefetchedData<
+                          ComicRow,
+                          $ComicsTable,
+                          WantToReadData
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ComicsTableReferences
+                              ._wantToReadRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ComicsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).wantToReadRefs,
                           referencedItemsForCurrentItem:
                               (item, referencedItems) => referencedItems.where(
                                 (e) => e.comicId == item.id,
@@ -5123,6 +5891,7 @@ typedef $$ComicsTableProcessedTableManager =
         bool bookmarksRefs,
         bool readingHistoryRefs,
         bool favoritesRefs,
+        bool wantToReadRefs,
         bool libraryComicsRefs,
         bool foldersRefs,
         bool folderComicsRefs,
@@ -6032,6 +6801,455 @@ typedef $$FavoritesTableProcessedTableManager =
       (Favorite, $$FavoritesTableReferences),
       Favorite,
       PrefetchHooks Function({bool comicId})
+    >;
+typedef $$WantToReadTableCreateCompanionBuilder =
+    WantToReadCompanion Function({
+      Value<int> comicId,
+      Value<DateTime> createdAt,
+    });
+typedef $$WantToReadTableUpdateCompanionBuilder =
+    WantToReadCompanion Function({
+      Value<int> comicId,
+      Value<DateTime> createdAt,
+    });
+
+final class $$WantToReadTableReferences
+    extends BaseReferences<_$AppDatabase, $WantToReadTable, WantToReadData> {
+  $$WantToReadTableReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static $ComicsTable _comicIdTable(_$AppDatabase db) =>
+      db.comics.createAlias('want_to_read__comic_id__comics__id');
+
+  $$ComicsTableProcessedTableManager get comicId {
+    final $_column = $_itemColumn<int>('comic_id')!;
+
+    final manager = $$ComicsTableTableManager(
+      $_db,
+      $_db.comics,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_comicIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$WantToReadTableFilterComposer
+    extends Composer<_$AppDatabase, $WantToReadTable> {
+  $$WantToReadTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ComicsTableFilterComposer get comicId {
+    final $$ComicsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.comicId,
+      referencedTable: $db.comics,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ComicsTableFilterComposer(
+            $db: $db,
+            $table: $db.comics,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$WantToReadTableOrderingComposer
+    extends Composer<_$AppDatabase, $WantToReadTable> {
+  $$WantToReadTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ComicsTableOrderingComposer get comicId {
+    final $$ComicsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.comicId,
+      referencedTable: $db.comics,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ComicsTableOrderingComposer(
+            $db: $db,
+            $table: $db.comics,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$WantToReadTableAnnotationComposer
+    extends Composer<_$AppDatabase, $WantToReadTable> {
+  $$WantToReadTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  $$ComicsTableAnnotationComposer get comicId {
+    final $$ComicsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.comicId,
+      referencedTable: $db.comics,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ComicsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.comics,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$WantToReadTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $WantToReadTable,
+          WantToReadData,
+          $$WantToReadTableFilterComposer,
+          $$WantToReadTableOrderingComposer,
+          $$WantToReadTableAnnotationComposer,
+          $$WantToReadTableCreateCompanionBuilder,
+          $$WantToReadTableUpdateCompanionBuilder,
+          (WantToReadData, $$WantToReadTableReferences),
+          WantToReadData,
+          PrefetchHooks Function({bool comicId})
+        > {
+  $$WantToReadTableTableManager(_$AppDatabase db, $WantToReadTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$WantToReadTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$WantToReadTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$WantToReadTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> comicId = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+              }) => WantToReadCompanion(comicId: comicId, createdAt: createdAt),
+          createCompanionCallback:
+              ({
+                Value<int> comicId = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+              }) => WantToReadCompanion.insert(
+                comicId: comicId,
+                createdAt: createdAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$WantToReadTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({comicId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (comicId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.comicId,
+                                referencedTable: $$WantToReadTableReferences
+                                    ._comicIdTable(db),
+                                referencedColumn: $$WantToReadTableReferences
+                                    ._comicIdTable(db)
+                                    .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$WantToReadTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $WantToReadTable,
+      WantToReadData,
+      $$WantToReadTableFilterComposer,
+      $$WantToReadTableOrderingComposer,
+      $$WantToReadTableAnnotationComposer,
+      $$WantToReadTableCreateCompanionBuilder,
+      $$WantToReadTableUpdateCompanionBuilder,
+      (WantToReadData, $$WantToReadTableReferences),
+      WantToReadData,
+      PrefetchHooks Function({bool comicId})
+    >;
+typedef $$WatchedFoldersTableCreateCompanionBuilder =
+    WatchedFoldersCompanion Function({
+      Value<int> id,
+      required String path,
+      Value<DateTime?> lastScanned,
+      Value<bool> autoScan,
+      Value<DateTime> dateAdded,
+    });
+typedef $$WatchedFoldersTableUpdateCompanionBuilder =
+    WatchedFoldersCompanion Function({
+      Value<int> id,
+      Value<String> path,
+      Value<DateTime?> lastScanned,
+      Value<bool> autoScan,
+      Value<DateTime> dateAdded,
+    });
+
+class $$WatchedFoldersTableFilterComposer
+    extends Composer<_$AppDatabase, $WatchedFoldersTable> {
+  $$WatchedFoldersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get path => $composableBuilder(
+    column: $table.path,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastScanned => $composableBuilder(
+    column: $table.lastScanned,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get autoScan => $composableBuilder(
+    column: $table.autoScan,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get dateAdded => $composableBuilder(
+    column: $table.dateAdded,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$WatchedFoldersTableOrderingComposer
+    extends Composer<_$AppDatabase, $WatchedFoldersTable> {
+  $$WatchedFoldersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get path => $composableBuilder(
+    column: $table.path,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastScanned => $composableBuilder(
+    column: $table.lastScanned,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get autoScan => $composableBuilder(
+    column: $table.autoScan,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get dateAdded => $composableBuilder(
+    column: $table.dateAdded,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$WatchedFoldersTableAnnotationComposer
+    extends Composer<_$AppDatabase, $WatchedFoldersTable> {
+  $$WatchedFoldersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get path =>
+      $composableBuilder(column: $table.path, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastScanned => $composableBuilder(
+    column: $table.lastScanned,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get autoScan =>
+      $composableBuilder(column: $table.autoScan, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get dateAdded =>
+      $composableBuilder(column: $table.dateAdded, builder: (column) => column);
+}
+
+class $$WatchedFoldersTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $WatchedFoldersTable,
+          WatchedFolder,
+          $$WatchedFoldersTableFilterComposer,
+          $$WatchedFoldersTableOrderingComposer,
+          $$WatchedFoldersTableAnnotationComposer,
+          $$WatchedFoldersTableCreateCompanionBuilder,
+          $$WatchedFoldersTableUpdateCompanionBuilder,
+          (
+            WatchedFolder,
+            BaseReferences<_$AppDatabase, $WatchedFoldersTable, WatchedFolder>,
+          ),
+          WatchedFolder,
+          PrefetchHooks Function()
+        > {
+  $$WatchedFoldersTableTableManager(
+    _$AppDatabase db,
+    $WatchedFoldersTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$WatchedFoldersTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$WatchedFoldersTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$WatchedFoldersTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> path = const Value.absent(),
+                Value<DateTime?> lastScanned = const Value.absent(),
+                Value<bool> autoScan = const Value.absent(),
+                Value<DateTime> dateAdded = const Value.absent(),
+              }) => WatchedFoldersCompanion(
+                id: id,
+                path: path,
+                lastScanned: lastScanned,
+                autoScan: autoScan,
+                dateAdded: dateAdded,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required String path,
+                Value<DateTime?> lastScanned = const Value.absent(),
+                Value<bool> autoScan = const Value.absent(),
+                Value<DateTime> dateAdded = const Value.absent(),
+              }) => WatchedFoldersCompanion.insert(
+                id: id,
+                path: path,
+                lastScanned: lastScanned,
+                autoScan: autoScan,
+                dateAdded: dateAdded,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$WatchedFoldersTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $WatchedFoldersTable,
+      WatchedFolder,
+      $$WatchedFoldersTableFilterComposer,
+      $$WatchedFoldersTableOrderingComposer,
+      $$WatchedFoldersTableAnnotationComposer,
+      $$WatchedFoldersTableCreateCompanionBuilder,
+      $$WatchedFoldersTableUpdateCompanionBuilder,
+      (
+        WatchedFolder,
+        BaseReferences<_$AppDatabase, $WatchedFoldersTable, WatchedFolder>,
+      ),
+      WatchedFolder,
+      PrefetchHooks Function()
     >;
 typedef $$LibrariesTableCreateCompanionBuilder =
     LibrariesCompanion Function({
@@ -8162,6 +9380,10 @@ class $AppDatabaseManager {
       $$ReadingHistoryTableTableManager(_db, _db.readingHistory);
   $$FavoritesTableTableManager get favorites =>
       $$FavoritesTableTableManager(_db, _db.favorites);
+  $$WantToReadTableTableManager get wantToRead =>
+      $$WantToReadTableTableManager(_db, _db.wantToRead);
+  $$WatchedFoldersTableTableManager get watchedFolders =>
+      $$WatchedFoldersTableTableManager(_db, _db.watchedFolders);
   $$LibrariesTableTableManager get libraries =>
       $$LibrariesTableTableManager(_db, _db.libraries);
   $$LibraryComicsTableTableManager get libraryComics =>

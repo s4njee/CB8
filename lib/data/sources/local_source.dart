@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart';
+import 'package:path/path.dart' as p;
 
 import '../db/database.dart';
+import '../local_files.dart';
+import '../models/comic_metadata.dart';
 import '../models/comic_summary.dart';
 import '../models/groups.dart';
 import 'library_source.dart';
@@ -20,6 +25,9 @@ class LocalSource implements LibrarySource {
 
   @override
   String get name => 'This device';
+
+  @override
+  bool get supportsLibraryManagement => true;
 
   @override
   Stream<void> watchChanges() => _db.tableUpdates().map((_) {});
@@ -213,6 +221,175 @@ class LocalSource implements LibrarySource {
     } else {
       await (_db.delete(_db.favorites)..where((t) => t.comicId.equals(intId))).go();
     }
+  }
+
+  // --- Metadata editing ---
+
+  @override
+  Future<ComicMetadata?> getMetadata(String id) async {
+    final intId = int.tryParse(id);
+    if (intId == null) return null;
+    final row = await (_db.select(_db.comics)..where((t) => t.id.equals(intId)))
+        .getSingleOrNull();
+    if (row == null) return null;
+    return ComicMetadata(
+      title: row.title,
+      seriesName: row.seriesName,
+      volumeNumber: row.volumeNumber,
+      chapterNumber: row.chapterNumber,
+      author: row.author,
+      artist: row.artist,
+      genre: row.genre,
+      year: row.year,
+      summary: row.summary,
+    );
+  }
+
+  @override
+  Future<void> updateMetadata(String id, ComicMetadata meta) async {
+    final intId = int.tryParse(id);
+    if (intId == null) return;
+    final title = meta.title.trim();
+    await (_db.update(_db.comics)..where((t) => t.id.equals(intId))).write(
+      ComicsCompanion(
+        title: title.isEmpty ? const Value.absent() : Value(title),
+        seriesName: Value(_blankToNull(meta.seriesName)),
+        volumeNumber: Value(meta.volumeNumber),
+        chapterNumber: Value(meta.chapterNumber),
+        author: Value(_blankToNull(meta.author)),
+        artist: Value(_blankToNull(meta.artist)),
+        genre: Value(_blankToNull(meta.genre)),
+        year: Value(meta.year),
+        summary: Value(_blankToNull(meta.summary)),
+      ),
+    );
+  }
+
+  static String? _blankToNull(String? s) {
+    final t = s?.trim();
+    return (t == null || t.isEmpty) ? null : t;
+  }
+
+  @override
+  Future<void> deleteComic(String id) async {
+    final intId = int.tryParse(id);
+    if (intId == null) return;
+    final row = await (_db.select(_db.comics)..where((t) => t.id.equals(intId)))
+        .getSingleOrNull();
+    // Removing the row cascades to favorites/tags/history/membership.
+    await (_db.delete(_db.comics)..where((t) => t.id.equals(intId))).go();
+    // Only delete files the app owns (copied in under a relative path). External
+    // files reached by absolute path — e.g. watched folders — are left in place.
+    if (row != null && !p.isAbsolute(row.uri)) {
+      try {
+        final abs = await resolveLibraryPath(row.uri);
+        final file = File(abs);
+        if (await file.exists()) await file.delete();
+      } catch (_) {
+        // Best effort — a missing file shouldn't fail the catalog delete.
+      }
+    }
+  }
+
+  // --- Want-to-read / on-deck shelf ---
+
+  @override
+  Future<bool> isWantToRead(String id) async {
+    final intId = int.tryParse(id);
+    if (intId == null) return false;
+    final row = await (_db.select(_db.wantToRead)..where((t) => t.comicId.equals(intId)))
+        .getSingleOrNull();
+    return row != null;
+  }
+
+  @override
+  Future<void> setWantToRead(String id, bool want) async {
+    final intId = int.tryParse(id);
+    if (intId == null) return;
+    if (want) {
+      await _db.into(_db.wantToRead).insert(
+            WantToReadCompanion(comicId: Value(intId)),
+            mode: InsertMode.insertOrIgnore,
+          );
+    } else {
+      await (_db.delete(_db.wantToRead)..where((t) => t.comicId.equals(intId))).go();
+    }
+  }
+
+  @override
+  Future<List<ComicSummary>> wantToRead({int limit = 50}) async {
+    final favIds = await _favoriteIds();
+    final c = _db.comics;
+    final q = _db.selectOnly(c)
+      ..addColumns(_summaryColumns)
+      ..join([
+        innerJoin(_db.wantToRead, _db.wantToRead.comicId.equalsExp(c.id)),
+      ])
+      ..orderBy([OrderingTerm(expression: _db.wantToRead.createdAt, mode: OrderingMode.desc)])
+      ..limit(limit);
+    final rows = await q.get();
+    return rows.map((r) => _summaryFromRow(r, favIds)).toList();
+  }
+
+  // --- Duplicate detection ---
+
+  @override
+  Future<List<DuplicateGroup>> findDuplicates() async {
+    final favIds = await _favoriteIds();
+    final groups = <DuplicateGroup>[];
+    final claimed = <int>{}; // ids already placed in a stronger group
+
+    // Strongest signal first: identical byte size + page count (file_size is
+    // populated at import; legacy rows with size 0 are excluded here and fall
+    // through to the title pass below).
+    final bySize = await _db.customSelect(
+      'SELECT GROUP_CONCAT(id) AS ids FROM comics '
+      'WHERE file_size > 0 '
+      'GROUP BY file_size, page_count HAVING COUNT(*) > 1',
+      readsFrom: {_db.comics},
+    ).get();
+    for (final r in bySize) {
+      final ids = _parseIds(r.read<String?>('ids'));
+      if (ids.length < 2) continue;
+      claimed.addAll(ids);
+      final items = await _summariesByIds(ids, favIds);
+      if (items.length > 1) {
+        groups.add(DuplicateGroup(reason: 'Identical files', items: items));
+      }
+    }
+
+    // Weaker signal: same normalized title (case-insensitive), for rows the size
+    // pass didn't already claim.
+    final byTitle = await _db.customSelect(
+      'SELECT GROUP_CONCAT(id) AS ids FROM comics '
+      'GROUP BY LOWER(TRIM(title)) HAVING COUNT(*) > 1',
+      readsFrom: {_db.comics},
+    ).get();
+    for (final r in byTitle) {
+      final ids = _parseIds(r.read<String?>('ids')).where((id) => !claimed.contains(id)).toList();
+      if (ids.length < 2) continue;
+      claimed.addAll(ids);
+      final items = await _summariesByIds(ids, favIds);
+      if (items.length > 1) {
+        groups.add(DuplicateGroup(reason: 'Matching title', items: items));
+      }
+    }
+    return groups;
+  }
+
+  static List<int> _parseIds(String? csv) {
+    if (csv == null || csv.isEmpty) return const [];
+    return csv.split(',').map(int.tryParse).whereType<int>().toList();
+  }
+
+  Future<List<ComicSummary>> _summariesByIds(List<int> ids, Set<int> favIds) async {
+    final c = _db.comics;
+    final q = _db.selectOnly(c)
+      ..addColumns(_summaryColumns)
+      ..where(c.id.isIn(ids))
+      ..orderBy([OrderingTerm(expression: c.dateAdded)]);
+    final rows = await q.get();
+    return rows.map((r) => _summaryFromRow(r, favIds)).toList();
   }
 
   /// Loads a single comic's cover BLOB. List queries deliberately skip the BLOB

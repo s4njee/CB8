@@ -11,6 +11,7 @@ import '../../data/repositories/providers.dart';
 import '../../data/sources/library_source.dart';
 import '../connections/connection_switcher.dart';
 import '../import/import_controller.dart';
+import '../import/watched_folders.dart';
 import '../library/library_screen.dart';
 import '../library/recent_screen.dart';
 import '../organize/collections_screen.dart';
@@ -53,6 +54,11 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   void initState() {
     super.initState();
+    // Construct the watched-folders controller so it rescans (and, on desktop,
+    // begins live-watching) the user's folders at launch.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(watchedFoldersProvider);
+    });
     // Dev aid: `--dart-define=SEED=true` auto-loads sample comics on first run
     // (used to demo on a fresh simulator). No effect in normal builds.
     if (const bool.fromEnvironment('SEED')) {
