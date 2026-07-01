@@ -178,13 +178,6 @@ export interface HierarchyQueryOptions extends QueryParams {
   offset?: number;
 }
 
-export interface SignupInput {
-  email: string;
-  password: string;
-  username?: string;
-  name?: string;
-}
-
 export interface AuthMutationResponse {
   ok?: boolean;
   user?: SessionResponse['user'];

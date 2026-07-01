@@ -34,15 +34,15 @@ Phase 2** sequence so the engine earns each increment before we commit to it.
 
 **Epic 0.1 — De-risk Readium on mobile**
 Goal: prove the engine on real devices before committing to the reader rewrite.
-- [ ] Branch `spike/readium-epub`; add `flureadium`; native setup (iOS Podfile
+- [x] Branch `spike/readium-epub`; add `flureadium`; native setup (iOS Podfile
       Readium pods; Android `MainActivity` → `FlutterFragmentActivity`, minSdk 24).
-- [ ] Debug screen: `openPublication` a sample EPUB → `ReadiumReaderWidget`.
-- [ ] Build + run on the **iPad simulator** and the **Android tablet**.
-- [ ] Verify **Locator resume**: capture `onTextLocatorChanged`, `goToLocator` back.
-- [ ] Verify a **dark preference** applies via `setEPUBPreferences`.
-- [ ] **Remote probe:** can it open a resource from a **URL with a custom auth
+- [x] Debug screen: `openPublication` a sample EPUB → `ReadiumReaderWidget`.
+- [x] Build + run on the **iPad simulator** and the **Android tablet**.
+- [x] Verify **Locator resume**: capture `onTextLocatorChanged`, `goToLocator` back.
+- [x] Verify a **dark preference** applies via `setEPUBPreferences`.
+- [x] **Remote probe:** can it open a resource from a **URL with a custom auth
       header** at all? (Determines how much Phase 2 server work is really needed.)
-- [ ] Go/No-Go writeup. If No-Go, fall back to "own the epub.js bridge" instead.
+- [x] Go/No-Go writeup. If No-Go, fall back to "own the epub.js bridge" instead.
 
 ---
 
@@ -53,37 +53,37 @@ reading remote EPUBs as **downloaded local files** (reusing the existing
 download-to-device feature). No server changes.
 
 **Epic 1.1 — Integrate flureadium**
-- [ ] Add dependency + iOS/Android native setup, committed and documented.
-- [ ] Confirm `flutter analyze` + `flutter test` clean; app builds on iOS/Android.
-- [ ] Update `AGENTS.md` / `ARCHITECTURE.md` notes for the new engine.
+- [x] Add dependency + iOS/Android native setup, committed and documented.
+- [x] Confirm `flutter analyze` + `flutter test` clean; app builds on iOS/Android.
+- [x] Update `AGENTS.md` / `ARCHITECTURE.md` notes for the new engine.
 
 **Epic 1.2 — New EPUB reader behind the existing seam**
-- [ ] Rewrite `features/reader/epub/epub_reader_screen.dart` on `ReadiumReaderWidget`.
-- [ ] Keep `ReaderDispatcher` routing unchanged (still dispatches `epub` → this screen).
-- [ ] Preserve shared chrome (top/bottom bars, `ReaderMessage`) and immersive mode.
-- [ ] **Delete** the fragile epub.js machinery: CFI gating, the relocate watchdog,
+- [x] Rewrite `features/reader/epub/epub_reader_screen.dart` on `ReadiumReaderWidget`.
+- [x] Keep `ReaderDispatcher` routing unchanged (still dispatches `epub` → this screen).
+- [x] Preserve shared chrome (top/bottom bars, `ReaderMessage`) and immersive mode.
+- [x] **Delete** the fragile epub.js machinery: CFI gating, the relocate watchdog,
       the mode-remount workaround, and the macOS WKWebView sub-resource hack.
 
 **Epic 1.3 — Progress model (Locator ↔ lastLocation)**
-- [ ] Map Readium `Locator` → `ComicSummary.lastLocation`; resume via `goToLocator`.
-- [ ] One-time migration/reset of stored CFIs (local DB + treat server CFIs as stale).
-- [ ] Keep `setProgress` semantics (completed bool, history append, guest-write 401).
+- [x] Map Readium `Locator` → `ComicSummary.lastLocation`; resume via `goToLocator`.
+- [x] One-time migration/reset of stored CFIs (local DB + treat server CFIs as stale).
+- [x] Keep `setProgress` semantics (completed bool, history append, guest-write 401).
 
 **Epic 1.4 — Reading preferences**
-- [ ] Map dark/light/sepia + font family/size onto `EPUBPreferences`
+- [x] Map dark/light/sepia + font family/size onto `EPUBPreferences`
       (`backgroundColor`/`textColor`/`fontFamily`/`fontSize`/`verticalScroll`).
-- [ ] Map reading mode (scroll vs paginated) onto Readium's nav config.
-- [ ] Persist via the existing `readingModeProvider` / settings.
+- [x] Map reading mode (scroll vs paginated) onto Readium's nav config.
+- [x] Persist via the existing `readingModeProvider` / settings.
 
 **Epic 1.5 — Remote EPUB via download-first**
-- [ ] Route remote EPUB opens through download-to-device, then read the local file.
-- [ ] Reconcile with the reader's existing per-open temp cache (unify the two paths).
-- [ ] Graceful offline/error states.
+- [x] Route remote EPUB opens through download-to-device, then read the local file.
+- [x] Reconcile with the reader's existing per-open temp cache (unify the two paths).
+- [x] Graceful offline/error states.
 
 **Epic 1.6 — Tests, cleanup, ship**
-- [ ] Remove `flutter_epub_viewer` (and epub.js assets) once nothing references them.
-- [ ] Widget/integration test for EPUB open + Locator resume (extend the fake server).
-- [ ] Manual pass on iOS + Android; update `FEATURES.md`.
+- [x] Remove `flutter_epub_viewer` (and epub.js assets) once nothing references them.
+- [x] Widget/integration test for EPUB open + Locator resume (extend the fake server).
+- [x] Manual pass on iOS + Android; update `FEATURES.md`.
 
 ---
 

@@ -9,7 +9,6 @@ import {
 } from '@/components/ui/dialog';
 import AdminMenu from './AdminMenu';
 import LoginPanel from './LoginPanel';
-import SignupPanel from './SignupPanel';
 import ForgotPasswordPanel from './ForgotPasswordPanel';
 import AddPathPanel from './AddPathPanel';
 import UploadPanel from './UploadPanel';
@@ -43,13 +42,14 @@ export default function AdminModal({ open, onOpenChange, initialPanel, droppedFi
   });
 
   const isAuthenticated = session?.authenticated ?? false;
+  const isAdmin = session?.user?.isAdmin === true;
 
   // Sync with initialPanel when dialog opens
   useEffect(() => {
     if (open) {
-      setActivePanel(initialAdminPanelForRequest(requestedPanel, isAuthenticated));
+      setActivePanel(initialAdminPanelForRequest(requestedPanel, isAuthenticated, isAdmin));
     }
-  }, [open, requestedPanel, isAuthenticated]);
+  }, [open, requestedPanel, isAuthenticated, isAdmin]);
 
   const handleClose = () => {
     onOpenChange(false);
@@ -77,8 +77,8 @@ export default function AdminModal({ open, onOpenChange, initialPanel, droppedFi
           {activePanel === 'login' && (
             <LoginPanel
               onNavigate={setActivePanel}
-              onSuccess={() => {
-                setActivePanel(adminPanelAfterLogin(requestedPanel));
+              onSuccess={(loggedInIsAdmin) => {
+                setActivePanel(adminPanelAfterLogin(requestedPanel, loggedInIsAdmin));
               }}
               onBack={() => {
                 if (requestedPanel === 'login') {
@@ -87,14 +87,6 @@ export default function AdminModal({ open, onOpenChange, initialPanel, droppedFi
                   setActivePanel('menu');
                 }
               }}
-            />
-          )}
-
-          {activePanel === 'signup' && (
-            <SignupPanel
-              onNavigate={setActivePanel}
-              onSuccess={() => setActivePanel('login')}
-              onBack={() => setActivePanel('login')}
             />
           )}
 

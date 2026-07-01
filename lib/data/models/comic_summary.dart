@@ -15,6 +15,7 @@ class ComicSummary {
     this.coverUrl,
     this.lastPage,
     this.lastLocation,
+    this.lastPercent,
     this.completed = false,
     this.isFavorite = false,
     this.seriesName,
@@ -48,6 +49,11 @@ class ComicSummary {
 
   /// Last EPUB CFI (or other locator); null for paged formats / unopened.
   final String? lastLocation;
+
+  /// Whole-book reading position as a 0–100 percentage for reflowable formats
+  /// (EPUB), which have no meaningful `lastPage`. Null for paged formats and
+  /// unopened items. Drives [progress] when present.
+  final double? lastPercent;
 
   /// Whether the item has been read to the end.
   final bool completed;
@@ -87,6 +93,7 @@ class ComicSummary {
         coverUrl: coverUrl,
         lastPage: lastPage,
         lastLocation: lastLocation,
+        lastPercent: lastPercent,
         completed: completed,
         isFavorite: isFavorite,
         seriesName: seriesName,
@@ -99,8 +106,12 @@ class ComicSummary {
 
   /// Fraction read in the range 0..1, for the progress bar drawn on the card.
   double get progress {
-    if (pageCount <= 0 || lastPage == null) return completed ? 1 : 0;
-    return (lastPage! / (pageCount - 1)).clamp(0, 1);
+    if (completed) return 1;
+    // Reflowable formats (EPUB) track a whole-book percentage rather than a
+    // page index; prefer it when present.
+    if (lastPercent != null) return (lastPercent! / 100).clamp(0, 1).toDouble();
+    if (pageCount <= 0 || lastPage == null) return 0;
+    return (lastPage! / (pageCount - 1)).clamp(0, 1).toDouble();
   }
 
   /// Whether reading has started but isn't finished.

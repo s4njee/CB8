@@ -40,14 +40,16 @@ class RemoteSource implements LibrarySource {
     required this.name,
     required String baseUrl,
     required CookieJar cookieJar,
-  })  : _baseUrl = _trimSlash(baseUrl),
-        // ignore: prefer_initializing_formals
-        _cookieJar = cookieJar,
-        _dio = Dio(BaseOptions(
-          baseUrl: _trimSlash(baseUrl),
-          connectTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(seconds: 30),
-        )) {
+  }) : _baseUrl = _trimSlash(baseUrl),
+       // ignore: prefer_initializing_formals
+       _cookieJar = cookieJar,
+       _dio = Dio(
+         BaseOptions(
+           baseUrl: _trimSlash(baseUrl),
+           connectTimeout: const Duration(seconds: 15),
+           receiveTimeout: const Duration(seconds: 30),
+         ),
+       ) {
     _dio.interceptors.add(CookieManager(_cookieJar));
   }
 
@@ -63,7 +65,8 @@ class RemoteSource implements LibrarySource {
   final Dio _dio;
   final CookieJar _cookieJar;
 
-  static String _trimSlash(String s) => s.endsWith('/') ? s.substring(0, s.length - 1) : s;
+  static String _trimSlash(String s) =>
+      s.endsWith('/') ? s.substring(0, s.length - 1) : s;
 
   /// The configured dio client (cookie-managed), for advanced/direct calls.
   Dio get dio => _dio;
@@ -78,14 +81,19 @@ class RemoteSource implements LibrarySource {
 
   /// Sign in; the session cookie is captured by the cookie jar. Throws on 401.
   Future<void> login(String username, String password) async {
-    await _dio.post('/api/auth/login', data: {'username': username, 'password': password});
+    await _dio.post(
+      '/api/auth/login',
+      data: {'username': username, 'password': password},
+    );
   }
 
   /// Sign out (best effort — ignores network/server errors).
   Future<void> logout() async {
     try {
       await _dio.post('/api/auth/logout');
-    } catch (_) {/* best effort */}
+    } catch (_) {
+      /* best effort */
+    }
   }
 
   /// The kind of session the current cookie has on this server.
@@ -93,7 +101,9 @@ class RemoteSource implements LibrarySource {
     try {
       final res = await _dio.get<Map<String, dynamic>>('/api/auth/session');
       final data = res.data;
-      if (data?['authenticated'] == true) return RemoteSessionState.authenticated;
+      if (data?['authenticated'] == true) {
+        return RemoteSessionState.authenticated;
+      }
       if (data?['guestAccess'] == true) return RemoteSessionState.guest;
       return RemoteSessionState.unauthenticated;
     } catch (_) {
@@ -105,13 +115,15 @@ class RemoteSource implements LibrarySource {
   /// Use this for connections added without credentials (read-only browsing).
   Future<bool> isAuthenticated() async {
     final s = await sessionState();
-    return s == RemoteSessionState.authenticated || s == RemoteSessionState.guest;
+    return s == RemoteSessionState.authenticated ||
+        s == RemoteSessionState.guest;
   }
 
   /// Whether the session belongs to a real signed-in user (not guest access).
   /// Writes (progress, favorites) require this — the server 401s guest writes —
   /// so a credentialed connection must verify with this, not [isAuthenticated].
-  Future<bool> isLoggedIn() async => await sessionState() == RemoteSessionState.authenticated;
+  Future<bool> isLoggedIn() async =>
+      await sessionState() == RemoteSessionState.authenticated;
 
   /// `Cookie` header for image/file requests made outside dio (NetworkImage,
   /// pdfrx, epub viewer), so authenticated thumbnails/pages load.
@@ -124,7 +136,8 @@ class RemoteSource implements LibrarySource {
   // --- URLs ---
 
   /// Cover thumbnail URL for a comic.
-  String thumbnailUrl(String comicId) => '$_baseUrl/api/comics/$comicId/thumbnail';
+  String thumbnailUrl(String comicId) =>
+      '$_baseUrl/api/comics/$comicId/thumbnail';
 
   /// Page-image URL for a zero-based page of a comic. When [upscale] is set,
   /// requests the server's GPU-upscaled ("HD", Real-ESRGAN) variant via
@@ -141,6 +154,9 @@ class RemoteSource implements LibrarySource {
     final ext = (j['fileExt'] as String?)?.toLowerCase();
     final pageCount = (j['pageCount'] as num?)?.toInt() ?? 0;
     final lastPage = (j['lastPage'] as num?)?.toInt();
+    // Reflowable formats (EPUB) report a whole-book percentage instead of a page
+    // index; the server derives it from the stored locator.
+    final lastPercent = (j['lastPercent'] as num?)?.toDouble();
     return ComicSummary(
       id: id,
       title: j['title'] as String? ?? 'Untitled',
@@ -149,7 +165,13 @@ class RemoteSource implements LibrarySource {
       coverUrl: thumbnailUrl(id),
       lastPage: lastPage,
       lastLocation: j['lastLocation'] as String?,
-      completed: lastPage != null && pageCount > 0 && lastPage >= pageCount - 1,
+      lastPercent: lastPercent,
+      // For books, completion tracks the whole-book percentage (the reader marks
+      // done at ~99% total progression, which is what the server stores); paged
+      // formats fall back to the last-page heuristic.
+      completed: lastPercent != null
+          ? lastPercent >= 99
+          : (lastPage != null && pageCount > 0 && lastPage >= pageCount - 1),
       isFavorite: j['favorited'] == true,
       seriesName: j['seriesName'] as String?,
       volumeNumber: (j['volumeNumber'] as num?)?.toDouble(),
@@ -160,31 +182,38 @@ class RemoteSource implements LibrarySource {
   }
 
   String _sortParam(LibrarySort sort) => switch (sort) {
-        LibrarySort.title => 'title',
-        LibrarySort.dateAdded => 'dateAdded',
-        LibrarySort.fileSize => 'fileSize',
-        LibrarySort.pageCount => 'pageCount',
-        LibrarySort.lastRead => 'lastRead',
-      };
+    LibrarySort.title => 'title',
+    LibrarySort.dateAdded => 'dateAdded',
+    LibrarySort.fileSize => 'fileSize',
+    LibrarySort.pageCount => 'pageCount',
+    LibrarySort.lastRead => 'lastRead',
+  };
 
   @override
   Future<List<ComicSummary>> listComics(LibraryQuery query) async {
     final headers = await imageHeaders();
-    final res = await _dio.get<Map<String, dynamic>>('/api/comics', queryParameters: {
-      if (query.search != null && query.search!.isNotEmpty) 'search': query.search,
-      if (query.mediaType != null) 'mediaType': query.mediaType,
-      if (query.favoritesOnly) 'favorites': 'true',
-      if (query.readStatus == ReadStatus.unread) 'readStatus': 'unread',
-      if (query.readStatus == ReadStatus.inProgress) 'readStatus': 'in-progress',
-      if (query.readStatus == ReadStatus.completed) 'readStatus': 'completed',
-      if (query.tag != null) 'tag': query.tag,
-      'sort': _sortParam(query.sort),
-      'order': query.descending ? 'desc' : 'asc',
-      'limit': query.limit,
-      'offset': query.offset,
-    });
+    final res = await _dio.get<Map<String, dynamic>>(
+      '/api/comics',
+      queryParameters: {
+        if (query.search != null && query.search!.isNotEmpty)
+          'search': query.search,
+        if (query.mediaType != null) 'mediaType': query.mediaType,
+        if (query.favoritesOnly) 'favorites': 'true',
+        if (query.readStatus == ReadStatus.unread) 'readStatus': 'unread',
+        if (query.readStatus == ReadStatus.inProgress)
+          'readStatus': 'in-progress',
+        if (query.readStatus == ReadStatus.completed) 'readStatus': 'completed',
+        if (query.tag != null) 'tag': query.tag,
+        'sort': _sortParam(query.sort),
+        'order': query.descending ? 'desc' : 'asc',
+        'limit': query.limit,
+        'offset': query.offset,
+      },
+    );
     final records = (res.data?['records'] as List?) ?? const [];
-    var items = records.map((e) => _fromJson(e as Map<String, dynamic>, headers)).toList();
+    var items = records
+        .map((e) => _fromJson(e as Map<String, dynamic>, headers))
+        .toList();
     // The server has no parsed-series filter; narrow client-side when needed.
     if (query.seriesName != null) {
       items = items.where((c) => c.seriesName == query.seriesName).toList();
@@ -194,32 +223,47 @@ class RemoteSource implements LibrarySource {
 
   @override
   Future<List<ComicSummary>> continueReading({int limit = 20}) async {
-    return listComics(LibraryQuery(
-      readStatus: ReadStatus.inProgress,
-      sort: LibrarySort.lastRead,
-      limit: limit,
-    ));
+    return listComics(
+      LibraryQuery(
+        readStatus: ReadStatus.inProgress,
+        sort: LibrarySort.lastRead,
+        limit: limit,
+      ),
+    );
   }
 
   @override
   Future<ComicSummary?> getComic(String id) async {
     final headers = await imageHeaders();
-    final res = await _dio.get<Map<String, dynamic>>('/api/comics/$id');
+    final Response<Map<String, dynamic>> res;
+    try {
+      res = await _dio.get<Map<String, dynamic>>('/api/comics/$id');
+    } on DioException catch (e) {
+      // The contract is to return null for a missing item (matching
+      // LocalSource); dio otherwise throws on the 404, which the dispatcher
+      // would surface as a raw error dump instead of "Item not found."
+      if (e.response?.statusCode == 404) return null;
+      rethrow;
+    }
     final data = res.data;
     return data == null ? null : _fromJson(data, headers);
   }
 
   @override
-  Future<void> setProgress(String id, {int? page, String? location, bool? completed}) async {
+  Future<void> setProgress(
+    String id, {
+    int? page,
+    String? location,
+    bool? completed,
+  }) async {
     // Best-effort and fire-and-forget from the readers: a failed write (e.g. a
     // 401 from a guest/expired session) must never surface as an unhandled
     // exception that crashes the reader. Swallow but log.
     try {
-      await _dio.put('/api/comics/$id/progress', data: {
-        'page': ?page,
-        'location': ?location,
-        'completed': ?completed,
-      });
+      await _dio.put(
+        '/api/comics/$id/progress',
+        data: {'page': ?page, 'location': ?location, 'completed': ?completed},
+      );
     } catch (e) {
       // ignore: avoid_print
       print('setProgress failed for $id: $e');
@@ -271,11 +315,17 @@ class RemoteSource implements LibrarySource {
       final res = await _dio.get<dynamic>('/api/tags');
       final data = res.data;
       final list = data is List ? data : (data?['tags'] as List? ?? const []);
-      return list.map((e) {
-        if (e is String) return TagCount(name: e, count: 0);
-        final m = e as Map<String, dynamic>;
-        return TagCount(name: m['name'] as String? ?? '', count: (m['count'] as num?)?.toInt() ?? 0);
-      }).where((t) => t.name.isNotEmpty).toList();
+      return list
+          .map((e) {
+            if (e is String) return TagCount(name: e, count: 0);
+            final m = e as Map<String, dynamic>;
+            return TagCount(
+              name: m['name'] as String? ?? '',
+              count: (m['count'] as num?)?.toInt() ?? 0,
+            );
+          })
+          .where((t) => t.name.isNotEmpty)
+          .toList();
     } catch (_) {
       return const [];
     }
@@ -294,7 +344,9 @@ class RemoteSource implements LibrarySource {
     try {
       final res = await _dio.get<dynamic>('/api/libraries');
       final data = res.data;
-      final list = data is List ? data : (data?['libraries'] as List? ?? const []);
+      final list = data is List
+          ? data
+          : (data?['libraries'] as List? ?? const []);
       return list.map((e) {
         final m = e as Map<String, dynamic>;
         return LibraryInfo(
@@ -310,16 +362,33 @@ class RemoteSource implements LibrarySource {
 
   @override
   Future<String> createLibrary(String name) async {
-    final res = await _dio.post<Map<String, dynamic>>('/api/libraries', data: {'name': name});
+    final res = await _dio.post<Map<String, dynamic>>(
+      '/api/libraries',
+      data: {'name': name},
+    );
     return '${res.data?['id'] ?? ''}';
   }
 
   @override
-  Future<void> setInLibrary(String libraryId, String comicId, bool member) async {
+  Future<void> setInLibrary(
+    String libraryId,
+    String comicId,
+    bool member,
+  ) async {
     if (member) {
-      await _dio.post('/api/libraries/$libraryId/comics', data: {'comicIds': [int.tryParse(comicId)]});
+      await _dio.post(
+        '/api/libraries/$libraryId/comics',
+        data: {
+          'comicIds': [int.tryParse(comicId)],
+        },
+      );
     } else {
-      await _dio.delete('/api/libraries/$libraryId/comics', data: {'comicIds': [int.tryParse(comicId)]});
+      await _dio.delete(
+        '/api/libraries/$libraryId/comics',
+        data: {
+          'comicIds': [int.tryParse(comicId)],
+        },
+      );
     }
   }
 
@@ -337,9 +406,15 @@ class RemoteSource implements LibrarySource {
     String destPath, {
     ProgressCallback? onReceiveProgress,
   }) async {
-    await _dio.download(fileUrl(comicId), destPath, onReceiveProgress: onReceiveProgress);
-    // Ensure the file exists and is non-empty.
-    if (!await File(destPath).exists()) {
+    await _dio.download(
+      fileUrl(comicId),
+      destPath,
+      onReceiveProgress: onReceiveProgress,
+    );
+    // Ensure the file exists and is non-empty. A zero-byte 200 response would
+    // otherwise be renamed into the cache and opened as a book, failing later.
+    final file = File(destPath);
+    if (!await file.exists() || await file.length() == 0) {
       throw Exception('Download produced no file');
     }
   }

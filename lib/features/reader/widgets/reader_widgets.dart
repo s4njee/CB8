@@ -25,8 +25,11 @@ class ReaderMessage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(message,
-                textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
             const SizedBox(height: 16),
             TextButton(
               onPressed: () => Navigator.of(context).maybePop(),
@@ -92,15 +95,22 @@ class ReaderTopBar extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             if (onToggleUpscale != null)
               IconButton(
-                tooltip: upscaleEnabled! ? 'HD upscaling on' : 'HD upscaling off',
+                tooltip: upscaleEnabled!
+                    ? 'HD upscaling on'
+                    : 'HD upscaling off',
                 icon: Icon(
                   Icons.auto_awesome,
-                  color: upscaleEnabled! ? Theme.of(context).colorScheme.primary : Colors.white,
+                  color: upscaleEnabled!
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.white,
                 ),
                 onPressed: onToggleUpscale,
               ),
@@ -156,19 +166,45 @@ class ReaderBottomBar extends StatelessWidget {
           left: 12,
           right: 12,
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Slider(
-                value: page.toDouble().clamp(0.0, maxVal),
-                min: 0,
-                max: maxVal,
-                onChanged: count > 1 ? (v) => onSeek(v.round()) : null,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const labelWidth = 72.0;
+            const gap = 8.0;
+            final sliderWidth = math.max(
+              240.0,
+              constraints.maxWidth - labelWidth - gap,
+            );
+            final totalWidth = sliderWidth + gap + labelWidth;
+
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: math.max(constraints.maxWidth, totalWidth),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: sliderWidth,
+                      child: Slider(
+                        value: page.toDouble().clamp(0.0, maxVal),
+                        min: 0,
+                        max: maxVal,
+                        onChanged: count > 1 ? (v) => onSeek(v.round()) : null,
+                      ),
+                    ),
+                    const SizedBox(width: gap),
+                    SizedBox(
+                      width: labelWidth,
+                      child: Text(
+                        '${page + 1} / $count',
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Text('${page + 1} / $count', style: const TextStyle(color: Colors.white)),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -180,7 +216,13 @@ class ReaderBottomBar extends StatelessWidget {
 /// [readingModeProvider].
 class ReadingModeMenu extends ConsumerWidget {
   /// Creates a reading-mode menu for [mode], offering [modes] (defaults to all).
-  const ReadingModeMenu({super.key, required this.mode, this.color, this.modes});
+  const ReadingModeMenu({
+    super.key,
+    required this.mode,
+    this.color,
+    this.modes,
+    this.onSelected,
+  });
 
   /// The currently-active reading mode (shown as the button icon and checked row).
   final ReadingMode mode;
@@ -193,19 +235,27 @@ class ReadingModeMenu extends ConsumerWidget {
   /// the paginated modes (Readium scroll is per-chapter — see later.md).
   final List<ReadingMode>? modes;
 
+  /// Optional selection handler. Defaults to writing [readingModeProvider].
+  final ValueChanged<ReadingMode>? onSelected;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return PopupMenuButton<ReadingMode>(
       tooltip: 'Reading mode',
       icon: Icon(mode.icon, color: color),
-      onSelected: (m) => ref.read(readingModeProvider.notifier).set(m),
+      onSelected:
+          onSelected ?? (m) => ref.read(readingModeProvider.notifier).set(m),
       itemBuilder: (context) => [
         for (final m in (modes ?? ReadingMode.values))
           CheckedPopupMenuItem(
             value: m,
             checked: m == mode,
             child: Row(
-              children: [Icon(m.icon, size: 18), const SizedBox(width: 10), Text(m.label)],
+              children: [
+                Icon(m.icon, size: 18),
+                const SizedBox(width: 10),
+                Text(m.label),
+              ],
             ),
           ),
       ],

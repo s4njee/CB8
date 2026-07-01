@@ -40,6 +40,8 @@ import * as comicRoutes from './routes/comics';
 import * as uploadRoutes from './routes/upload';
 import * as searchRoutes from './routes/search';
 import * as jobRoutes from './routes/jobs';
+import * as webpubRoutes from './routes/webpub';
+import * as opdsRoutes from './routes/opds';
 import { serveStatic } from './routes/staticFiles';
 import { loginLimiter, forgotPasswordLimiter } from './rateLimit';
 import {
@@ -55,6 +57,8 @@ const API_ROUTES: RouteHandler[] = [
   userRoutes.handle,
   uploadRoutes.handle,
   comicRoutes.handle,
+  webpubRoutes.handle,
+  opdsRoutes.handle,
   progressRoutes.handle,
   tagRoutes.handle,
   libraryRoutes.handle,
@@ -186,7 +190,14 @@ export async function buildServer(
     if (request.method !== 'POST') return;
     const ip = request.ip ?? request.socket.remoteAddress ?? 'unknown';
     const pathname = (request.url ?? '').split('?')[0];
-    if (pathname === '/api/auth/login') {
+    // Cover both our own /api/auth/login and better-auth's native sign-in routes
+    // (the SPA authenticates via /api/auth/sign-in/username). Without the latter,
+    // the brute-force cap is trivially bypassed by hitting sign-in directly.
+    if (
+      pathname === '/api/auth/login' ||
+      pathname === '/api/auth/sign-in/username' ||
+      pathname === '/api/auth/sign-in/email'
+    ) {
       if (!loginLimiter.check(`${ip}:login`)) {
         reply.code(429).send({ error: 'Too many login attempts. Try again later.' });
       }
@@ -221,9 +232,25 @@ export async function buildServer(
   const staticRoot = resolveStaticRoot();
   fastify.setNotFoundHandler(async (request, reply) => {
     reply.hijack();
-    const parsed = url.parse(request.raw.url ?? '/', true);
-    const pathname = decodeURIComponent(parsed.pathname ?? '/');
-    await serveStatic(reply.raw, pathname, staticRoot);
+    try {
+      const parsed = url.parse(request.raw.url ?? '/', true);
+      // decodeURIComponent throws URIError on malformed input (e.g. `GET /%`).
+      // Since the reply is hijacked, an uncaught throw here leaves the socket
+      // with no response written — the request hangs. Guard it and answer 400.
+      const pathname = decodeURIComponent(parsed.pathname ?? '/');
+      await serveStatic(reply.raw, pathname, staticRoot);
+    } catch (err) {
+      if (reply.raw.headersSent) {
+        reply.raw.destroy();
+        return;
+      }
+      if (err instanceof URIError) {
+        sendError(reply.raw, 400, 'Bad request');
+      } else {
+        log.error('Static handler error:', err);
+        sendError(reply.raw, 500, 'Internal server error');
+      }
+    }
   });
 
   return fastify;

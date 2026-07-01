@@ -43,17 +43,17 @@ export default function AdminMenu({ onNavigate, onClose }: AdminMenuProps) {
       <div className="flex flex-col gap-2">
         {isAuthenticated ? (
           <>
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-3 h-11 text-foreground border-border hover:bg-muted"
-              onClick={() => onNavigate('upload')}
-            >
-              <Upload className="h-5 w-5 text-primary" />
-              <span>Upload comics</span>
-            </Button>
-
             {isAdmin && (
               <>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-3 h-11 text-foreground border-border hover:bg-muted"
+                  onClick={() => onNavigate('upload')}
+                >
+                  <Upload className="h-5 w-5 text-primary" />
+                  <span>Upload comics</span>
+                </Button>
+
                 <Button
                   variant="outline"
                   className="w-full justify-start gap-3 h-11 text-foreground border-border hover:bg-muted"

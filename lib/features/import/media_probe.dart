@@ -130,6 +130,8 @@ Future<ProbeResult> _probePdf(String path, SeriesInfo series) async {
           height: rendered.height,
           bytes: rendered.pixels.buffer,
           numChannels: 4,
+          // pdfrx renders BGRA8888; without this the cover comes out red/blue-swapped.
+          order: img.ChannelOrder.bgra,
         );
         cover = _encodeCover(src);
         rendered.dispose();

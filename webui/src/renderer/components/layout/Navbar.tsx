@@ -27,6 +27,7 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
   });
 
   const isAuthenticated = session?.authenticated ?? false;
+  const isAdmin = session?.user?.isAdmin === true;
 
   const {
     mediaType,
@@ -137,15 +138,17 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
         {/* Admin actions & tools */}
         <div className="flex items-center gap-1.5">
           {/* Add Comic / Upload Button */}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => onOpenAdminModal(isAuthenticated ? 'upload' : 'login')}
-            className="h-9 w-9 bg-secondary border-border hover:bg-muted"
-            aria-label="Add comic or book"
-          >
-            <Plus className="h-4.5 w-4.5 text-foreground" />
-          </Button>
+          {(!isAuthenticated || isAdmin) && (
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => onOpenAdminModal('upload')}
+              className="h-9 w-9 bg-secondary border-border hover:bg-muted"
+              aria-label="Add comic or book"
+            >
+              <Plus className="h-4.5 w-4.5 text-foreground" />
+            </Button>
+          )}
 
           {/* User / Admin Login Button */}
           <Button

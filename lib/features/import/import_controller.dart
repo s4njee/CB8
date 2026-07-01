@@ -187,10 +187,14 @@ class ImportController extends Notifier<ImportState> {
           failed++;
           continue;
         }
-        await _db.into(_db.comics).insert(
+        final inserted = await _db.into(_db.comics).insertReturningOrNull(
               _companionFor(rel, probe),
               mode: InsertMode.insertOrIgnore,
             );
+        // insertOrIgnore returns null when the row already existed (matched by
+        // its unique uri); only count genuinely new rows so "Imported N" isn't
+        // inflated by re-scans or overlapping watched folders.
+        if (inserted == null) continue;
         imported++;
         state = state.copyWith(
           imported: imported,

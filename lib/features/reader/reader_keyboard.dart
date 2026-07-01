@@ -74,6 +74,15 @@ class _ReaderKeyboardState extends State<ReaderKeyboard> {
 
   bool _onKey(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+
+    // This is a process-global handler, so it stays active while modal sheets
+    // (search, typography, TTS) sit on top of the reader. If a text field has
+    // focus, let the keystroke reach it — otherwise Space/f/arrows would page
+    // the book instead of typing/moving the caret.
+    if (FocusManager.instance.primaryFocus?.context?.widget is EditableText) {
+      return false;
+    }
+
     final key = event.logicalKey;
     final keyboard = HardwareKeyboard.instance;
     final cmd = keyboard.isMetaPressed || keyboard.isControlPressed;

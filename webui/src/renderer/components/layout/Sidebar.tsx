@@ -73,6 +73,15 @@ export default function Sidebar({ onOpenAdminModal }: SidebarProps) {
     queryFn: api.fetchTags,
   });
 
+  // Creating collections/folders hits requireAdmin routes, and clicking the "+"
+  // as a non-admin just opens the generic admin menu with no create form. Only
+  // show the add buttons to admins (matches the Navbar upload-button gating).
+  const { data: session } = useQuery({
+    queryKey: ['session'],
+    queryFn: api.getSession,
+  });
+  const isAdmin = session?.user?.isAdmin === true;
+
   const isActive = (path: string) => isSidebarPathActive(location.pathname, path);
 
   return (
@@ -105,7 +114,7 @@ export default function Sidebar({ onOpenAdminModal }: SidebarProps) {
           <SidebarSection
             title="Collections"
             addLabel="Create collection"
-            onAdd={() => onOpenAdminModal('create-collection')}
+            onAdd={isAdmin ? () => onOpenAdminModal('create-collection') : undefined}
           >
             {loadingLibraries ? (
               <SidebarLoadingState />
@@ -129,7 +138,7 @@ export default function Sidebar({ onOpenAdminModal }: SidebarProps) {
           <SidebarSection
             title="Folders"
             addLabel="Create folder"
-            onAdd={() => onOpenAdminModal('create-folder')}
+            onAdd={isAdmin ? () => onOpenAdminModal('create-folder') : undefined}
           >
             {loadingFolders ? (
               <SidebarLoadingState />

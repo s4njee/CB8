@@ -2,7 +2,6 @@ import { API, ApiError, del, get, post } from './client';
 import { pollIngestJob, type EnqueueResponse } from './jobs';
 import type {
   AdminListDirResponse,
-  AuthMutationResponse,
   ClearLibraryResponse,
   HostInfo,
   IngestErrorLogResponse,
@@ -13,15 +12,6 @@ import type {
 
 export const adminHostInfo = (): Promise<HostInfo> =>
   get<HostInfo>('/api/admin/host-info');
-
-export async function adminLogin(password: string): Promise<boolean> {
-  try {
-    await post<AuthMutationResponse>('/api/auth/login', { body: { password }, credentials: 'same-origin' });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export const adminPickPath = (kind: 'file' | 'directory'): Promise<{ path: string | null }> =>
   post<{ path: string | null }>('/api/admin/pick-path', { body: { kind } });

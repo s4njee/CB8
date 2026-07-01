@@ -26,14 +26,16 @@ export default function UsersPanel({ onBack }: UsersPanelProps) {
   const [newPassword, setNewPassword] = useState('');
   const [addingUser, setAddingUser] = useState(false);
 
-  const { data: session } = useQuery({
+  const { data: session, isLoading: sessionLoading } = useQuery({
     queryKey: ['session'],
     queryFn: api.getSession,
   });
+  const isAdmin = session?.user?.isAdmin === true;
 
   const { data: users = [], isLoading, refetch } = useQuery({
     queryKey: ['users'],
     queryFn: api.getUsers,
+    enabled: isAdmin,
   });
 
   const createUserMutation = useMutation({
@@ -97,6 +99,26 @@ export default function UsersPanel({ onBack }: UsersPanelProps) {
       deleteUserMutation.mutate(user.id);
     }
   };
+
+  if (sessionLoading) {
+    return (
+      <div className="space-y-4">
+        <UsersPanelHeader onBack={onBack} />
+        <div className="p-4 text-sm text-muted-foreground text-center">Loading...</div>
+        <UsersPanelFooter onBack={onBack} />
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="space-y-4">
+        <UsersPanelHeader onBack={onBack} />
+        <div className="p-4 text-sm text-muted-foreground text-center">Admin access required.</div>
+        <UsersPanelFooter onBack={onBack} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

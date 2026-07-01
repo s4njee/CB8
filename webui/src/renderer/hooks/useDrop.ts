@@ -13,29 +13,29 @@ export function useDrop({ onFilesDropped }: UseDropProps) {
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
 
-  // Check authentication status
+  // Check admin status before enabling drag-to-upload.
   const { data: session } = useQuery({
     queryKey: ['session'],
     queryFn: api.getSession,
   });
 
-  const isAuthenticated = session?.authenticated ?? false;
+  const isAdmin = session?.user?.isAdmin === true;
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      setDragging(false);
-      dragCounter.current = 0;
-      return;
-    }
-
+    // Always suppress the browser's default window-level drop handling: without
+    // preventDefault on dragover + drop, dropping a file navigates the tab to
+    // that file:// URL and blows away the SPA. The upload overlay and actual
+    // handling are still admin-only — non-admins just get a harmless no-op.
     const handleDragEnter = (e: DragEvent) => {
       e.preventDefault();
+      if (!isAdmin) return;
       dragCounter.current++;
       setDragging(true);
     };
 
     const handleDragLeave = (e: DragEvent) => {
       e.preventDefault();
+      if (!isAdmin) return;
       dragCounter.current--;
       if (dragCounter.current <= 0) {
         dragCounter.current = 0;
@@ -45,7 +45,7 @@ export function useDrop({ onFilesDropped }: UseDropProps) {
 
     const handleDragOver = (e: DragEvent) => {
       e.preventDefault();
-      if (e.dataTransfer) {
+      if (isAdmin && e.dataTransfer) {
         e.dataTransfer.dropEffect = 'copy';
       }
     };
@@ -55,7 +55,7 @@ export function useDrop({ onFilesDropped }: UseDropProps) {
       dragCounter.current = 0;
       setDragging(false);
 
-      if (!e.dataTransfer) return;
+      if (!isAdmin || !e.dataTransfer) return;
 
       try {
         const items = await gatherFromDrop(e.dataTransfer);
@@ -80,7 +80,7 @@ export function useDrop({ onFilesDropped }: UseDropProps) {
       window.removeEventListener('dragover', handleDragOver);
       window.removeEventListener('drop', handleDrop);
     };
-  }, [isAuthenticated, onFilesDropped]);
+  }, [isAdmin, onFilesDropped]);
 
   return { dragging };
 }

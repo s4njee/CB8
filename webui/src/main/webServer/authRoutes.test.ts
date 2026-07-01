@@ -41,6 +41,12 @@ async function login(username: string, password: string): Promise<{ cookie: stri
   };
 }
 
+async function initialAdminPassword(): Promise<string> {
+  const password = await db!.getAppMeta('initial_password');
+  expect(password).toEqual(expect.any(String));
+  return password!;
+}
+
 // Skipped until a Postgres test harness exists — see the TODO at the top.
 const describeDb = describe.skip;
 
@@ -68,19 +74,25 @@ describeDb('auth routes and admin gating', () => {
     db?.raw.close();
   });
 
-  it('bootstraps a fresh database with initial admin credentials', async () => {
+  it('bootstraps a fresh database with admin credentials without exposing them publicly', async () => {
     const credsRes = await server!.inject({
       method: 'GET',
       url: '/api/settings/initial-credentials',
     });
 
-    expect(credsRes.statusCode).toBe(200);
-    const creds = jsonBody<{ username: string; password: string | null }>(credsRes.payload);
-    expect(creds.username).toBe('admin');
-    expect(creds.password).toEqual(expect.any(String));
+    expect(credsRes.statusCode).toBe(401);
 
-    const admin = await login('admin', creds.password!);
+    const admin = await login('admin', await initialAdminPassword());
     expect(admin.user).toMatchObject({ username: 'admin', isAdmin: true });
+
+    const authedCredsRes = await server!.inject({
+      method: 'GET',
+      url: '/api/settings/initial-credentials',
+      headers: { cookie: admin.cookie },
+    });
+    expect(authedCredsRes.statusCode).toBe(200);
+    const creds = jsonBody<{ username: string; password: string | null }>(authedCredsRes.payload);
+    expect(creds).toMatchObject({ username: 'admin', password: expect.any(String) });
 
     const sessionRes = await server!.inject({
       method: 'GET',
@@ -107,11 +119,7 @@ describeDb('auth routes and admin gating', () => {
   });
 
   it('lets admins create usable credential accounts without switching session', async () => {
-    const initial = jsonBody<{ password: string }>((await server!.inject({
-      method: 'GET',
-      url: '/api/settings/initial-credentials',
-    })).payload);
-    const admin = await login('admin', initial.password);
+    const admin = await login('admin', await initialAdminPassword());
 
     const createRes = await server!.inject({
       method: 'POST',
@@ -144,11 +152,7 @@ describeDb('auth routes and admin gating', () => {
   });
 
   it('lets admins manage a library and tags through the HTTP API', async () => {
-    const initial = jsonBody<{ password: string }>((await server!.inject({
-      method: 'GET',
-      url: '/api/settings/initial-credentials',
-    })).payload);
-    const admin = await login('admin', initial.password);
+    const admin = await login('admin', await initialAdminPassword());
     const headers = { 'content-type': 'application/json', cookie: admin.cookie };
     const comicId = publicComicId!;
 
@@ -210,11 +214,7 @@ describeDb('auth routes and admin gating', () => {
   });
 
   it('lets admins manage folders through the HTTP API', async () => {
-    const initial = jsonBody<{ password: string }>((await server!.inject({
-      method: 'GET',
-      url: '/api/settings/initial-credentials',
-    })).payload);
-    const admin = await login('admin', initial.password);
+    const admin = await login('admin', await initialAdminPassword());
     const headers = { 'content-type': 'application/json', cookie: admin.cookie };
     const comicId = publicComicId!;
 
@@ -276,11 +276,7 @@ describeDb('auth routes and admin gating', () => {
     });
     expect(badLoginJson.statusCode).toBe(400);
 
-    const initial = jsonBody<{ password: string }>((await server!.inject({
-      method: 'GET',
-      url: '/api/settings/initial-credentials',
-    })).payload);
-    const admin = await login('admin', initial.password);
+    const admin = await login('admin', await initialAdminPassword());
     const headers = { 'content-type': 'application/json', cookie: admin.cookie };
     const comicId = publicComicId!;
 
@@ -336,11 +332,7 @@ describeDb('auth routes and admin gating', () => {
   });
 
   it('invalidates the session on sign-out', async () => {
-    const initial = jsonBody<{ password: string }>((await server!.inject({
-      method: 'GET',
-      url: '/api/settings/initial-credentials',
-    })).payload);
-    const admin = await login('admin', initial.password);
+    const admin = await login('admin', await initialAdminPassword());
 
     const signOutRes = await server!.inject({
       method: 'POST',
@@ -371,11 +363,7 @@ describeDb('auth routes and admin gating', () => {
   });
 
   it('rejects invalid progress and bookmark writes', async () => {
-    const initial = jsonBody<{ password: string }>((await server!.inject({
-      method: 'GET',
-      url: '/api/settings/initial-credentials',
-    })).payload);
-    const admin = await login('admin', initial.password);
+    const admin = await login('admin', await initialAdminPassword());
     const cookie = admin.cookie;
     const comicId = publicComicId!;
 

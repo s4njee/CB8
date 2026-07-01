@@ -89,7 +89,8 @@ export async function ensureInitialAdmin(db: LibraryDatabase): Promise<void> {
     return;
   }
   // Migration: admin exists but initial_password was never stored (created
-  // before this feature). Reset the admin password so the client can auto-login.
+  // before this feature). Reset it so the operator still has recoverable
+  // first-run credentials available in settings / logs.
   const stored = await db.getAppMeta('initial_password');
   if (stored === null) {
     await _resetInitialPassword(db);
@@ -143,10 +144,15 @@ function _printPasswordBanner(password: string, headline: string): void {
   console.log(`${banner}\n`);
 }
 
-export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
+export function sendJson(
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+  contentType = 'application/json',
+): void {
   const payload = JSON.stringify(body);
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    'Content-Type': contentType,
   };
   if (CORS_ORIGIN) headers['Access-Control-Allow-Origin'] = CORS_ORIGIN;
   res.writeHead(status, headers);

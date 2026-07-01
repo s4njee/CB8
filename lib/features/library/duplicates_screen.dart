@@ -92,6 +92,10 @@ class _DuplicateRow extends ConsumerWidget {
   }
 
   Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
+    // Capture the source before the await: the duplicates list can rebuild from
+    // the local source's change stream while the dialog is open and unmount this
+    // row, leaving `ref` defunct.
+    final source = ref.read(activeSourceProvider);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -106,7 +110,7 @@ class _DuplicateRow extends ConsumerWidget {
     );
     if (confirmed != true) return;
     // The list refreshes automatically via the local source's change stream.
-    await ref.read(activeSourceProvider).deleteComic(item.id);
+    await source.deleteComic(item.id);
   }
 }
 

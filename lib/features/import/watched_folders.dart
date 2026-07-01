@@ -151,14 +151,36 @@ class WatchedFoldersController extends Notifier<List<WatchedFolderInfo>> {
       if (!folder.autoScan || _watchers.containsKey(folder.path)) continue;
       final dir = Directory(folder.path);
       if (!dir.existsSync()) continue;
-      _watchers[folder.path] = dir
-          .watch(events: FileSystemEvent.create | FileSystemEvent.move, recursive: true)
-          .listen((_) => _onFsEvent(folder.path));
+      try {
+        _watchers[folder.path] = dir
+            .watch(
+              // `modify` matters: a large file still being copied keeps emitting
+              // modify events, so the debounce timer below keeps resetting until
+              // the copy settles — without it we'd rescan 2s after the first
+              // event and probe a truncated file.
+              events: FileSystemEvent.create |
+                  FileSystemEvent.modify |
+                  FileSystemEvent.move,
+              recursive: true,
+            )
+            .listen(
+              (_) => _onFsEvent(folder.path),
+              // Recursive watching isn't supported on Linux, and a watch can also
+              // fail if the directory disappears. Degrade to launch/manual rescan
+              // instead of surfacing an unhandled async error that kills watching.
+              onError: (Object _) => _watchers.remove(folder.path)?.cancel(),
+              cancelOnError: true,
+            );
+      } catch (_) {
+        // Some platforms (Linux) throw synchronously on recursive watch; fall
+        // back to manual/launch rescan for this folder.
+      }
     }
   }
 
-  // Filesystem events can arrive in bursts (a multi-file copy); debounce so a
-  // batch triggers a single rescan.
+  // Filesystem events can arrive in bursts (a multi-file copy, or a large file
+  // still being written); debounce so a quiet period — not the first event —
+  // triggers a single rescan once writes have settled.
   void _onFsEvent(String path) {
     _debounce[path]?.cancel();
     _debounce[path] = Timer(const Duration(seconds: 2), () => unawaited(rescanPath(path)));

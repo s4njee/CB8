@@ -1,5 +1,5 @@
 import { get, post, request } from './client';
-import type { AuthMutationResponse, SessionResponse, SignupInput } from './types';
+import type { AuthMutationResponse, SessionResponse } from './types';
 
 export async function getSession(): Promise<SessionResponse> {
   try {
@@ -18,18 +18,6 @@ export async function login(identifier: string, password: string): Promise<AuthM
 
 export const logout = (): Promise<void> =>
   post<void>('/api/auth/sign-out', { credentials: 'same-origin', parse: 'none' });
-
-export const signup = ({ email, password, username, name }: SignupInput): Promise<AuthMutationResponse> =>
-  post<AuthMutationResponse>('/api/auth/sign-up/email', {
-    body: {
-      email,
-      password,
-      username,
-      name: name ?? username ?? email,
-      callbackURL: `${window.location.origin}/#/verified`,
-    },
-    credentials: 'same-origin',
-  });
 
 export const requestPasswordReset = (email: string): Promise<AuthMutationResponse> =>
   post<AuthMutationResponse>('/api/auth/forget-password', {

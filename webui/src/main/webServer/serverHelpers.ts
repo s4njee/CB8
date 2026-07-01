@@ -18,14 +18,39 @@ const OWN_AUTH_ENDPOINTS = new Set([
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/register',
+  '/api/auth/sign-up/email',
+  '/api/auth/sign-up/username',
 ]);
 
 /** API endpoints reachable without an authenticated session. */
 const PUBLIC_API_ENDPOINTS = new Set([
   '/api/auth/session',
   '/api/auth/login',
-  '/api/settings/initial-credentials',
 ]);
+
+/**
+ * Build the absolute base URL (`proto://host`) used for links in a response body
+ * (OPDS feeds, WebPub manifests).
+ *
+ * `Host` and `X-Forwarded-*` are client-controlled, so honoring the forwarded
+ * headers blindly lets an attacker rewrite every link in the returned document to
+ * a host of their choosing (Host-header injection). Forwarded values are only
+ * trustworthy behind a reverse proxy that overwrites them, so they're ignored
+ * unless `CB8_TRUST_PROXY_HEADERS=1` — mirroring the auth layer's proxy handling.
+ * Without the flag we fall back to `http` and the direct `Host`.
+ */
+export function requestBaseUrl(
+  host: string | undefined,
+  forwardedHost: string | string[] | undefined,
+  forwardedProto: string | string[] | undefined,
+): string {
+  const trustProxy = process.env.CB8_TRUST_PROXY_HEADERS === '1';
+  const first = (v: string | string[] | undefined): string | undefined =>
+    (Array.isArray(v) ? v[0] : v)?.split(',')[0]?.trim() || undefined;
+  const proto = (trustProxy ? first(forwardedProto) : undefined) ?? 'http';
+  const resolvedHost = (trustProxy ? first(forwardedHost) : undefined) ?? host ?? 'localhost';
+  return `${proto}://${resolvedHost}`;
+}
 
 /** Result of resolving where the SPA assets live, with diagnostics. */
 export type StaticRootResolution = {

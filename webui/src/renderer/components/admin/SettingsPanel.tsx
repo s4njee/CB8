@@ -33,6 +33,10 @@ export default function SettingsPanel({ onBack, onClose }: SettingsPanelProps) {
     queryKey: ['session'],
     queryFn: api.getSession,
   });
+  // Settings is visible to every signed-in user (for the theme picker), but the
+  // guest-access, auto-rescan, and clear-library controls all hit requireAdmin
+  // routes — hide them from non-admins instead of showing switches that 403.
+  const isAdmin = session?.user?.isAdmin === true;
 
   // Temporary password state
   const [tempPassword, setTempPassword] = useState<string | null>(null);
@@ -155,20 +159,24 @@ export default function SettingsPanel({ onBack, onClose }: SettingsPanelProps) {
 
       <ThemePickerSection themes={THEME_LIST} activeTheme={activeTheme} onSelect={setTheme} />
 
-      <GuestAccessSection
-        enabled={session?.guestAccess === true}
-        pending={guestAccessMutation.isPending}
-        onChange={(checked) => guestAccessMutation.mutate(checked)}
-      />
+      {isAdmin && (
+        <>
+          <GuestAccessSection
+            enabled={session?.guestAccess === true}
+            pending={guestAccessMutation.isPending}
+            onChange={(checked) => guestAccessMutation.mutate(checked)}
+          />
 
-      <AutoRescanSection
-        rescanInterval={rescanInterval}
-        savingRescan={savingRescan}
-        onIntervalChange={setRescanInterval}
-        onSubmit={handleSaveRescanInterval}
-      />
+          <AutoRescanSection
+            rescanInterval={rescanInterval}
+            savingRescan={savingRescan}
+            onIntervalChange={setRescanInterval}
+            onSubmit={handleSaveRescanInterval}
+          />
 
-      <DangerZoneSection clearingLibrary={clearingLibrary} onClearLibrary={handleClearLibrary} />
+          <DangerZoneSection clearingLibrary={clearingLibrary} onClearLibrary={handleClearLibrary} />
+        </>
+      )}
 
       <div className="flex justify-end pt-2 border-t border-border">
         <Button variant="outline" className="border-border text-foreground hover:bg-muted" onClick={onClose}>

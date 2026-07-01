@@ -45,12 +45,14 @@ describe('serverHelpers', () => {
 
   it('delegates only non-owned auth endpoints to Better Auth', () => {
     expect(shouldDelegateToBetterAuth('/api/auth/sign-in/username')).toBe(true);
+    expect(shouldDelegateToBetterAuth('/api/auth/sign-up/email')).toBe(false);
     expect(shouldDelegateToBetterAuth('/api/auth/session')).toBe(false);
     expect(shouldDelegateToBetterAuth('/api/comics')).toBe(false);
   });
 
   it('decides unauthenticated API access from public endpoints and guest GET access', () => {
     expect(canAccessApiRequest('/api/auth/login', 'POST', null, false)).toBe(true);
+    expect(canAccessApiRequest('/api/settings/initial-credentials', 'GET', null, false)).toBe(false);
     expect(canAccessApiRequest('/api/comics', 'GET', null, true)).toBe(true);
     expect(canAccessApiRequest('/api/comics', 'POST', null, true)).toBe(false);
     expect(canAccessApiRequest('/api/comics', 'GET', null, false)).toBe(false);

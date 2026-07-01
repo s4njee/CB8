@@ -105,9 +105,7 @@ let _auth: AuthInstance | null = null;
  *
  * Using a persistent secret means better-auth's signed session cookies remain
  * valid after a restart. With an ephemeral (random) secret every restart
- * invalidated all existing sessions, forcing manual re-authentication or
- * relying on the initial-password auto-login fallback — which stops working
- * once the admin clears the initial credentials.
+ * invalidated all existing sessions, forcing manual re-authentication.
  */
 async function resolveSecret(pool: Pool): Promise<string> {
   const fromEnv = process.env.BETTER_AUTH_SECRET;

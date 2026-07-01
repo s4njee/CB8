@@ -1,5 +1,6 @@
 import 'package:cb8_flutter/data/db/database.dart';
 import 'package:cb8_flutter/data/models/comic_metadata.dart';
+import 'package:cb8_flutter/data/sources/library_source.dart';
 import 'package:cb8_flutter/data/sources/local_source.dart';
 import 'package:drift/drift.dart' show Value, driftRuntimeOptions;
 import 'package:drift/native.dart';
@@ -13,12 +14,16 @@ Future<String> _insert(
   int fileSize = 0,
   int pageCount = 0,
 }) async {
-  final id = await db.into(db.comics).insert(ComicsCompanion.insert(
-        uri: uri,
-        title: title,
-        fileSize: Value(fileSize),
-        pageCount: Value(pageCount),
-      ));
+  final id = await db
+      .into(db.comics)
+      .insert(
+        ComicsCompanion.insert(
+          uri: uri,
+          title: title,
+          fileSize: Value(fileSize),
+          pageCount: Value(pageCount),
+        ),
+      );
   return id.toString();
 }
 
@@ -68,14 +73,23 @@ void main() {
       expect(meta.summary, 'A summary.');
     });
 
-    test('blank strings clear optional fields; blank title is ignored', () async {
-      final id = await _insert(db, uri: '/a/two.cbz', title: 'Keep Me');
-      await source.updateMetadata(id, const ComicMetadata(title: 'Set', author: 'X'));
-      await source.updateMetadata(id, const ComicMetadata(title: '  ', author: '  '));
-      final meta = await source.getMetadata(id);
-      expect(meta!.title, 'Set'); // blank title not applied
-      expect(meta.author, isNull); // blank author cleared
-    });
+    test(
+      'blank strings clear optional fields; blank title is ignored',
+      () async {
+        final id = await _insert(db, uri: '/a/two.cbz', title: 'Keep Me');
+        await source.updateMetadata(
+          id,
+          const ComicMetadata(title: 'Set', author: 'X'),
+        );
+        await source.updateMetadata(
+          id,
+          const ComicMetadata(title: '  ', author: '  '),
+        );
+        final meta = await source.getMetadata(id);
+        expect(meta!.title, 'Set'); // blank title not applied
+        expect(meta.author, isNull); // blank author cleared
+      },
+    );
   });
 
   group('want-to-read shelf', () {
@@ -94,11 +108,57 @@ void main() {
     });
   });
 
+  group('reading progress', () {
+    test(
+      'locator-only EPUB progress is in-progress and appears in continue reading',
+      () async {
+        final id = await _insert(db, uri: '/a/book.epub', title: 'Book');
+        await source.setProgress(
+          id,
+          location:
+              '{"href":"chapter-1.xhtml","locations":{"progression":0.42}}',
+          completed: false,
+        );
+
+        final inProgress = await source.listComics(
+          const LibraryQuery(readStatus: ReadStatus.inProgress),
+        );
+        expect(inProgress.map((c) => c.id), contains(id));
+
+        final unread = await source.listComics(
+          const LibraryQuery(readStatus: ReadStatus.unread),
+        );
+        expect(unread.map((c) => c.id), isNot(contains(id)));
+
+        final shelf = await source.continueReading();
+        expect(shelf.map((c) => c.id), contains(id));
+      },
+    );
+  });
+
   group('duplicate detection', () {
     test('groups identical file size + page count', () async {
-      await _insert(db, uri: '/a/x1.cbz', title: 'A', fileSize: 1000, pageCount: 20);
-      await _insert(db, uri: '/a/x2.cbz', title: 'B', fileSize: 1000, pageCount: 20);
-      await _insert(db, uri: '/a/x3.cbz', title: 'C', fileSize: 999, pageCount: 20);
+      await _insert(
+        db,
+        uri: '/a/x1.cbz',
+        title: 'A',
+        fileSize: 1000,
+        pageCount: 20,
+      );
+      await _insert(
+        db,
+        uri: '/a/x2.cbz',
+        title: 'B',
+        fileSize: 1000,
+        pageCount: 20,
+      );
+      await _insert(
+        db,
+        uri: '/a/x3.cbz',
+        title: 'C',
+        fileSize: 999,
+        pageCount: 20,
+      );
 
       final groups = await source.findDuplicates();
       expect(groups, hasLength(1));
@@ -117,8 +177,20 @@ void main() {
     });
 
     test('no duplicates yields an empty list', () async {
-      await _insert(db, uri: '/a/u1.cbz', title: 'Unique 1', fileSize: 10, pageCount: 1);
-      await _insert(db, uri: '/a/u2.cbz', title: 'Unique 2', fileSize: 20, pageCount: 2);
+      await _insert(
+        db,
+        uri: '/a/u1.cbz',
+        title: 'Unique 1',
+        fileSize: 10,
+        pageCount: 1,
+      );
+      await _insert(
+        db,
+        uri: '/a/u2.cbz',
+        title: 'Unique 2',
+        fileSize: 20,
+        pageCount: 2,
+      );
       expect(await source.findDuplicates(), isEmpty);
     });
   });

@@ -11,7 +11,7 @@ import type { AdminPanel } from './adminPanelHelpers';
 
 interface LoginPanelProps {
   onNavigate: (panel: AdminPanel) => void;
-  onSuccess: () => void;
+  onSuccess: (isAdmin: boolean) => void;
   onBack: () => void;
 }
 
@@ -20,14 +20,11 @@ export default function LoginPanel({ onNavigate, onSuccess, onBack }: LoginPanel
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showResend, setShowResend] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [resending, setResending] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
-    setShowResend(false);
 
     const trimmedId = identifier.trim();
     if (!trimmedId || !password) {
@@ -40,38 +37,20 @@ export default function LoginPanel({ onNavigate, onSuccess, onBack }: LoginPanel
       await api.login(trimmedId, password);
       // Invalidate session query to trigger React re-render across application
       await queryClient.invalidateQueries({ queryKey: ['session'] });
+      const session = await queryClient.fetchQuery({
+        queryKey: ['session'],
+        queryFn: api.getSession,
+      });
       // Per-user catalog overlays (progress, favorites) differ from the
       // guest/previous-user view, so drop the cached library data too —
       // otherwise stale favorite/progress state lingers after sign-in.
       await invalidateLibraryQueries(queryClient);
       showToast('Signed in successfully');
-      onSuccess();
+      onSuccess(session.user?.isAdmin === true);
     } catch (err) {
-      const msg = errorMessage(err, 'Sign-in failed');
-      setErrorMsg(msg);
-
-      // Detect if email is not verified
-      const code = err instanceof api.ApiError ? err.code : undefined;
-      const isEmailNotVerified = code === 'EMAIL_NOT_VERIFIED' || 
-        /not verified|verify your email/i.test(msg);
-      if (isEmailNotVerified && trimmedId.includes('@')) {
-        setShowResend(true);
-      }
+      setErrorMsg(errorMessage(err, 'Sign-in failed'));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleResend = async () => {
-    const trimmedId = identifier.trim();
-    setResending(true);
-    try {
-      await api.sendVerificationEmail(trimmedId);
-      showToast('Verification email sent — check your inbox.');
-    } catch (err) {
-      showToast(errorMessage(err, 'Could not resend verification email'));
-    } finally {
-      setResending(false);
     }
   };
 
@@ -107,18 +86,8 @@ export default function LoginPanel({ onNavigate, onSuccess, onBack }: LoginPanel
         </div>
 
         {errorMsg && (
-          <div className="text-destructive text-xs font-semibold leading-relaxed bg-destructive/10 p-2.5 rounded border border-destructive/20 flex flex-col gap-1">
-            <span>{errorMsg}</span>
-            {showResend && (
-              <button
-                type="button"
-                onClick={handleResend}
-                disabled={resending}
-                className="text-left underline hover:text-destructive-foreground mt-1 disabled:opacity-50 text-xs font-bold"
-              >
-                {resending ? 'Sending...' : 'Resend verification email'}
-              </button>
-            )}
+          <div className="text-destructive text-xs font-semibold leading-relaxed bg-destructive/10 p-2.5 rounded border border-destructive/20">
+            {errorMsg}
           </div>
         )}
 
@@ -139,14 +108,6 @@ export default function LoginPanel({ onNavigate, onSuccess, onBack }: LoginPanel
       </form>
 
       <div className="flex flex-col gap-1.5 pt-2 border-t border-border text-xs text-center">
-        <button
-          type="button"
-          className="text-primary hover:underline font-semibold"
-          onClick={() => onNavigate('signup')}
-          disabled={loading}
-        >
-          Create an account
-        </button>
         <button
           type="button"
           className="text-muted-foreground hover:underline"

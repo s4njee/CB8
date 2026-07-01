@@ -85,6 +85,13 @@ export const handle: RouteHandler = async (ctx) => {
     return true;
   }
 
+  // Public signup is disabled for public demos. Admin-created accounts use
+  // /api/users or /api/auth/register after an admin session is established.
+  if (method === 'POST' && (pathname === '/api/auth/sign-up/email' || pathname === '/api/auth/sign-up/username')) {
+    sendError(res, 403, 'Public signup is disabled');
+    return true;
+  }
+
   // Logout — let better-auth clear its own session cookie.
   if (method === 'POST' && pathname === '/api/auth/logout') {
     try {
@@ -101,8 +108,10 @@ export const handle: RouteHandler = async (ctx) => {
     return true;
   }
 
-  // Initial credentials — public, used for first-boot auto-login and settings display.
+  // Initial credentials are admin-only; public demos must not disclose the
+  // first-run admin password over HTTP.
   if (method === 'GET' && pathname === '/api/settings/initial-credentials') {
+    if (!requireAdmin(ctx)) return true;
     const password = (await db.getAppMeta('initial_password')) || null;
     const body: InitialCredentialsResponse = { username: 'admin', password };
     sendJson(res, 200, body);

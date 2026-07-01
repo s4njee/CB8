@@ -9,8 +9,8 @@ import '../../data/models/comic_summary.dart';
 import '../../data/repositories/providers.dart';
 import '../../data/sources/remote_source.dart';
 import 'comic/comic_reader_screen.dart';
-import 'epub/epub_reader_screen.dart';
 import 'pdf/pdf_reader_screen.dart';
+import 'unified_reader_screen.dart';
 import 'widgets/reader_widgets.dart';
 
 /// Opens the right reader for a catalog item's format.
@@ -49,8 +49,9 @@ class _ReaderDispatcherState extends ConsumerState<ReaderDispatcher> {
         return;
       }
       var resolved = comic;
-      // Remote books stream as a whole file; download to temp and read locally.
-      // (Remote comics stream page-by-page, handled inside the comic reader.)
+      // Remote books are downloaded to a temp file and read locally. The CB8
+      // server does not expose WebPub/OPDS manifests yet, so mobile follows the
+      // same download-first path as desktop.
       final ext = comic.extension;
       final isBook = ext == 'pdf' || ext == 'epub';
       if (comic.sourceUri == null && isBook && source is RemoteSource) {
@@ -93,17 +94,18 @@ class _ReaderDispatcherState extends ConsumerState<ReaderDispatcher> {
     }
     final comic = _comic;
     if (comic == null) {
-      return _errorScreen(_error == null ? 'Item not found.' : 'Could not open:\n$_error');
+      return _errorScreen(
+        _error == null ? 'Item not found.' : 'Could not open:\n$_error',
+      );
     }
     switch (comic.extension) {
       case 'cbz':
       case 'cbt':
         return ComicReaderScreen(comic: comic);
       case 'pdf':
-        // Native pdfrx viewer: crisp vector rendering + streams large PDFs.
         return PdfReaderScreen(comic: comic);
       case 'epub':
-        return EpubReaderScreen(comic: comic);
+        return UnifiedReaderScreen(comic: comic);
       default:
         return _errorScreen(
           '${comic.extension?.toUpperCase() ?? 'This format'} is not supported yet.',
@@ -111,7 +113,8 @@ class _ReaderDispatcherState extends ConsumerState<ReaderDispatcher> {
     }
   }
 
-  Widget _errorScreen(String message) =>
-      Scaffold(backgroundColor: Colors.black, body: ReaderMessage(message: message));
+  Widget _errorScreen(String message) => Scaffold(
+    backgroundColor: Colors.black,
+    body: ReaderMessage(message: message),
+  );
 }
-

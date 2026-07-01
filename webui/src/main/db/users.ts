@@ -24,6 +24,12 @@ const CREATED_AT_TEXT = `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24
 
 /**
  * Insert a new user.
+ *
+ * Populates `email` / `email_verified` / `display_username` / `name` up front:
+ * better-auth's username plugin validates the returned user shape on sign-in and
+ * rejects rows where those are null, so without them an admin-created (or
+ * registered) account could never actually sign in. There's no real email in
+ * this self-hosted, username-first model, so we synthesize `username@localhost`.
  * @returns The new user's id, username, and admin flag.
  */
 export async function createUser(
@@ -33,8 +39,9 @@ export async function createUser(
   isAdmin: boolean,
 ): Promise<{ id: number; username: string; isAdmin: boolean }> {
   const row = (await db.get<{ id: number }>(
-    'INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?) RETURNING id',
-    [username, passwordHash, isAdmin],
+    `INSERT INTO users (username, password_hash, is_admin, email, email_verified, display_username, name)
+     VALUES (?, ?, ?, ?, true, ?, ?) RETURNING id`,
+    [username, passwordHash, isAdmin, `${username}@localhost`, username, username],
   ))!;
   return { id: row.id, username, isAdmin };
 }

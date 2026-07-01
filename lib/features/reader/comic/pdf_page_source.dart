@@ -105,7 +105,8 @@ class _PdfPageImage extends ImageProvider<_PdfPageKey> {
         rendered.pixels,
         rendered.width,
         rendered.height,
-        ui.PixelFormat.rgba8888,
+        // pdfrx renders BGRA8888; rgba8888 here swaps red/blue.
+        ui.PixelFormat.bgra8888,
         completer.complete,
       );
       final image = await completer.future;

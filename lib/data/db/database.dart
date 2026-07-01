@@ -41,10 +41,11 @@ class Comics extends Table {
   /// When the row was imported; defaults to now.
   DateTimeColumn get dateAdded => dateTime().withDefault(currentDateAndTime)();
 
-  /// Reading progress. `lastPage` for comics/PDF; `lastLocation` is an EPUB CFI.
+  /// Reading progress. `lastPage` for paged formats; `lastLocation` is a
+  /// Readium Locator JSON string for EPUB.
   IntColumn get lastPage => integer().nullable()();
 
-  /// EPUB CFI (or other opaque locator) for resume; null for paged formats.
+  /// Opaque reader locator for resume; null for paged formats.
   TextColumn get lastLocation => text().nullable()();
 
   /// Timestamp of the most recent read, used by the Recent shelf.
@@ -54,7 +55,8 @@ class Comics extends Table {
   BoolColumn get completed => boolean().withDefault(const Constant(false))();
 
   /// `comic` or `book` — see [MediaTypes].
-  TextColumn get mediaType => text().withDefault(const Constant(MediaTypes.comic))();
+  TextColumn get mediaType =>
+      text().withDefault(const Constant(MediaTypes.comic))();
 
   // Parsed / scraped metadata.
 
@@ -89,7 +91,8 @@ class Bookmarks extends Table {
   IntColumn get id => integer().autoIncrement()();
 
   /// Owning comic; bookmarks are deleted with their comic.
-  IntColumn get comicId => integer().references(Comics, #id, onDelete: KeyAction.cascade)();
+  IntColumn get comicId =>
+      integer().references(Comics, #id, onDelete: KeyAction.cascade)();
 
   /// Page index for comics/PDF, or the EPUB CFI string stuffed into [location].
   IntColumn get page => integer().nullable()();
@@ -110,7 +113,8 @@ class ReadingHistory extends Table {
   IntColumn get id => integer().autoIncrement()();
 
   /// Owning comic; history is deleted with its comic.
-  IntColumn get comicId => integer().references(Comics, #id, onDelete: KeyAction.cascade)();
+  IntColumn get comicId =>
+      integer().references(Comics, #id, onDelete: KeyAction.cascade)();
 
   /// Action name, e.g. `open`, `page`, `complete`.
   TextColumn get action => text()();
@@ -181,10 +185,12 @@ class Libraries extends Table {
   TextColumn get name => text().unique()();
 
   /// Media kind this library holds — see [MediaTypes].
-  TextColumn get mediaType => text().withDefault(const Constant(MediaTypes.comic))();
+  TextColumn get mediaType =>
+      text().withDefault(const Constant(MediaTypes.comic))();
 
   /// Creation timestamp; defaults to now.
-  DateTimeColumn get dateCreated => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get dateCreated =>
+      dateTime().withDefault(currentDateAndTime)();
 }
 
 /// Join table linking [Comics] to the [Libraries] they belong to.
@@ -210,11 +216,15 @@ class Folders extends Table {
   TextColumn get name => text()();
 
   /// Comic whose cover represents the folder; cleared if that comic is removed.
-  IntColumn get coverComicId =>
-      integer().nullable().references(Comics, #id, onDelete: KeyAction.setNull)();
+  IntColumn get coverComicId => integer().nullable().references(
+    Comics,
+    #id,
+    onDelete: KeyAction.setNull,
+  )();
 
   /// Creation timestamp; defaults to now.
-  DateTimeColumn get dateCreated => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get dateCreated =>
+      dateTime().withDefault(currentDateAndTime)();
 }
 
 /// Join table linking [Comics] to the [Folders] that contain them.
@@ -247,7 +257,8 @@ class ComicTags extends Table {
       integer().references(Comics, #id, onDelete: KeyAction.cascade)();
 
   /// Applied tag; links are deleted with the tag.
-  IntColumn get tagId => integer().references(Tags, #id, onDelete: KeyAction.cascade)();
+  IntColumn get tagId =>
+      integer().references(Tags, #id, onDelete: KeyAction.cascade)();
 
   @override
   Set<Column> get primaryKey => {comicId, tagId};
@@ -299,24 +310,56 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onCreate: (m) async {
-          await m.createAll();
-          await _createIndexes();
-        },
-        onUpgrade: (m, from, to) async {
-          // v2 adds covering indexes for the hot library list/sort/group queries.
-          if (from < 2) await _createIndexes();
-          // v3 adds the want-to-read shelf and watched-folder ingestion tables.
-          if (from < 3) {
-            await m.createTable(wantToRead);
-            await m.createTable(watchedFolders);
-          }
-        },
-      );
+    onCreate: (m) async {
+      await m.createAll();
+      await _createIndexes();
+    },
+    onUpgrade: (m, from, to) async {
+      // v2 adds covering indexes for the hot library list/sort/group queries.
+      if (from < 2) await _createIndexes();
+      // v3 adds the want-to-read shelf and watched-folder ingestion tables.
+      if (from < 3) {
+        await m.createTable(wantToRead);
+        await m.createTable(watchedFolders);
+      }
+      // v4 enables foreign keys (see beforeOpen). Earlier versions ran with FK
+      // enforcement off, so deletes never cascaded — sweep any orphan child rows
+      // left behind before enforcement kicks in. Runs before beforeOpen (FK still
+      // off here), so these bulk deletes don't themselves trip constraints.
+      if (from < 4) await _sweepOrphans();
+    },
+    beforeOpen: (details) async {
+      // SQLite defaults foreign_keys to OFF; without this every onDelete cascade
+      // in the schema is a no-op. Must be set outside a transaction, which is why
+      // it lives here rather than in a migration step.
+      await customStatement('PRAGMA foreign_keys = ON');
+    },
+  );
+
+  /// Deletes child rows orphaned while foreign-key enforcement was off (schema
+  /// &lt; 4), and clears folder covers pointing at deleted comics.
+  Future<void> _sweepOrphans() async {
+    for (final stmt in const [
+      'DELETE FROM bookmarks WHERE comic_id NOT IN (SELECT id FROM comics)',
+      'DELETE FROM reading_history WHERE comic_id NOT IN (SELECT id FROM comics)',
+      'DELETE FROM favorites WHERE comic_id NOT IN (SELECT id FROM comics)',
+      'DELETE FROM want_to_read WHERE comic_id NOT IN (SELECT id FROM comics)',
+      'DELETE FROM library_comics WHERE comic_id NOT IN (SELECT id FROM comics) '
+          'OR library_id NOT IN (SELECT id FROM libraries)',
+      'DELETE FROM folder_comics WHERE comic_id NOT IN (SELECT id FROM comics) '
+          'OR folder_id NOT IN (SELECT id FROM folders)',
+      'DELETE FROM comic_tags WHERE comic_id NOT IN (SELECT id FROM comics) '
+          'OR tag_id NOT IN (SELECT id FROM tags)',
+      'UPDATE folders SET cover_comic_id = NULL WHERE cover_comic_id IS NOT NULL '
+          'AND cover_comic_id NOT IN (SELECT id FROM comics)',
+    ]) {
+      await customStatement(stmt);
+    }
+  }
 
   /// Indexes backing the library queries (filter/sort by series, recency, date,
   /// media type, title, and collection membership). `IF NOT EXISTS` keeps this
