@@ -13,6 +13,11 @@ const _guestColor = Color(0xFFE0A338);
 /// between the on-device library and saved CB8 servers (or add one). When the
 /// active server session is a guest (read-only — progress won't save), it shows
 /// a "Guest" badge and offers a sign-in action.
+///
+/// The hybrid local/remote model is the app's defining feature, so on wide
+/// layouts every source is an always-visible segment (no "which library am I
+/// in?" ambiguity); phones and many-server setups fall back to the compact
+/// popup trigger.
 class ConnectionSwitcher extends ConsumerWidget {
   /// Creates the connection switcher control.
   const ConnectionSwitcher({super.key});
@@ -24,6 +29,11 @@ class ConnectionSwitcher extends ConsumerWidget {
     final activeName = isLocal ? 'This device' : (state.active?.name ?? 'Server');
     final isGuest =
         !isLocal && ref.watch(sessionStatusProvider).asData?.value == RemoteSessionState.guest;
+
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    if (wide && state.connections.length <= 2) {
+      return _SegmentedSwitcher(isLocal: isLocal, isGuest: isGuest);
+    }
 
     return PopupMenuButton<String>(
       tooltip: 'Switch library',
@@ -100,6 +110,143 @@ class ConnectionSwitcher extends ConsumerWidget {
               ),
             ),
             const Icon(Icons.arrow_drop_down, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Always-visible source segments for wide layouts: "This device" plus each
+/// saved server, with a trailing overflow menu for sign-in / manage / add.
+class _SegmentedSwitcher extends ConsumerWidget {
+  const _SegmentedSwitcher({required this.isLocal, required this.isGuest});
+
+  final bool isLocal;
+  final bool isGuest;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(connectionsProvider);
+    final notifier = ref.read(connectionsProvider.notifier);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _Segment(
+            icon: Icons.smartphone,
+            label: 'This device',
+            selected: isLocal,
+            onTap: () => notifier.setActive(Connection.localId),
+          ),
+          for (final c in state.connections)
+            _Segment(
+              icon: isGuest && state.activeId == c.id ? Icons.cloud_off : Icons.cloud_outlined,
+              label: isGuest && state.activeId == c.id ? '${c.name} · Guest' : c.name,
+              selected: state.activeId == c.id,
+              tint: isGuest && state.activeId == c.id ? _guestColor : null,
+              onTap: () => notifier.setActive(c.id),
+            ),
+          PopupMenuButton<String>(
+            tooltip: 'Server options',
+            padding: EdgeInsets.zero,
+            icon: const Icon(Icons.more_horiz, size: 16),
+            onSelected: (value) async {
+              switch (value) {
+                case '__add__':
+                  await _showAddServer(context, ref);
+                case '__manage__':
+                  await _showManageServers(context, ref);
+                case '__signin__':
+                  final active = state.active;
+                  if (active != null) await _showSignIn(context, ref, active);
+              }
+            },
+            itemBuilder: (context) => [
+              if (isGuest)
+                PopupMenuItem(
+                  value: '__signin__',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.login, size: 18, color: _guestColor),
+                      const SizedBox(width: 10),
+                      Flexible(child: Text('Sign in to ${state.active?.name ?? 'server'}')),
+                    ],
+                  ),
+                ),
+              if (state.connections.isNotEmpty)
+                const PopupMenuItem(
+                  value: '__manage__',
+                  child: Row(
+                    children: [
+                      Icon(Icons.dns_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Manage servers…'),
+                    ],
+                  ),
+                ),
+              const PopupMenuItem(value: '__add__', child: Text('Add server…')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Segment extends StatelessWidget {
+  const _Segment({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.tint,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  /// Overrides the text/icon color (the amber guest indicator).
+  final Color? tint;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fg = tint ?? (selected ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.6));
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: selected
+            ? BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.22),
+                borderRadius: BorderRadius.circular(999),
+              )
+            : null,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: fg),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 130),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, color: fg),
+              ),
+            ),
           ],
         ),
       ),

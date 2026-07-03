@@ -12,11 +12,8 @@ import '../../data/sources/library_source.dart';
 import '../connections/connection_switcher.dart';
 import '../import/import_controller.dart';
 import '../import/watched_folders.dart';
-import '../library/library_screen.dart';
-import '../library/recent_screen.dart';
-import '../organize/collections_screen.dart';
-import '../organize/series_screen.dart';
-import '../organize/tags_screen.dart';
+import '../library/browse_screen.dart';
+import '../library/home_screen.dart';
 import '../settings/settings_screen.dart';
 
 /// One destination in the primary navigation.
@@ -28,14 +25,16 @@ class _Destination {
   final Widget body;
 }
 
+// Two destinations: home is reading continuity, browse is the whole catalog
+// (with pivot chips for series / collections / tags / recent). The old
+// five-tab taxonomy folded into Browse — see the redesign notes.
 const _destinations = <_Destination>[
-  _Destination('All', Icons.grid_view_outlined, Icons.grid_view, LibraryScreen()),
-  _Destination('Recent', Icons.history_outlined, Icons.history, RecentScreen()),
-  _Destination('Collections', Icons.collections_bookmark_outlined,
-      Icons.collections_bookmark, CollectionsScreen()),
-  _Destination('Series', Icons.menu_book_outlined, Icons.menu_book, SeriesScreen()),
-  _Destination('Tags', Icons.tag_outlined, Icons.tag, TagsScreen()),
+  _Destination('Home', Icons.home_outlined, Icons.home, HomeScreen()),
+  _Destination('Browse', Icons.grid_view_outlined, Icons.grid_view, BrowseScreen()),
 ];
+
+/// Index of the Browse destination (search results land there).
+const _browseIndex = 1;
 
 /// App chrome with adaptive navigation: a bottom [NavigationBar] on phones and a
 /// [NavigationRail] on wide layouts — the CB8 TabBar/Sidebar split.
@@ -118,7 +117,15 @@ class _AppShellState extends ConsumerState<AppShell> {
             ]),
           ),
           const SizedBox(width: 16),
-          Expanded(child: _SearchField()),
+          Expanded(
+            child: _SearchField(
+              // Search filters the catalog grid, which lives on Browse — jump
+              // there so typing a query visibly does something from any tab.
+              onNonEmptySearch: () {
+                if (_index != _browseIndex) setState(() => _index = _browseIndex);
+              },
+            ),
+          ),
         ],
       ),
       actions: [
@@ -274,6 +281,11 @@ class _AppShellState extends ConsumerState<AppShell> {
 }
 
 class _SearchField extends ConsumerStatefulWidget {
+  const _SearchField({this.onNonEmptySearch});
+
+  /// Called when a non-empty query is submitted to the library filter.
+  final VoidCallback? onNonEmptySearch;
+
   @override
   ConsumerState<_SearchField> createState() => _SearchFieldState();
 }
@@ -293,6 +305,7 @@ class _SearchFieldState extends ConsumerState<_SearchField> {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
       ref.read(libraryQueryProvider.notifier).setSearch(v);
+      if (v.trim().isNotEmpty) widget.onNonEmptySearch?.call();
     });
   }
 
