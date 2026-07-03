@@ -22,7 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { showToast } from '@/hooks/useToast';
-import { Search, Plus, SlidersHorizontal, ChevronDown, Settings, Users, LogOut } from 'lucide-react';
+import { Search, Plus, SlidersHorizontal, ChevronDown, Settings, Users, LogOut, Upload, FolderInput } from 'lucide-react';
 import NavbarThemeMenu from './NavbarThemeMenu';
 import { NAVBAR_SEARCH_INPUT_ID } from './commandPaletteHelpers';
 
@@ -178,17 +178,36 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
 
         {/* Admin actions & tools */}
         <div className="flex items-center gap-1.5">
-          {/* Add Comic / Upload Button (the modal only serves admins now) */}
+          {/* Add-content menu — upload or ingest a server path (admin only). */}
           {isAdmin && (
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => onOpenAdminModal('upload')}
-              className="h-9 w-9 bg-secondary border-border hover:bg-muted"
-              aria-label="Add comic or book"
-            >
-              <Plus className="h-4.5 w-4.5 text-foreground" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 bg-secondary border-border hover:bg-muted"
+                  aria-label="Add content"
+                >
+                  <Plus className="h-4.5 w-4.5 text-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-secondary border-border w-48">
+                <DropdownMenuItem
+                  onClick={() => onOpenAdminModal('upload')}
+                  className="gap-2 cursor-pointer text-foreground focus:bg-muted focus:text-foreground"
+                >
+                  <Upload className="h-4 w-4" />
+                  <span>Upload files</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onOpenAdminModal('add-path')}
+                  className="gap-2 cursor-pointer text-foreground focus:bg-muted focus:text-foreground"
+                >
+                  <FolderInput className="h-4 w-4" />
+                  <span>Add from server path</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
 
           {/* User chip (signed in) or sign-in button */}
