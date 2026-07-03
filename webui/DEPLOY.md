@@ -55,10 +55,17 @@ image**, then **bump the pinned tag and push to `redesign2`**. Argo does the res
 Run from a clone of this repo. Pick a unique tag — the repo has used build
 numbers (`1857253`) and timestamps (`20260701-010043`); a timestamp is easiest:
 
+**freya's node is `amd64`** (and the cb8 pods are pinned to it via
+`nodeSelector`), so the image MUST be built for `linux/amd64`. On an Apple
+Silicon / arm64 workstation you must pass `--platform linux/amd64` — a native
+build produces an arm64 image that the node can't pull (`ImagePullBackOff`, "no
+matching manifest for linux/amd64").
+
 ```sh
 cd webui                     # the Docker build context is the server dir
 TAG=$(date +%Y%m%d-%H%M%S)
-docker build -f packaging/docker/Dockerfile -t registry.s8njee.com/cb8:"$TAG" .
+docker build --platform linux/amd64 \
+  -f packaging/docker/Dockerfile -t registry.s8njee.com/cb8:"$TAG" .
 docker push registry.s8njee.com/cb8:"$TAG"
 ```
 
