@@ -111,7 +111,7 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
           value={localSearch}
           onChange={(e) => setLocalSearch(e.target.value)}
         />
-        <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 select-none items-center rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground md:inline-flex">
+        <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 select-none items-center rounded-full border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground md:inline-flex">
           {isMac ? '⌘K' : 'Ctrl K'}
         </kbd>
       </div>
@@ -149,7 +149,7 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
         </div>
 
         {/* Media Toggle Segmented Control (Desktop only) */}
-        <div className="hidden md:flex bg-secondary border border-border rounded-lg p-0.5 h-9 items-center">
+        <div className="hidden md:flex bg-secondary border border-border rounded-full p-0.5 h-9 items-center">
           <Button
             variant={mediaType === '' ? 'default' : 'ghost'}
             size="sm"

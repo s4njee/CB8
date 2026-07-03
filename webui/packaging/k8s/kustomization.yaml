@@ -23,4 +23,4 @@ resources:
 
 images:
   - name: registry.s8njee.com/cb8
-    newTag: "redesign2-20260703-002117-amd64"
+    newTag: "redesign2-20260703-003237-amd64"

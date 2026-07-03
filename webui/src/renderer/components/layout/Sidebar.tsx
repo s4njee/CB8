@@ -174,7 +174,7 @@ export default function Sidebar({ onOpenAdminModal }: SidebarProps) {
                       key={tagName}
                       to={tagPath}
                       className={cn(
-                        "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded border transition-colors",
+                        "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-full border transition-colors",
                         isActive(tagPath)
                           ? "bg-primary text-primary-foreground border-primary"
                           : "bg-secondary text-muted-foreground border-border hover:bg-muted hover:text-foreground"
