@@ -1,136 +1,136 @@
-# Deploying CB8 to the homelab host (freya / 192.168.1.248)
+# Deploying CB8 to the homelab cluster (freya)
 
 This is the operational runbook for the single production deployment: the `cb8`
-Docker container on **`sanjee@192.168.1.248`** (hostname `freya`), exposed on
-**host port 4218** (→ container `8008`).
+namespace on the **`freya` k3s cluster** (control-plane `freya` + worker `mars`),
+exposed on host port **4218** (→ container `8008`).
 
-For the general, multi-target deployment story (generic Docker, standalone
-Node, k8s) see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). This file is
-specifically the "push my local changes to 248" procedure.
+Deployment is **GitOps via Argo CD** — there is no manual `kubectl apply` in the
+normal flow and no Docker Compose on the host. Argo watches this repo and syncs
+the cluster to match. For the general, multi-target story (desktop, standalone
+Node, generic Docker, other clusters) see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+> **Superseded:** earlier versions of this file described a `docker compose`
+> deployment on `~/cb8-compose`. That path is retired — freya runs k3s + Argo CD.
 
 ## How the deployment is wired
 
-The host runs a **prebuilt `cb8:latest` image** via a standalone compose file —
-it does *not* build from a checked-out repo on the host, so the image must be
-built (or rebuilt) and tagged `cb8:latest`, then the container recreated.
+Argo CD (in the cluster's `argocd` namespace) runs an `Application`
+([`packaging/argocd/cb8.yaml`](packaging/argocd/cb8.yaml)) that watches
+[`packaging/k8s`](packaging/k8s) on the **`redesign2`** branch and keeps the `cb8`
+namespace in sync — `automated` sync with `selfHeal` and `prune`. So a `git push`
+that changes those manifests rolls out on its own; you do not run `kubectl apply`
+for a normal deploy.
 
-| Thing | Location on 248 |
+The stack mirrors the compose topology as three Deployments — `cb8-postgres`,
+`cb8` (API), `cb8-worker` — plus the embeddings and upscale services.
+
+| Thing | Where it lives |
 | --- | --- |
-| Compose file + `.env` (port, secrets, mount paths) | `~/cb8-compose/` |
-| Source/build scratch dir (ephemeral, recreated each deploy) | `~/cb8-build/` |
-| Postgres data — catalog, covers, users/sessions, search vectors, job queue (**the durable state**) | `cb8-postgres-data` Docker volume |
-| Image cache + uploaded archives (regenerable) | `/srv/cb8/data` → container `/var/lib/cb8` |
-| Comics library (read-only source) | `/mnt/raid6/comics` → `/comics` |
-| Ebooks library (read-only source) | `/mnt/raid6/ebooks` → `/ebooks` |
+| Manifests + pinned image tag | [`packaging/k8s/`](packaging/k8s) (`kustomization.yaml` → `images:` → `newTag`) |
+| Container image | `registry.s8njee.com/cb8:<tag>`, built from [`packaging/docker/Dockerfile`](packaging/docker/Dockerfile) |
+| Postgres data — catalog, covers, users/sessions, search vectors, job queue (**the durable state**) | the `cb8-postgres` PVC |
+| Image cache + uploaded archives (regenerable) | the `web-uploads` volume / `/mnt/raid6` hostPaths → container `/var/lib/cb8` |
+| Comics / ebooks libraries (read-only source) | `/mnt/raid6/comics`, `/mnt/raid6/ebooks` hostPaths |
 
-The compose stack is three services — `cb8-postgres`, `cb8` (API), and
-`cb8-worker` — mirroring the k8s topology. `~/cb8-compose/.env` holds
-`CB8_PUBLISH_PORT=4218`, `CB8_DB_PASSWORD` (the Postgres password, baked into
-`DATABASE_URL`), and, crucially, `BETTER_AUTH_SECRET`. **Recreating via this
-compose file keeps the secret and DB password stable**, so existing logins and
-the Postgres volume survive a redeploy. Do not `docker run` the image by hand —
-you'd lose the secret and log everyone out.
-
-The image build runs entirely inside the Dockerfile (`pnpm install` →
-`pnpm build:standalone`, which via the `prebuild:standalone` hook also runs
-`build:renderer` to produce `dist/web`). Native modules (better-sqlite3, sharp,
-@napi-rs/canvas) are compiled in the builder stage, so the build takes several
-minutes.
+**Secrets are NOT managed by Argo** — they must already exist in the `cb8`
+namespace: `cb8-db` (Postgres `url` + `password`), `cb8-secrets`
+(`better-auth-secret`, which is what keeps existing logins valid across a
+redeploy), and `registry-s8njee-pull` (pull creds for the private registry). A
+redeploy never touches these or the Postgres PVC, so logins and the catalog
+survive.
 
 ## Deploy procedure
 
-Run these from a clone of this repo on your workstation. The deploy ships your
-**current working tree** (not just committed code), so commit first if you want
-the deploy to match `main`.
+The image is **not** built by CI (the only GitHub workflow is the docs site), so
+a frontend/backend change reaches freya in two moves: **build + push a new
+image**, then **bump the pinned tag and push to `redesign2`**. Argo does the rest.
 
-### 1. Package the source
+### 1. Build and push the image
 
-Exclude build artifacts and local junk; `.dockerignore` re-excludes them inside
-the build context, but keeping them out of the tarball makes the copy ~600 KB.
-
-```sh
-tar --exclude=node_modules --exclude=.git --exclude=dist --exclude=.vite \
-    --exclude=out --exclude=scratch --exclude=coverage --exclude='*.log' \
-    --exclude='*.tar.gz' -czf /tmp/cb8-src.tar.gz .
-```
-
-### 2. Ship it to the host
+Run from a clone of this repo. Pick a unique tag — the repo has used build
+numbers (`1857253`) and timestamps (`20260701-010043`); a timestamp is easiest:
 
 ```sh
-ssh sanjee@192.168.1.248 'rm -rf ~/cb8-build && mkdir -p ~/cb8-build'
-scp /tmp/cb8-src.tar.gz sanjee@192.168.1.248:~/cb8-build/cb8-src.tar.gz
-ssh sanjee@192.168.1.248 'cd ~/cb8-build && tar xzf cb8-src.tar.gz && rm cb8-src.tar.gz'
+TAG=$(date +%Y%m%d-%H%M%S)
+docker build -f packaging/docker/Dockerfile -t registry.s8njee.com/cb8:"$TAG" .
+docker push registry.s8njee.com/cb8:"$TAG"
 ```
 
-### 3. Build the image on the host
+The renderer and standalone server are both built inside the Dockerfile
+(`pnpm build:standalone` runs `build:renderer` via its prebuild hook). Native
+modules (better-sqlite3, sharp, @napi-rs/canvas) compile in the builder stage, so
+this takes a few minutes.
+
+### 2. Pin the new tag and push
 
 ```sh
-ssh sanjee@192.168.1.248 \
-  'cd ~/cb8-build && docker build -f packaging/docker/Dockerfile -t cb8:latest .'
+# edit packaging/k8s/kustomization.yaml → images: → newTag: "<TAG>"
+git commit -am "deploy: cb8 <TAG>"
+git push origin redesign2
 ```
 
-The compose file pins `image: ${CB8_IMAGE:-cb8:latest}`, so tagging the fresh
-build `cb8:latest` is what makes the next step pick it up.
+Argo picks up the commit within its sync interval (or immediately if you refresh
+it) and rolls the `cb8` + `cb8-worker` Deployments onto the new image.
 
-### 4. Recreate the container (preserves data + auth secret)
+### 3. Verify
 
 ```sh
-ssh sanjee@192.168.1.248 \
-  'cd ~/cb8-compose && docker compose up -d --force-recreate'
+kubectl --context freya -n cb8 rollout status deploy/cb8
+kubectl --context freya -n cb8 get pods -l app=cb8 \
+  -o jsonpath='{.items[*].spec.containers[*].image}{"\n"}'
+# Argo's view of the synced revision + health:
+kubectl --context freya -n argocd get application cb8 \
+  -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}{"\n"}'
 ```
 
-`--force-recreate` guarantees the containers restart onto the new image even
-though the tag name is unchanged. The Postgres volume (`cb8-postgres-data`), the
-cache dir (`/srv/cb8/data`), and the `.env` (port, `CB8_DB_PASSWORD`,
-`BETTER_AUTH_SECRET`) are untouched. The `cb8-worker` service is recreated onto
-the new image alongside the API.
+Expect the pods to report `registry.s8njee.com/cb8:<TAG>` and Argo to read
+`Synced Healthy <commit>`. From the LAN the app is at `http://freya.local:4218/`.
 
-### 5. Verify
+## Repointing Argo at a different branch
+
+Argo's tracked branch lives in the `Application`'s `spec.source.targetRevision`
+(currently `redesign2`). Changing it is a one-time cluster operation — edit
+[`packaging/argocd/cb8.yaml`](packaging/argocd/cb8.yaml) and re-apply the
+Application itself (Argo does not manage its own definition):
 
 ```sh
-ssh sanjee@192.168.1.248 'docker ps --filter name=cb8 --format "{{.Status}} {{.Ports}}"'
-ssh sanjee@192.168.1.248 'curl -fsS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:4218/'
+kubectl --context freya apply -f packaging/argocd/cb8.yaml
 ```
-
-Expect `Up ... (healthy)` mapping `0.0.0.0:4218->8008/tcp` and HTTP `200`.
-From the LAN the app is at `http://192.168.1.248:4218/` (and
-`http://freya.local:4218/`).
 
 ## Rollback
 
-Docker keeps the previous image layers until pruned. If a deploy goes bad and
-you tagged the old image, retag and recreate. As a habit, before step 3 you can
-snapshot the current image:
+Because the deployed version is just the pinned tag in Git, a rollback is a Git
+operation — revert the tag bump and push; Argo syncs back:
 
 ```sh
-ssh sanjee@192.168.1.248 'docker tag cb8:latest cb8:prev'
-# ...if the new build is bad:
-ssh sanjee@192.168.1.248 'docker tag cb8:prev cb8:latest && cd ~/cb8-compose && docker compose up -d --force-recreate'
+git revert <the deploy commit> && git push origin redesign2
 ```
 
-The durable data lives in Postgres and is never modified by an image redeploy,
-so a rollback is image-only. Back up the catalog with `pg_dump` before any change
-you consider risky:
+Or roll back live and let `selfHeal` be overridden temporarily via the Argo UI /
+`argocd app rollback cb8`. The registry keeps prior tags, so the old image is
+still pullable. Durable data lives in Postgres and is never modified by an image
+redeploy, so a rollback is image-only. Snapshot the catalog before anything risky:
 
 ```sh
-ssh sanjee@192.168.1.248 \
-  'docker exec cb8-postgres pg_dump -U cb8 -d cb8' > cb8-$(date +%F).sql
+kubectl --context freya -n cb8 exec deploy/cb8-postgres -- \
+  pg_dump -U cb8 -d cb8 > cb8-$(date +%F).sql
 ```
 
-Restore into a fresh stack with `docker exec -i cb8-postgres psql -U cb8 -d cb8`.
 The on-disk library files under `/mnt/raid6` are the original source and are
-never written to, so the catalog can also be rebuilt from scratch by re-adding
-the library paths and rescanning.
+never written to, so the catalog can also be rebuilt by re-adding the library
+paths and rescanning.
 
 ## Notes / gotchas
 
-- **First-run admin password** is only printed on a fresh data dir. This host is
-  already provisioned, so a redeploy will not reprint it. Recover via
-  **Settings → Account** while signed in.
-- The compose file's `build:` block has `context: ../..`, which only resolves
-  when the compose file sits at `<repo>/packaging/docker/`. On the host it lives
-  at `~/cb8-compose/`, so `docker compose build` there will **not** work — always
-  build with the explicit `docker build` in step 3.
-- `BETTER_AUTH_TRUSTED_ORIGINS` in `.env` must list every hostname/port the app
-  is reached by (e.g. `http://192.168.1.248:4218`, `http://freya.local:4218`) or
-  logins from those origins are rejected as cross-site.
+- **First-run admin password** is only printed on a fresh Postgres volume. This
+  cluster is already provisioned, so a redeploy will not reprint it. Recover via
+  **Settings** while signed in.
+- **Trusted origins.** `BETTER_AUTH_TRUSTED_ORIGINS` (in `cb8-secrets` / the API
+  env) must list every hostname/port the app is reached by (e.g.
+  `http://freya.local:4218`) or logins from those origins are rejected as
+  cross-site.
+- **`newTag` must point at a tag you actually pushed.** Argo will happily sync a
+  manifest referencing a missing image and the pods will land in `ImagePullBackOff`.
+- The `packaging/k8s/overlays/netcup` overlay is a **separate** (cloud) target
+  with its own pinned tag — it is not freya. Argo's `path` is the base
+  `packaging/k8s`.

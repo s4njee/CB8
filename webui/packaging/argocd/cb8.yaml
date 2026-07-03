@@ -1,7 +1,7 @@
 # Argo CD Application for CB8 — GitOps for the freya deployment.
 #
 # Argo CD (installed in the freya cluster's `argocd` namespace) watches
-# packaging/k8s on the `flutter` branch and keeps the `cb8` namespace in sync.
+# packaging/k8s on the `redesign2` branch and keeps the `cb8` namespace in sync.
 # The image tag is pinned in kustomization.yaml, so a `git push` that changes
 # those manifests rolls out automatically (automated sync + selfHeal + prune).
 #
@@ -20,7 +20,7 @@ spec:
   source:
     repoURL: https://github.com/s4njee/CB8.git
     path: packaging/k8s
-    targetRevision: flutter
+    targetRevision: redesign2
   destination:
     server: https://kubernetes.default.svc
     namespace: cb8
