@@ -16,10 +16,15 @@ Node, generic Docker, other clusters) see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT
 
 Argo CD (in the cluster's `argocd` namespace) runs an `Application`
 ([`packaging/argocd/cb8.yaml`](packaging/argocd/cb8.yaml)) that watches
-[`packaging/k8s`](packaging/k8s) on the **`redesign2`** branch and keeps the `cb8`
+**`webui/packaging/k8s`** on the **`redesign2`** branch and keeps the `cb8`
 namespace in sync — `automated` sync with `selfHeal` and `prune`. So a `git push`
 that changes those manifests rolls out on its own; you do not run `kubectl apply`
 for a normal deploy.
+
+This is a **monorepo**: `s4njee/CB8` holds the Flutter app at the root and the
+server under `webui/`, so Argo's `path` is `webui/packaging/k8s`. The shell
+commands below are written to run from the **`webui/` directory** of a clone
+(where `package.json` and `packaging/` live).
 
 The stack mirrors the compose topology as three Deployments — `cb8-postgres`,
 `cb8` (API), `cb8-worker` — plus the embeddings and upscale services.
@@ -51,6 +56,7 @@ Run from a clone of this repo. Pick a unique tag — the repo has used build
 numbers (`1857253`) and timestamps (`20260701-010043`); a timestamp is easiest:
 
 ```sh
+cd webui                     # the Docker build context is the server dir
 TAG=$(date +%Y%m%d-%H%M%S)
 docker build -f packaging/docker/Dockerfile -t registry.s8njee.com/cb8:"$TAG" .
 docker push registry.s8njee.com/cb8:"$TAG"

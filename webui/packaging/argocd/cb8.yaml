@@ -1,9 +1,11 @@
 # Argo CD Application for CB8 — GitOps for the freya deployment.
 #
 # Argo CD (installed in the freya cluster's `argocd` namespace) watches
-# packaging/k8s on the `redesign2` branch and keeps the `cb8` namespace in sync.
-# The image tag is pinned in kustomization.yaml, so a `git push` that changes
-# those manifests rolls out automatically (automated sync + selfHeal + prune).
+# webui/packaging/k8s on the `redesign2` branch and keeps the `cb8` namespace in
+# sync. The image tag is pinned in kustomization.yaml, so a `git push` that
+# changes those manifests rolls out automatically (automated sync + selfHeal +
+# prune). NB: this is a monorepo — the server lives under webui/, so the source
+# path is webui/packaging/k8s (not packaging/k8s).
 #
 # Bootstrap once:
 #   kubectl --context freya apply -f packaging/argocd/cb8.yaml
@@ -19,7 +21,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/s4njee/CB8.git
-    path: packaging/k8s
+    path: webui/packaging/k8s
     targetRevision: redesign2
   destination:
     server: https://kubernetes.default.svc
