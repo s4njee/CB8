@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
-import '../organize/collections_screen.dart';
-import '../organize/series_screen.dart';
 import '../organize/tags_screen.dart';
 import 'library_screen.dart';
 import 'recent_screen.dart';
 
-/// The ways the Browse tab can slice the catalog.
+/// The ways the Browse tab can slice the catalog. Collections and Series are
+/// their own top-level destinations, so they're not repeated here.
 enum _Pivot {
   all('All'),
-  series('Series'),
-  collections('Collections'),
   tags('Tags'),
   recent('Recent');
 
@@ -20,9 +17,7 @@ enum _Pivot {
 }
 
 /// Browse tab — the whole catalog under one roof. A pivot-chip row switches
-/// between the full grid and the series / collections / tags / recent views
-/// that used to be separate navigation destinations. One destination, same
-/// power, less chrome.
+/// between the full grid and the tags / recent slices.
 class BrowseScreen extends StatefulWidget {
   /// Creates the Browse tab.
   const BrowseScreen({super.key});
@@ -56,8 +51,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
         Expanded(
           child: switch (_pivot) {
             _Pivot.all => const LibraryScreen(),
-            _Pivot.series => const SeriesScreen(),
-            _Pivot.collections => const CollectionsScreen(),
             _Pivot.tags => const TagsScreen(),
             _Pivot.recent => const RecentScreen(),
           },

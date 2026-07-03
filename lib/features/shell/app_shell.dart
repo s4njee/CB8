@@ -14,6 +14,8 @@ import '../import/import_controller.dart';
 import '../import/watched_folders.dart';
 import '../library/browse_screen.dart';
 import '../library/home_screen.dart';
+import '../organize/collections_screen.dart';
+import '../organize/series_screen.dart';
 import '../settings/settings_screen.dart';
 
 /// One destination in the primary navigation.
@@ -25,12 +27,16 @@ class _Destination {
   final Widget body;
 }
 
-// Two destinations: home is reading continuity, browse is the whole catalog
-// (with pivot chips for series / collections / tags / recent). The old
-// five-tab taxonomy folded into Browse — see the redesign notes.
+// Nav destinations: Home is reading continuity; Browse is the whole catalog
+// (with pivot chips for the remaining slices — All / Tags / Recent). Collections
+// and Series are first-class destinations of their own, since they're primary
+// ways users navigate their library.
 const _destinations = <_Destination>[
   _Destination('Home', Icons.home_outlined, Icons.home, HomeScreen()),
   _Destination('Browse', Icons.grid_view_outlined, Icons.grid_view, BrowseScreen()),
+  _Destination('Collections', Icons.collections_bookmark_outlined,
+      Icons.collections_bookmark, CollectionsScreen()),
+  _Destination('Series', Icons.menu_book_outlined, Icons.menu_book, SeriesScreen()),
 ];
 
 /// Index of the Browse destination (search results land there).
