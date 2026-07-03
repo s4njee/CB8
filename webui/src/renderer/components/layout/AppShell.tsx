@@ -33,6 +33,9 @@ import {
   BrowseChapterPage,
 } from '@/pages/BrowsePages';
 import { ResetPasswordPage, VerifiedPage } from '@/pages/AuthPages';
+import LoginPage from '@/pages/LoginPage';
+import SettingsPage from '@/pages/SettingsPage';
+import UsersPage from '@/pages/UsersPage';
 
 /**
  * @module
@@ -114,6 +117,9 @@ export default function AppShell() {
               <Route path="/" element={<AllPage />} />
               <Route path="recent" element={<RecentPage />} />
               <Route path="continue" element={<ContinuePage />} />
+              <Route path="login" element={<LoginPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="users" element={<UsersPage />} />
               <Route path="reset-password" element={<ResetPasswordPage />} />
               <Route path="verified" element={<VerifiedPage />} />
               <Route path="library/:id" element={<LibraryPage />} />

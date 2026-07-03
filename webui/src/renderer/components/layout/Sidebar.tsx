@@ -73,9 +73,9 @@ export default function Sidebar({ onOpenAdminModal }: SidebarProps) {
     queryFn: api.fetchTags,
   });
 
-  // Creating collections/folders hits requireAdmin routes, and clicking the "+"
-  // as a non-admin just opens the generic admin menu with no create form. Only
-  // show the add buttons to admins (matches the Navbar upload-button gating).
+  // Creating collections/folders hits requireAdmin routes, and the admin modal
+  // renders nothing for non-admin sessions. Only show the add buttons to admins
+  // (matches the Navbar upload-button gating).
   const { data: session } = useQuery({
     queryKey: ['session'],
     queryFn: api.getSession,

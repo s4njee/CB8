@@ -1,9 +1,6 @@
 import { Button } from '@/components/ui/button';
-import type { AdminPanel } from './adminPanelHelpers';
 
 interface ForgotPasswordPanelProps {
-  onNavigate: (panel: AdminPanel) => void;
-  onSuccess: () => void;
   onBack: () => void;
 }
 

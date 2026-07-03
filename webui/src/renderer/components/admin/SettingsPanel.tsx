@@ -9,6 +9,7 @@ import { showToast } from '@/hooks/useToast';
 import { ArrowLeft } from 'lucide-react';
 import {
   AutoRescanSection,
+  ConnectReaderSection,
   DangerZoneSection,
   GuestAccessSection,
   TemporaryPasswordSection,
@@ -74,6 +75,14 @@ export default function SettingsPanel({ onBack, onClose }: SettingsPanelProps) {
       .then(({ minutes }) => setRescanInterval(String(minutes)))
       .catch(() => {});
   }, []);
+
+  // OPDS catalog URL for external reader apps (same origin as the web UI)
+  const opdsCatalogUrl = `${window.location.origin}/api/opds`;
+  const handleCopyCatalogUrl = () => {
+    navigator.clipboard?.writeText(opdsCatalogUrl)
+      .then(() => showToast('Copied to clipboard'))
+      .catch(() => {});
+  };
 
   // Copy initial password helper
   const handleCopyPassword = () => {
@@ -158,6 +167,8 @@ export default function SettingsPanel({ onBack, onClose }: SettingsPanelProps) {
       )}
 
       <ThemePickerSection themes={THEME_LIST} activeTheme={activeTheme} onSelect={setTheme} />
+
+      <ConnectReaderSection catalogUrl={opdsCatalogUrl} onCopy={handleCopyCatalogUrl} />
 
       {isAdmin && (
         <>

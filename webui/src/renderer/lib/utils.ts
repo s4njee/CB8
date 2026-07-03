@@ -30,28 +30,48 @@ export function numberLabel(key: string | null | undefined, fallback: string, no
   return `${noun} ${Number.isInteger(value) ? value.toFixed(0) : String(value)}`;
 }
 
-export function formatBadgeFor(record: { fileExt?: string; mediaType: 'comic' | 'book' }) {
-  const ext = (record.fileExt || '').toLowerCase();
-  const isBookExt = ext === 'epub' || ext === 'pdf' || ext === 'mobi';
-  const isComicExt = ext === 'cbz' || ext === 'cbr';
-  const label = ext
-    ? ext.toUpperCase()
-    : (record.mediaType === 'book' ? 'Book' : 'Comic');
-  const bookClass = isBookExt || (!ext && record.mediaType === 'book');
-  const comicClass = isComicExt || (!ext && record.mediaType === 'comic');
-  return { label, bookClass, comicClass };
+/** Minimal record shape needed to describe a card's reading state. */
+interface CaptionRecord {
+  fileExt: string;
+  mediaType: 'comic' | 'book';
+  pageCount: number;
+  lastPage: number | null;
+  lastPercent?: number | null;
 }
 
-export function progressLabelFor(record: { pageCount: number; lastPage: number | null; lastPercent?: number | null; lastLocation?: string | null }) {
+export function isFinished(record: Pick<CaptionRecord, 'pageCount' | 'lastPage' | 'lastPercent'>): boolean {
+  return (
+    (record.lastPage != null && record.pageCount > 0 && record.lastPage >= record.pageCount - 1) ||
+    (record.lastPercent != null && record.lastPercent >= 100)
+  );
+}
+
+export function progressPercentFor(record: Pick<CaptionRecord, 'pageCount' | 'lastPage' | 'lastPercent'>): number {
   // lastPage is 0-indexed, so pages-read = lastPage + 1.
-  if (record.pageCount > 0 && record.lastPage != null && record.lastPage >= 0) {
-    const pct = Math.max(1, Math.min(100, Math.round(((record.lastPage + 1) / record.pageCount) * 100)));
-    return `${pct}%`;
+  if (record.pageCount > 0 && record.lastPage != null) {
+    return Math.max(1, Math.min(100, Math.round(((record.lastPage + 1) / record.pageCount) * 100)));
   }
   // Reflowable EPUBs report a whole-book percentage instead of a page index.
-  if (record.lastPercent != null && record.lastPercent > 0) {
-    return `${Math.max(1, Math.min(100, Math.round(record.lastPercent)))}%`;
+  if (record.lastPercent != null) {
+    return Math.max(0, Math.min(100, Math.round(record.lastPercent)));
   }
-  if (record.lastLocation) return 'In progress';
-  return null;
+  return 0;
+}
+
+/** One-line muted caption for a card: reading state when started, format + length otherwise. */
+export function comicCaption(record: CaptionRecord): string {
+  if (isFinished(record)) return 'Finished';
+  if (record.lastPage != null && record.pageCount > 0) {
+    return `Page ${record.lastPage + 1} of ${record.pageCount}`;
+  }
+  // Reflowable EPUBs report a whole-book percentage instead of a page index.
+  if (record.lastPercent != null) {
+    return `${Math.max(0, Math.min(100, Math.round(record.lastPercent)))}% read`;
+  }
+  // Unstarted: quiet format + length line, e.g. "CBZ · 24 pages".
+  const ext = (record.fileExt || '').toUpperCase();
+  const unit = record.mediaType === 'book' ? 'chapter' : 'page';
+  const count =
+    record.pageCount > 0 ? `${record.pageCount} ${unit}${record.pageCount === 1 ? '' : 's'}` : '';
+  return [ext, count].filter(Boolean).join(' · ');
 }

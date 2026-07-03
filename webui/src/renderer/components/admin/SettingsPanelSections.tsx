@@ -103,6 +103,39 @@ export function ThemePickerSection({ themes, activeTheme, onSelect }: ThemePicke
   );
 }
 
+type ConnectReaderSectionProps = {
+  catalogUrl: string;
+  onCopy: () => void;
+};
+
+/**
+ * OPDS catalog link for pairing external reader apps with this server.
+ * Shown to every signed-in user (OPDS access is not admin-only).
+ * - **catalogUrl:** The absolute OPDS catalog URL to display.
+ * - **onCopy:** Called when the user clicks copy.
+ */
+export function ConnectReaderSection({ catalogUrl, onCopy }: ConnectReaderSectionProps) {
+  return (
+    <div className="bg-secondary/20 border border-border p-3.5 rounded-lg space-y-2">
+      <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Connect a reader app</div>
+      <div className="flex items-center gap-2">
+        <Input
+          readOnly
+          value={catalogUrl}
+          className="bg-secondary border-border font-mono text-sm"
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <Button variant="outline" size="icon" onClick={onCopy} title="Copy">
+          <Copy className="h-4 w-4" />
+        </Button>
+      </div>
+      <p className="text-[10px] text-muted-foreground leading-normal">
+        Point any OPDS reader at this URL to browse and download this library.
+      </p>
+    </div>
+  );
+}
+
 type GuestAccessSectionProps = {
   enabled: boolean;
   pending: boolean;

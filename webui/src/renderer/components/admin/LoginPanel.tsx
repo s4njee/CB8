@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { showToast } from '@/hooks/useToast';
-import type { AdminPanel } from './adminPanelHelpers';
 
 interface LoginPanelProps {
-  onNavigate: (panel: AdminPanel) => void;
+  /** Called to switch to a related auth view (only 'forgot' exists today). */
+  onNavigate: (view: 'forgot') => void;
   onSuccess: (isAdmin: boolean) => void;
   onBack: () => void;
 }

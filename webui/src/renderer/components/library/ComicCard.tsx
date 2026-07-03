@@ -1,10 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { WebComicRecord } from '@/lib/api';
-import { formatBadgeFor, progressLabelFor, PLACEHOLDER_BOOK_SVG_DATA_URI } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { comicCaption, isFinished, progressPercentFor, PLACEHOLDER_BOOK_SVG_DATA_URI } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Heart } from 'lucide-react';
+import { Check, Heart } from 'lucide-react';
 import { useSelectionStore } from '@/store/selectionStore';
 import { cn } from '@/lib/utils';
 
@@ -73,20 +72,8 @@ export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }
     }
   };
 
-  const { label: badgeLabel, bookClass } = formatBadgeFor(record);
-  const progLabel = progressLabelFor(record);
-  const isCompleted =
-    (record.lastPage !== null && record.lastPage >= record.pageCount - 1 && record.pageCount > 0) ||
-    (record.lastPercent != null && record.lastPercent >= 100);
-
-  // Calculate reading progress percentage. Page-based formats use lastPage;
-  // reflowable EPUBs have no fixed pages, so they carry a whole-book lastPercent.
-  const progressPercent =
-    record.pageCount > 0 && record.lastPage != null
-      ? Math.max(1, Math.min(100, Math.round(((record.lastPage + 1) / record.pageCount) * 100)))
-      : record.lastPercent != null
-        ? Math.max(0, Math.min(100, Math.round(record.lastPercent)))
-        : 0;
+  const isCompleted = isFinished(record);
+  const progressPercent = progressPercentFor(record);
 
   return (
     <div
@@ -113,7 +100,7 @@ export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }
           loading="lazy"
           className={cn(
             "object-cover w-full h-full transition-transform duration-300 group-hover:scale-105",
-            imgLoading ? "opacity-30 blur-xs" : "opacity-100"
+            imgLoading ? "opacity-30 blur-xs" : isCompleted ? "opacity-55" : "opacity-100"
           )}
           onLoad={() => setImgLoading(false)}
           onError={() => {
@@ -138,17 +125,12 @@ export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }
           </div>
         )}
 
-        {/* Format Badge */}
-        <Badge
-          className={cn(
-            "absolute top-2 right-2 z-10 border-none font-bold text-[9px] px-1.5 py-0.5",
-            bookClass
-              ? "bg-[#2563eb] text-white hover:bg-[#2563eb]"
-              : "bg-[#16a34a] text-white hover:bg-[#16a34a]"
-          )}
-        >
-          {badgeLabel}
-        </Badge>
+        {/* Finished check chip */}
+        {isCompleted && (
+          <div className="absolute top-2 right-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-card border border-border">
+            <Check className="h-3 w-3 text-muted-foreground" />
+          </div>
+        )}
 
         {/* Favorites Overlay heart icon */}
         {record.favorited && (
@@ -173,20 +155,10 @@ export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }
         <h4 className="text-xs font-semibold line-clamp-2 text-foreground group-hover:text-primary transition-colors leading-tight">
           {record.title}
         </h4>
-        <div className="flex items-center justify-between mt-auto">
-          {/* Metadata count */}
-          <span className="text-[10px] text-muted-foreground">
-            {record.pageCount > 0
-              ? `${record.pageCount} ${record.fileExt === 'epub' ? 'sections' : 'pgs'}`
-              : record.fileExt === 'epub' ? 'EPUB' : '0 pgs'}
-          </span>
-          {/* Reading progress percentage text */}
-          {progLabel && !isCompleted && (
-            <span className="text-[10px] text-primary font-medium">
-              {progLabel}
-            </span>
-          )}
-        </div>
+        {/* Reading state caption */}
+        <span className="text-[10px] text-muted-foreground mt-auto">
+          {comicCaption(record)}
+        </span>
       </div>
     </div>
   );

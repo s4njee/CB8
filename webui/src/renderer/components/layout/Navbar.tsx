@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api';
+import { invalidateLibraryQueries } from '@/lib/queryClient';
+import { errorMessage } from '@/lib/errors';
 import { useUiStore, SortByFilter } from '@/store/uiStore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -11,8 +14,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Search, User, Plus, SlidersHorizontal } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { showToast } from '@/hooks/useToast';
+import { Search, Plus, SlidersHorizontal, ChevronDown, Settings, Users, LogOut } from 'lucide-react';
 import NavbarThemeMenu from './NavbarThemeMenu';
+
+/** First 1-2 initials for the avatar chip, e.g. "jane doe" → "JD", "admin" → "AD". */
+function userInitials(username: string): string {
+  const words = username.trim().split(/[\s._-]+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return username.trim().slice(0, 2).toUpperCase() || '?';
+}
 
 interface NavbarProps {
   onOpenSortSheet: () => void;
@@ -20,6 +38,8 @@ interface NavbarProps {
 }
 
 export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProps) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: session } = useQuery({
     queryKey: ['session'],
     queryFn: api.getSession,
@@ -28,6 +48,20 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
 
   const isAuthenticated = session?.authenticated ?? false;
   const isAdmin = session?.user?.isAdmin === true;
+  const username = session?.user?.username ?? '';
+
+  const handleSignOut = async () => {
+    try {
+      await api.logout();
+      await queryClient.invalidateQueries({ queryKey: ['session'] });
+      // Per-user catalog overlays (progress, favorites) go away with the
+      // session, so drop the cached library data too.
+      void invalidateLibraryQueries(queryClient);
+      showToast('Signed out successfully');
+    } catch (err) {
+      showToast(errorMessage(err, 'Failed to sign out'));
+    }
+  };
 
   const {
     mediaType,
@@ -137,8 +171,8 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
 
         {/* Admin actions & tools */}
         <div className="flex items-center gap-1.5">
-          {/* Add Comic / Upload Button */}
-          {(!isAuthenticated || isAdmin) && (
+          {/* Add Comic / Upload Button (the modal only serves admins now) */}
+          {isAdmin && (
             <Button
               variant="outline"
               size="icon"
@@ -150,16 +184,61 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
             </Button>
           )}
 
-          {/* User / Admin Login Button */}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => onOpenAdminModal(isAuthenticated ? 'menu' : 'login')}
-            className="h-9 w-9 bg-secondary border-border hover:bg-muted"
-            aria-label="Admin settings"
-          >
-            <User className="h-4.5 w-4.5 text-foreground" />
-          </Button>
+          {/* User chip (signed in) or sign-in button */}
+          {isAuthenticated ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="h-9 px-2 gap-1.5 bg-secondary border-border hover:bg-muted"
+                  aria-label="Account menu"
+                >
+                  <span className="h-6 w-6 rounded-full bg-primary/20 text-primary text-[10px] font-bold flex items-center justify-center shrink-0">
+                    {userInitials(username)}
+                  </span>
+                  <span className="hidden md:inline text-sm font-medium max-w-28 truncate">
+                    {username}
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-secondary border-border w-48">
+                <DropdownMenuItem
+                  onClick={() => navigate('/settings')}
+                  className="gap-2 cursor-pointer text-foreground focus:bg-muted focus:text-foreground"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span>Settings</span>
+                </DropdownMenuItem>
+                {isAdmin && (
+                  <DropdownMenuItem
+                    onClick={() => navigate('/users')}
+                    className="gap-2 cursor-pointer text-foreground focus:bg-muted focus:text-foreground"
+                  >
+                    <Users className="h-4 w-4" />
+                    <span>User management</span>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuItem
+                  onClick={handleSignOut}
+                  className="gap-2 cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span>Sign out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/login')}
+              className="h-9 px-3 bg-secondary border-border hover:bg-muted"
+            >
+              Sign in
+            </Button>
+          )}
 
           <NavbarThemeMenu theme={theme} onThemeChange={setTheme} />
         </div>
