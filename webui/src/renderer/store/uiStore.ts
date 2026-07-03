@@ -14,7 +14,7 @@ import { create } from 'zustand';
 export type MediaTypeFilter = '' | 'comic' | 'book';
 export type SortByFilter = 'title' | 'dateAdded' | 'fileSize' | 'pageCount' | 'lastRead';
 export type ReadStatusFilter = '' | 'unread' | 'in-progress' | 'completed';
-export type TabPanelType = null | 'collections' | 'folders' | 'tags';
+export type TabPanelType = null | 'browse';
 export type ThemeType = 'red' | 'blue' | 'green' | 'purple' | 'orange' | 'teal';
 
 interface UiState {

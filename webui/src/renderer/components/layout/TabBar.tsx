@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useUiStore, TabPanelType } from '@/store/uiStore';
-import { BookOpen, Clock, Library, FolderOpen, Tag } from 'lucide-react';
+import { useUiStore } from '@/store/uiStore';
+import { Home, LayoutGrid, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function TabBar() {
@@ -9,27 +9,27 @@ export default function TabBar() {
   const location = useLocation();
   const { tabPanel, setTabPanel } = useUiStore();
 
-  const handleTabClick = (tab: 'all' | 'recent' | TabPanelType) => {
-    if (tab === 'all') {
+  const handleTabClick = (tab: 'home' | 'browse' | 'settings') => {
+    if (tab === 'home') {
       setTabPanel(null);
       navigate('/');
-    } else if (tab === 'recent') {
+    } else if (tab === 'settings') {
       setTabPanel(null);
-      navigate('/recent');
+      navigate('/settings');
     } else {
-      // Toggle or set
-      setTabPanel(tabPanel === tab ? null : tab);
+      // Toggle the combined browse panel
+      setTabPanel(tabPanel === 'browse' ? null : 'browse');
     }
   };
 
-  const isTabActive = (tab: 'all' | 'recent' | TabPanelType) => {
-    if (tab === 'all') {
+  const isTabActive = (tab: 'home' | 'browse' | 'settings') => {
+    if (tab === 'home') {
       return (location.pathname === '/' || location.pathname === '') && tabPanel === null;
     }
-    if (tab === 'recent') {
-      return location.pathname === '/recent' && tabPanel === null;
+    if (tab === 'settings') {
+      return location.pathname === '/settings' && tabPanel === null;
     }
-    return tabPanel === tab;
+    return tabPanel === 'browse';
   };
 
   const btnClass = (active: boolean) =>
@@ -41,43 +41,27 @@ export default function TabBar() {
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 h-tab-bar bg-card border-t border-border flex items-center justify-around z-40 select-none pb-safe">
       <button
-        onClick={() => handleTabClick('all')}
-        className={btnClass(isTabActive('all'))}
+        onClick={() => handleTabClick('home')}
+        className={btnClass(isTabActive('home'))}
       >
-        <BookOpen className="h-5 w-5" />
-        All
+        <Home className="h-5 w-5" />
+        Home
       </button>
 
       <button
-        onClick={() => handleTabClick('recent')}
-        className={btnClass(isTabActive('recent'))}
+        onClick={() => handleTabClick('browse')}
+        className={btnClass(isTabActive('browse'))}
       >
-        <Clock className="h-5 w-5" />
-        Recent
+        <LayoutGrid className="h-5 w-5" />
+        Browse
       </button>
 
       <button
-        onClick={() => handleTabClick('collections')}
-        className={btnClass(isTabActive('collections'))}
+        onClick={() => handleTabClick('settings')}
+        className={btnClass(isTabActive('settings'))}
       >
-        <Library className="h-5 w-5" />
-        Collections
-      </button>
-
-      <button
-        onClick={() => handleTabClick('folders')}
-        className={btnClass(isTabActive('folders'))}
-      >
-        <FolderOpen className="h-5 w-5" />
-        Folders
-      </button>
-
-      <button
-        onClick={() => handleTabClick('tags')}
-        className={btnClass(isTabActive('tags'))}
-      >
-        <Tag className="h-5 w-5" />
-        Tags
+        <Settings className="h-5 w-5" />
+        Settings
       </button>
     </nav>
   );

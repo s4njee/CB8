@@ -1,11 +1,15 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useReaderStore } from '@/store/readerStore';
 import * as api from '@/lib/api';
-import ReaderOverlay from '@/components/layout/ReaderOverlay';
+import ReaderToolbar from '@/components/reader/ReaderToolbar';
+import useImmersiveChrome from '@/hooks/useImmersiveChrome';
+import useWakeLock from '@/hooks/useWakeLock';
+import { useReaderViewportControls } from '@/hooks/useReaderViewportControls';
+import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
-import { determineReaderFormat, initialReaderPage } from './readerPageHelpers';
+import { determineReaderFormat, initialReaderPage, readerChromeKeyAction } from './readerPageHelpers';
 
 // Lazy-loaded so the heavy reader libraries (pdf.js, epub.js) are split into
 // their own chunks and only fetched when a book is actually opened — they stay
@@ -14,6 +18,17 @@ const ComicReader = React.lazy(() => import('@/components/reader/ComicReader'));
 const EpubReader = React.lazy(() => import('@/components/reader/EpubReader'));
 const PdfReader = React.lazy(() => import('@/components/reader/PdfReader'));
 
+/** Elements whose clicks belong to the chrome (or a sheet) rather than the page. */
+const CHROME_CLICK_SELECTOR = 'header, button, [role="slider"], [role="dialog"]';
+
+/** Whether a keydown originated in an editable form control. */
+function isEditableKeyTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  if (!element?.tagName) return false;
+  const tag = element.tagName.toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || element.isContentEditable === true;
+}
+
 export default function ReaderPage() {
   const { id, page } = useParams<{ id: string; page?: string }>();
   const comicId = Number(id);
@@ -21,6 +36,15 @@ export default function ReaderPage() {
 
   const { currentPage, setCurrentPage, resetReader } = useReaderStore();
   const [extraControls, setExtraControls] = React.useState<React.ReactNode>(null);
+
+  // Immersive chrome: hidden when the book opens, toggled by a center tap,
+  // revealed by activity, auto-hidden after a pause. Shared by all readers.
+  const chrome = useImmersiveChrome();
+
+  // Keep the screen awake while reading.
+  useWakeLock();
+
+  const { handleToggleFullscreen } = useReaderViewportControls();
 
   // Query to fetch comic record details. The reader resumes from
   // record.lastPage / lastLocation, so it must read the *latest* saved progress
@@ -46,6 +70,58 @@ export default function ReaderPage() {
       resetReader();
     };
   }, [page, record, setCurrentPage, resetReader]);
+
+  const handleBack = useCallback(() => {
+    // Navigates back to the preceding library location (retains scroll position due to AppShell freezing)
+    navigate(-1);
+  }, [navigate]);
+
+  // Chrome-level keyboard shortcuts shared by every reader: Escape exits,
+  // f toggles fullscreen. Suppressed while typing or while a sheet owns the key.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const action = readerChromeKeyAction(e.key, {
+        isEditableTarget: isEditableKeyTarget(target),
+        isDialogTarget: Boolean(target?.closest?.('[role="dialog"]')),
+        defaultPrevented: e.defaultPrevented,
+      });
+      if (!action) return;
+      e.preventDefault();
+      if (action === 'back') handleBack();
+      else handleToggleFullscreen();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleBack, handleToggleFullscreen]);
+
+  // Reader-dispatched chrome commands. The EPUB reader renders into iframes
+  // whose events can't bubble out, so it broadcasts these custom events instead.
+  useEffect(() => {
+    const onToggleToolbar = () => chrome.toggle();
+    const onReaderBack = () => handleBack();
+    const onReaderFullscreen = () => handleToggleFullscreen();
+    window.addEventListener('cb8:reader-toggle-toolbar', onToggleToolbar);
+    window.addEventListener('cb8:reader-back', onReaderBack);
+    window.addEventListener('cb8:reader-toggle-fullscreen', onReaderFullscreen);
+    return () => {
+      window.removeEventListener('cb8:reader-toggle-toolbar', onToggleToolbar);
+      window.removeEventListener('cb8:reader-back', onReaderBack);
+      window.removeEventListener('cb8:reader-toggle-fullscreen', onReaderFullscreen);
+    };
+  }, [chrome.toggle, handleBack, handleToggleFullscreen]);
+
+  // Center tap/click toggles the chrome; interacting with the chrome itself
+  // (toolbar, buttons, slider, sheets) keeps it open instead. Side tap zones in
+  // the readers stop propagation, so page turns never reach this handler.
+  const handleOverlayClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest(CHROME_CLICK_SELECTOR)) {
+      chrome.reveal();
+      return;
+    }
+    chrome.toggle();
+  };
 
   if (isLoading) {
     return (
@@ -79,49 +155,64 @@ export default function ReaderPage() {
     navigate(`/read/${comicId}/${pageNum}`, { replace: true });
   };
 
-  const handleBack = () => {
-    // Navigates back to the preceding library location (retains scroll position due to AppShell freezing)
-    navigate(-1);
-  };
-
   return (
-    <ReaderOverlay
-      title={record.title}
-      currentPage={currentPage}
-      pageCount={record.pageCount}
-      onPageChange={handlePageChange}
-      onBack={handleBack}
-      extraControls={extraControls}
+    <div
+      id="reader-overlay"
+      onClick={handleOverlayClick}
+      // Mouse movement reveals the chrome while reading on desktop. Filtered to
+      // real mouse pointers: touch taps synthesize a compatibility mousemove
+      // right before their click, which would reveal-then-toggle-off the chrome.
+      onPointerMove={(e) => {
+        if (e.pointerType === 'mouse') chrome.reveal();
+      }}
+      className={cn(
+        'relative w-screen h-screen bg-black text-white overflow-hidden flex flex-col select-none',
+        chrome.visible ? 'cursor-default' : 'cursor-none',
+      )}
     >
-      <React.Suspense
-        fallback={
-          <div className="flex items-center justify-center w-full h-full bg-black text-zinc-400">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        }
-      >
-        {format === 'comic' && (
-          <ComicReader
-            record={record}
-            initialPage={currentPage}
-            setExtraControls={setExtraControls}
-          />
-        )}
-        {format === 'epub' && (
-          <EpubReader
-            record={record}
-            initialLocation={page}
-            setExtraControls={setExtraControls}
-          />
-        )}
-        {format === 'pdf' && (
-          <PdfReader
-            record={record}
-            initialPage={currentPage}
-            setExtraControls={setExtraControls}
-          />
-        )}
-      </React.Suspense>
-    </ReaderOverlay>
+      <ReaderToolbar
+        title={record.title}
+        currentPage={currentPage}
+        pageCount={record.pageCount}
+        onPageChange={handlePageChange}
+        onBack={handleBack}
+        visible={chrome.visible}
+        onMouseEnter={chrome.onChromeEnter}
+        onMouseLeave={chrome.onChromeLeave}
+        extraControls={extraControls}
+      />
+
+      <div className="flex-1 w-full h-full relative overflow-hidden bg-black flex items-center justify-center">
+        <React.Suspense
+          fallback={
+            <div className="flex items-center justify-center w-full h-full bg-black text-zinc-400">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          }
+        >
+          {format === 'comic' && (
+            <ComicReader
+              record={record}
+              initialPage={currentPage}
+              setExtraControls={setExtraControls}
+            />
+          )}
+          {format === 'epub' && (
+            <EpubReader
+              record={record}
+              initialLocation={page}
+              setExtraControls={setExtraControls}
+            />
+          )}
+          {format === 'pdf' && (
+            <PdfReader
+              record={record}
+              initialPage={currentPage}
+              setExtraControls={setExtraControls}
+            />
+          )}
+        </React.Suspense>
+      </div>
+    </div>
   );
 }

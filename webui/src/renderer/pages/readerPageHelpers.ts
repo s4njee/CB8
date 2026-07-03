@@ -16,6 +16,43 @@
 /** The reader UI to render for a given item. */
 export type ReaderFormat = 'comic' | 'epub' | 'pdf';
 
+/** A chrome-level keyboard command shared by every reader format. */
+export type ReaderChromeKeyAction = 'back' | 'fullscreen';
+
+/** Context about the keydown needed to decide whether a shortcut may fire. */
+export interface ReaderChromeKeyContext {
+  /** Whether the event target is an editable control (input, textarea, select). */
+  isEditableTarget?: boolean;
+  /** Whether the event target sits inside an open dialog/sheet. */
+  isDialogTarget?: boolean;
+  /** Whether another handler already claimed the event (e.defaultPrevented). */
+  defaultPrevented?: boolean;
+}
+
+/**
+ * Map a keydown to a chrome-level reader command.
+ *  Escape exits back to the library and `f` toggles fullscreen — for
+ *          every reader format. Shortcuts never fire while typing in a form
+ *          field, while a dialog/sheet owns the key (Escape should close the
+ *          sheet, not the reader), or when another handler already consumed
+ *          the event.
+ * @param key The pressed key (`KeyboardEvent.key`).
+ * @param context Whether the event targets an editable control or dialog, or
+ *                was already handled.
+ * @returns The chrome command, or `null` if the key should be ignored.
+ */
+export function readerChromeKeyAction(
+  key: string,
+  context: ReaderChromeKeyContext = {},
+): ReaderChromeKeyAction | null {
+  if (context.defaultPrevented || context.isEditableTarget || context.isDialogTarget) {
+    return null;
+  }
+  if (key === 'Escape') return 'back';
+  if (key === 'f' || key === 'F') return 'fullscreen';
+  return null;
+}
+
 /** The subset of a media record needed to choose a reader format. */
 export interface ReaderFormatRecord {
   mediaType: 'comic' | 'book';

@@ -38,7 +38,8 @@ interface EpubReaderViewProps {
   settingsOpen: boolean;
   pageTurnCue: PageTurnCue;
   chapters: EpubChapter[];
-  currentPercent: number;
+  /** Whole-book progress percent, or null until the location index is ready. */
+  currentPercent: number | null;
   prefs: EpubPrefs;
   localGoogleFont: string;
   onPrev: () => void;
@@ -175,9 +176,11 @@ export default function EpubReaderView({
         onSpreadChange={onSpreadChange}
       />
 
-      <footer className="absolute bottom-4 left-4 z-40 bg-black/60 backdrop-blur-xs px-2.5 py-1 rounded text-[10px] font-semibold font-mono text-zinc-400 pointer-events-none select-none">
-        {currentPercent}% Read
-      </footer>
+      {currentPercent !== null && (
+        <footer className="absolute bottom-4 left-4 z-40 bg-black/60 backdrop-blur-xs px-2.5 py-1 rounded text-[10px] font-semibold font-mono text-zinc-400 pointer-events-none select-none">
+          {currentPercent}% read
+        </footer>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import Sidebar from './Sidebar';
 import TabBar from './TabBar';
 import TabPanel from './TabPanel';
 import SortSheet from './SortSheet';
+import CommandPalette from './CommandPalette';
 import { Toaster } from '@/components/ui/sonner';
 import AdminModal from '@/components/admin/AdminModal';
 import { cn } from '@/lib/utils';
@@ -154,6 +155,7 @@ export default function AppShell() {
       {/* 4. Sheets & Dialogs */}
       <SortSheet open={sortOpen} onOpenChange={setSortOpen} />
       <TabPanel />
+      <CommandPalette />
 
       {/* Admin Action Modal Dialog */}
       <AdminModal

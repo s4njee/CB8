@@ -32,8 +32,15 @@ export default function ReaderToolbar({
 
   return (
     <header
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
+      // Pointer events filtered to real mice: hover-pinning the toolbar makes no
+      // sense for touch, and taps synthesize compatibility mouseenter events
+      // that would pin the chrome open until the next tap elsewhere.
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse') onMouseEnter?.();
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === 'mouse') onMouseLeave?.();
+      }}
       className={cn(
         "absolute top-0 left-0 right-0 h-13 z-50 flex items-center justify-between gap-4 px-4 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800 text-zinc-100 select-none transition-all duration-300 ease-in-out",
         visible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-full pointer-events-none"
@@ -50,8 +57,11 @@ export default function ReaderToolbar({
         <span className="text-xs font-semibold uppercase tracking-wider hidden sm:inline">Back</span>
       </Button>
 
-      {/* Title */}
-      <div className="text-xs font-semibold truncate max-w-[200px] md:max-w-xs text-zinc-300">
+      {/* Title — always a single truncated line, however long the filename gets */}
+      <div
+        className="flex-1 min-w-0 text-xs font-semibold truncate whitespace-nowrap text-zinc-300"
+        title={title}
+      >
         {title}
       </div>
 

@@ -395,7 +395,6 @@ export default function ComicReader({
     onBackward: goBackward,
     onFirstPage: handleFirstPage,
     onLastPage: handleLastPage,
-    onToggleFullscreen: handleToggleFullscreen,
     onCycleZoom: handleCycleZoom,
     onToggleBookmark: handleToggleBookmark,
     onToggleSpread: handleToggleSpread,

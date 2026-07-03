@@ -58,6 +58,41 @@ describe('epubReaderIframeEvents', () => {
     expect(rendition.prev).toHaveBeenCalledOnce();
   });
 
+  it('re-broadcasts chrome keys as commands instead of navigating', () => {
+    const rendition = createRendition();
+    const dispatchChromeCommand = vi.fn();
+    const handler = createEpubKeyboardHandler(rendition, dispatchChromeCommand);
+
+    const escape = { key: 'Escape', preventDefault: vi.fn(), target: { tagName: 'BODY' } } as unknown as KeyboardEvent;
+    const fullscreen = { key: 'f', preventDefault: vi.fn(), target: { tagName: 'BODY' } } as unknown as KeyboardEvent;
+
+    handler(escape);
+    handler(fullscreen);
+
+    expect(dispatchChromeCommand).toHaveBeenNthCalledWith(1, 'back');
+    expect(dispatchChromeCommand).toHaveBeenNthCalledWith(2, 'fullscreen');
+    expect(escape.preventDefault).toHaveBeenCalledOnce();
+    expect(rendition.next).not.toHaveBeenCalled();
+    expect(rendition.prev).not.toHaveBeenCalled();
+  });
+
+  it('leaves keys alone while a dialog/sheet owns them', () => {
+    const rendition = createRendition();
+    const dispatchChromeCommand = vi.fn();
+    const handler = createEpubKeyboardHandler(rendition, dispatchChromeCommand);
+
+    const inDialog = {
+      key: 'Escape',
+      preventDefault: vi.fn(),
+      target: { tagName: 'DIV', closest: vi.fn(() => ({})) },
+    } as unknown as KeyboardEvent;
+
+    handler(inDialog);
+
+    expect(dispatchChromeCommand).not.toHaveBeenCalled();
+    expect(inDialog.preventDefault).not.toHaveBeenCalled();
+  });
+
   it('wires an iframe document once and resolves internal links through rendition.display', () => {
     const { doc, listeners } = createFakeDocument();
     const rendition = createRendition();
@@ -86,6 +121,8 @@ describe('epubReaderIframeEvents', () => {
     expect(listeners.click).toHaveLength(1);
     expect(listeners.keydown).toHaveLength(1);
     expect(listeners.touchstart).toHaveLength(1);
+    expect(listeners.mousedown).toHaveLength(1);
+    expect(listeners.mouseup).toHaveLength(1);
 
     const link = { getAttribute: vi.fn(() => '#footnote') };
     const event = {
@@ -132,12 +169,52 @@ describe('epubReaderIframeEvents', () => {
     listeners.touchstart[0]({
       touches: [{ clientX: 150, clientY: 20 }],
     } as unknown as TouchEvent);
-    listeners.touchend[0]({
+    const centerTap = {
       changedTouches: [{ clientX: 150, clientY: 20 }],
       preventDefault: vi.fn(),
       target: { closest: vi.fn(() => null) },
-    } as unknown as TouchEvent);
+    } as unknown as TouchEvent;
+    listeners.touchend[0](centerTap);
 
+    expect(rendition.next).toHaveBeenCalledOnce();
+    expect(dispatchToolbarToggle).toHaveBeenCalledOnce();
+    // Handled taps suppress the browser's compatibility mouse events so the
+    // mouse tap zones don't act on the same gesture twice.
+    expect(centerTap.preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it('maps iframe mouse clicks to the same tap zones as touch', () => {
+    const { doc, listeners } = createFakeDocument();
+    const rendition = createRendition();
+    const dispatchToolbarToggle = vi.fn();
+
+    attachEpubIframeInteractions({
+      iframeDoc: doc,
+      rendition,
+      keyboardHandler: vi.fn(),
+      resolveDisplayTarget: vi.fn(),
+      linkedIframeDocs: new WeakSet<Document>(),
+      onLinkError: vi.fn(),
+      getViewportWidth: () => 300,
+      dispatchToolbarToggle,
+    });
+
+    const tapAt = (downX: number, upX: number, closestResult: unknown = null) => {
+      listeners.mousedown[0]({ clientX: downX, clientY: 20 } as unknown as MouseEvent);
+      listeners.mouseup[0]({
+        clientX: upX,
+        clientY: 20,
+        target: { closest: vi.fn(() => closestResult) },
+      } as unknown as MouseEvent);
+    };
+
+    tapAt(50, 50); // left third → prev
+    tapAt(250, 250); // right third → next
+    tapAt(150, 150); // center → toolbar
+    tapAt(150, 250); // drag (text selection) → ignored
+    tapAt(150, 150, {}); // interactive target (link/button) → ignored
+
+    expect(rendition.prev).toHaveBeenCalledOnce();
     expect(rendition.next).toHaveBeenCalledOnce();
     expect(dispatchToolbarToggle).toHaveBeenCalledOnce();
   });

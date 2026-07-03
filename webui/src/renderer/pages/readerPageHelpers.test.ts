@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   determineReaderFormat,
   initialReaderPage,
+  readerChromeKeyAction,
   type ReaderFormatRecord,
 } from './readerPageHelpers';
 
@@ -37,6 +38,19 @@ describe('readerPageHelpers', () => {
     expect(determineReaderFormat(record({ fileExt: '', lastLocation: 'epubcfi(/6/2)' }))).toBe('epub');
     expect(determineReaderFormat(record({ fileExt: '', pageCount: 12 }))).toBe('pdf');
     expect(determineReaderFormat(record({ fileExt: '', lastPage: 1, pageCount: 0 }))).toBe('epub');
+  });
+
+  it('maps chrome shortcuts to back and fullscreen commands', () => {
+    expect(readerChromeKeyAction('Escape')).toBe('back');
+    expect(readerChromeKeyAction('f')).toBe('fullscreen');
+    expect(readerChromeKeyAction('F')).toBe('fullscreen');
+    expect(readerChromeKeyAction('ArrowRight')).toBeNull();
+  });
+
+  it('never fires chrome shortcuts from form fields, dialogs, or handled events', () => {
+    expect(readerChromeKeyAction('f', { isEditableTarget: true })).toBeNull();
+    expect(readerChromeKeyAction('Escape', { isDialogTarget: true })).toBeNull();
+    expect(readerChromeKeyAction('Escape', { defaultPrevented: true })).toBeNull();
   });
 });
 

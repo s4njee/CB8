@@ -24,6 +24,9 @@ import {
 import { showToast } from '@/hooks/useToast';
 import { Search, Plus, SlidersHorizontal, ChevronDown, Settings, Users, LogOut } from 'lucide-react';
 import NavbarThemeMenu from './NavbarThemeMenu';
+import { NAVBAR_SEARCH_INPUT_ID } from './commandPaletteHelpers';
+
+const isMac = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
 
 /** First 1-2 initials for the avatar chip, e.g. "jane doe" → "JD", "admin" → "AD". */
 function userInitials(username: string): string {
@@ -101,12 +104,16 @@ export default function Navbar({ onOpenSortSheet, onOpenAdminModal }: NavbarProp
       <div className="relative flex-1 max-w-md">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
+          id={NAVBAR_SEARCH_INPUT_ID}
           type="search"
           placeholder="Search..."
-          className="pl-9 bg-secondary border-border h-9 w-full"
+          className="pl-9 md:pr-14 bg-secondary border-border h-9 w-full"
           value={localSearch}
           onChange={(e) => setLocalSearch(e.target.value)}
         />
+        <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 select-none items-center rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground md:inline-flex">
+          {isMac ? '⌘K' : 'Ctrl K'}
+        </kbd>
       </div>
 
       {/* Desktop Filters / Actions */}

@@ -170,13 +170,16 @@ export default function PdfReader({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handlePrevPage, handleNextPage]);
 
-  // Tap-zone inside canvas wrapper
+  // Tap-zone inside canvas wrapper. Side taps turn the page and stop bubbling;
+  // center taps fall through to ReaderPage, which toggles the immersive chrome.
   const handleCanvasClick = (e: React.MouseEvent) => {
     const wrap = containerRef.current;
     if (!wrap) return;
     const action = pdfTapAction(e.clientX, wrap.clientWidth);
+    if (!action) return;
+    e.stopPropagation();
     if (action === 'prev') handlePrevPage();
-    else if (action === 'next') handleNextPage();
+    else handleNextPage();
   };
 
   // Swipes inside canvas wrapper

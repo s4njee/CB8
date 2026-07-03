@@ -69,7 +69,9 @@ export default function EpubReader({
   const renditionRef = useRef<EpubRendition | null>(null);
 
   const [chapters, setChapters] = useState<EpubChapter[]>([]);
-  const [currentPercent, setCurrentPercent] = useState<number>(0);
+  // Whole-book progress percent, or null until the location index has been
+  // generated — epub.js only knows section-local progress before that.
+  const [currentPercent, setCurrentPercent] = useState<number | null>(null);
 
   // Sheets visible states
   const [chaptersOpen, setChaptersOpen] = useState(false);
@@ -216,24 +218,22 @@ export default function EpubReader({
         // Relocated state listener
         rendered.on('relocated', (location) => {
           if (!location?.start) return;
-          // Prefer a whole-book percentage from the generated location index;
-          // `location.start.percentage` is only the position within the current
-          // spine section until `locations.generate()` has run.
+          // Only the whole-book location index gives a meaningful percentage;
+          // `location.start.percentage` is section-local until
+          // `locations.generate()` has run. Rather than briefly showing a
+          // misleading per-chapter number, the footer stays hidden (and nothing
+          // is persisted) until the index — generated in the background right
+          // after first paint — is ready.
           const book = bookRef.current;
           const cfi = location.start.cfi;
-          let fraction = location.start.percentage ?? 0;
-          // Only the whole-book index gives a meaningful percentage to persist;
-          // until it's generated we still show section-local progress in the UI
-          // but don't write it to the server (it would be wrong on the card).
           let wholeBookPercent: number | undefined;
           if (cfi && book?.locations && book.locations.length() > 0) {
             const fromIndex = book.locations.percentageFromCfi(cfi);
             if (typeof fromIndex === 'number' && !Number.isNaN(fromIndex)) {
-              fraction = fromIndex;
               wholeBookPercent = Math.round(fromIndex * 100);
+              setCurrentPercent(wholeBookPercent);
             }
           }
-          setCurrentPercent(Math.round(fraction * 100));
           if (location.start.href) {
             currentSectionHrefRef.current = location.start.href;
           }

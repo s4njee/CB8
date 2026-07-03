@@ -7,8 +7,10 @@ import { useEffect } from 'react';
  * Architecture overview for Junior Devs:
  * This React hook attaches a global `keydown` listener while the comic reader is
  * mounted and maps keys to actions: arrows/space/page-up-down to navigate,
- * Home/End to jump to first/last page, F for fullscreen, Z to cycle zoom, B to
- * bookmark, S to toggle two-page spread, and +/-/0 to zoom in/out/reset.
+ * Home/End to jump to first/last page, Z to cycle zoom, B to bookmark, S to
+ * toggle two-page spread, and +/-/0 to zoom in/out/reset. (Escape and F are
+ * chrome-level shortcuts owned by ReaderPage, shared across all readers.)
+ * Shortcuts never fire while an editable form control has focus.
  *
  * It is intentionally "dumb": it doesn't know what forward/back *mean* (that
  * depends on reading direction), so it just calls the callbacks the caller
@@ -29,7 +31,6 @@ interface UseComicKeyboardOptions {
   onBackward: () => void;
   onFirstPage: () => void;
   onLastPage: () => void;
-  onToggleFullscreen: () => void;
   onCycleZoom: () => void;
   onToggleBookmark: () => void;
   onToggleSpread: () => void;
@@ -49,7 +50,6 @@ export default function useComicKeyboard({
   onBackward,
   onFirstPage,
   onLastPage,
-  onToggleFullscreen,
   onCycleZoom,
   onToggleBookmark,
   onToggleSpread,
@@ -59,6 +59,13 @@ export default function useComicKeyboard({
 }: UseComicKeyboardOptions) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't hijack typing in form fields (e.g. inputs in sheets/dialogs).
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
+        return;
+      }
+
       const pan = panRef.current;
 
       switch (e.key) {
@@ -87,11 +94,6 @@ export default function useComicKeyboard({
         case 'End':
           e.preventDefault();
           onLastPage();
-          break;
-        case 'f':
-        case 'F':
-          e.preventDefault();
-          onToggleFullscreen();
           break;
         case 'z':
         case 'Z':
@@ -142,7 +144,6 @@ export default function useComicKeyboard({
     onBackward,
     onFirstPage,
     onLastPage,
-    onToggleFullscreen,
     onCycleZoom,
     onToggleBookmark,
     onToggleSpread,

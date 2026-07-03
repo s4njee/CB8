@@ -17,24 +17,30 @@
 export type EpubNavAction = 'next' | 'prev';
 /** A tap intent: navigation, or revealing the toolbar. */
 export type EpubTapAction = EpubNavAction | 'toolbar';
+/** A keyboard intent: navigation, or a chrome command (exit / fullscreen). */
+export type EpubKeyboardAction = EpubNavAction | 'back' | 'fullscreen';
 
 /** CSS selector for elements that should consume taps themselves (links, buttons, inputs). */
 export const EPUB_INTERACTIVE_TAP_SELECTOR = 'a[href], button, [role="button"], input, select';
 
 /**
- * Map a keyboard key to a navigation action.
+ * Map a keyboard key to a navigation or chrome action.
  *  Returns `null` while the user is typing in a form field so shortcuts
- *          don't fire. Right/Space go forward; Left/Backspace go back.
+ *          don't fire. Right/Space go forward; Left/Backspace go back; Escape
+ *          exits the reader; `f` toggles fullscreen — matching the comic and
+ *          PDF readers.
  * @param key The pressed key (`KeyboardEvent.key`).
  * @param targetTagName The tag name of the event target, if known.
- * @returns The navigation action, or `null` if the key should be ignored.
+ * @returns The action, or `null` if the key should be ignored.
  */
-export function epubKeyboardAction(key: string, targetTagName?: string): EpubNavAction | null {
+export function epubKeyboardAction(key: string, targetTagName?: string): EpubKeyboardAction | null {
   if (targetTagName === 'INPUT' || targetTagName === 'TEXTAREA' || targetTagName === 'SELECT') {
     return null;
   }
   if (key === 'ArrowRight' || key === ' ') return 'next';
   if (key === 'ArrowLeft' || key === 'Backspace') return 'prev';
+  if (key === 'Escape') return 'back';
+  if (key === 'f' || key === 'F') return 'fullscreen';
   return null;
 }
 

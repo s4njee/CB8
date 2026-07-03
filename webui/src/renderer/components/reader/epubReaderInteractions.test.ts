@@ -14,7 +14,15 @@ describe('epubReaderInteractions', () => {
     expect(epubKeyboardAction('ArrowRight', 'INPUT')).toBeNull();
     expect(epubKeyboardAction('ArrowLeft', 'TEXTAREA')).toBeNull();
     expect(epubKeyboardAction('Backspace', 'SELECT')).toBeNull();
-    expect(epubKeyboardAction('Escape')).toBeNull();
+    expect(epubKeyboardAction('ArrowDown')).toBeNull();
+  });
+
+  it('maps chrome keys to back and fullscreen commands unless typing', () => {
+    expect(epubKeyboardAction('Escape')).toBe('back');
+    expect(epubKeyboardAction('f')).toBe('fullscreen');
+    expect(epubKeyboardAction('F')).toBe('fullscreen');
+    expect(epubKeyboardAction('Escape', 'INPUT')).toBeNull();
+    expect(epubKeyboardAction('f', 'INPUT')).toBeNull();
   });
 
   it('turns sufficiently horizontal swipes into page navigation', () => {

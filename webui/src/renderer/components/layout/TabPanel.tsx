@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useUiStore, TabPanelType } from '@/store/uiStore';
+import { useUiStore } from '@/store/uiStore';
 import * as api from '@/lib/api';
 import {
   Sheet,
@@ -11,15 +11,24 @@ import {
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Library, FolderOpen, Tag } from 'lucide-react';
+import { Library, FolderOpen, Tag, Clock, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+type BrowsePivot = 'collections' | 'folders' | 'tags';
+
+const PIVOTS: { id: BrowsePivot; label: string }[] = [
+  { id: 'collections', label: 'Collections' },
+  { id: 'folders', label: 'Folders' },
+  { id: 'tags', label: 'Tags' },
+];
 
 export default function TabPanel() {
   const navigate = useNavigate();
   const location = useLocation();
   const { tabPanel, setTabPanel } = useUiStore();
+  const [pivot, setPivot] = useState<BrowsePivot>('collections');
 
-  const open = tabPanel !== null;
+  const open = tabPanel === 'browse';
 
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) {
@@ -51,13 +60,6 @@ export default function TabPanel() {
     navigate(path);
   };
 
-  const getTitle = () => {
-    if (tabPanel === 'collections') return 'Collections';
-    if (tabPanel === 'folders') return 'Folders';
-    if (tabPanel === 'tags') return 'Tags';
-    return '';
-  };
-
   const isItemActive = (path: string) => {
     return location.pathname === path;
   };
@@ -70,16 +72,61 @@ export default function TabPanel() {
         : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
     );
 
+  const chipClass = (selected: boolean) =>
+    cn(
+      "px-3 py-1 text-xs font-medium rounded-full border transition-colors",
+      selected
+        ? "bg-primary text-primary-foreground border-primary"
+        : "bg-secondary text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+    );
+
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent side="bottom" className="bg-card border-border rounded-t-xl p-4 h-[50vh] flex flex-col">
         <SheetHeader className="pb-3 shrink-0">
-          <SheetTitle className="text-foreground text-left">{getTitle()}</SheetTitle>
+          <SheetTitle className="text-foreground text-left">Browse</SheetTitle>
         </SheetHeader>
-        
+
+        {/* Quick links */}
+        <div className="flex flex-col gap-1 shrink-0 pb-2">
+          <Button
+            variant="ghost"
+            onClick={() => handleItemClick('/recent')}
+            className={itemClass(isItemActive('/recent'))}
+          >
+            <div className="flex items-center gap-3 truncate">
+              <Clock className="h-5 w-5 shrink-0" />
+              <span className="truncate">Recently read</span>
+            </div>
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => handleItemClick('/continue')}
+            className={itemClass(isItemActive('/continue'))}
+          >
+            <div className="flex items-center gap-3 truncate">
+              <BookOpen className="h-5 w-5 shrink-0" />
+              <span className="truncate">Continue reading</span>
+            </div>
+          </Button>
+        </div>
+
+        {/* Pivot chips */}
+        <div className="flex items-center gap-1.5 shrink-0 border-t border-border pt-3 pb-2">
+          {PIVOTS.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setPivot(p.id)}
+              className={chipClass(pivot === p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
         <ScrollArea className="flex-1 -mx-2 px-2">
           <div className="flex flex-col gap-1 py-1">
-            {tabPanel === 'collections' && libraries.map((lib) => (
+            {pivot === 'collections' && libraries.map((lib) => (
               <Button
                 key={lib.id}
                 variant="ghost"
@@ -96,7 +143,7 @@ export default function TabPanel() {
               </Button>
             ))}
 
-            {tabPanel === 'folders' && folders.map((folder) => (
+            {pivot === 'folders' && folders.map((folder) => (
               <Button
                 key={folder.id}
                 variant="ghost"
@@ -113,7 +160,7 @@ export default function TabPanel() {
               </Button>
             ))}
 
-            {tabPanel === 'tags' && tags.map((t) => {
+            {pivot === 'tags' && tags.map((t) => {
               const tagPath = `/tag/${encodeURIComponent(t)}`;
               return (
                 <Button
@@ -130,13 +177,13 @@ export default function TabPanel() {
               );
             })}
 
-            {tabPanel === 'collections' && libraries.length === 0 && (
+            {pivot === 'collections' && libraries.length === 0 && (
               <p className="text-sm text-muted-foreground/60 text-center py-8 italic">No collections found</p>
             )}
-            {tabPanel === 'folders' && folders.length === 0 && (
+            {pivot === 'folders' && folders.length === 0 && (
               <p className="text-sm text-muted-foreground/60 text-center py-8 italic">No folders found</p>
             )}
-            {tabPanel === 'tags' && tags.length === 0 && (
+            {pivot === 'tags' && tags.length === 0 && (
               <p className="text-sm text-muted-foreground/60 text-center py-8 italic">No tags found</p>
             )}
           </div>

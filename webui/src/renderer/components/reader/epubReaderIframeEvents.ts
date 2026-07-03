@@ -42,13 +42,26 @@ export function epubDocumentFromRenderedView(view: EpubRenderedView | null | und
 
 export function createEpubKeyboardHandler(
   rendition: Pick<EpubRendition, 'next' | 'prev'>,
+  dispatchChromeCommand: (command: 'back' | 'fullscreen') => void = (command) => {
+    window.dispatchEvent(
+      new CustomEvent(command === 'back' ? 'cb8:reader-back' : 'cb8:reader-toggle-fullscreen'),
+    );
+  },
 ): (event: KeyboardEvent) => void {
   return (event) => {
+    // Leave keys alone while a sheet/dialog owns them (Escape must close the
+    // sheet, and arrows shouldn't turn pages behind it).
+    if ((event.target as HTMLElement | null)?.closest?.('[role="dialog"]')) return;
+
     const action = epubKeyboardAction(event.key, (event.target as HTMLElement | null)?.tagName);
     if (!action) return;
     event.preventDefault();
     if (action === 'next') rendition.next();
-    else rendition.prev();
+    else if (action === 'prev') rendition.prev();
+    // Chrome commands (Escape/back, f/fullscreen) are owned by ReaderPage, but
+    // keydowns inside epub.js iframes never reach the parent window — so they
+    // are re-broadcast as window custom events, like the toolbar toggle.
+    else dispatchChromeCommand(action);
   };
 }
 
@@ -119,8 +132,40 @@ export function attachEpubIframeInteractions({
       getViewportWidth(),
       Boolean(target?.closest(EPUB_INTERACTIVE_TAP_SELECTOR)),
     );
+    if (!tapAction) return;
+    // Suppress the browser's compatibility mouse events for handled taps so the
+    // mouse tap-zone handlers below don't act on the same gesture twice.
+    event.preventDefault();
+    if (tapAction === 'prev') rendition.prev();
+    else if (tapAction === 'next') rendition.next();
+    else dispatchToolbarToggle();
+  }, { passive: false });
+
+  // Mouse tap zones, mirroring the touch ones so desktop clicks inside the
+  // iframe behave like every other reader: left/right thirds turn the page,
+  // the center toggles the toolbar. Movement (text selection drags) and
+  // interactive targets (links, buttons) are left alone.
+  let mxStart = 0;
+  let myStart = 0;
+
+  iframeDoc.addEventListener('mousedown', (event: MouseEvent) => {
+    mxStart = event.clientX;
+    myStart = event.clientY;
+  });
+
+  iframeDoc.addEventListener('mouseup', (event: MouseEvent) => {
+    const dx = event.clientX - mxStart;
+    const dy = event.clientY - myStart;
+    const target = event.target as Element | null;
+    const tapAction = epubTapAction(
+      dx,
+      dy,
+      event.clientX,
+      getViewportWidth(),
+      Boolean(target?.closest(EPUB_INTERACTIVE_TAP_SELECTOR)),
+    );
     if (tapAction === 'prev') rendition.prev();
     else if (tapAction === 'next') rendition.next();
     else if (tapAction === 'toolbar') dispatchToolbarToggle();
-  }, { passive: false });
+  });
 }
