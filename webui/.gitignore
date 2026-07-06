@@ -18,6 +18,8 @@ typedoc-warnings.log
 .DS_Store
 .env
 .env.*
+# ...but the committed template must stay tracked (cb8-init.sh copies it to .env).
+!.env.example
 .pnpm-store/
 .claude/
 
