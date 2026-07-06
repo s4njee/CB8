@@ -10,17 +10,18 @@ pnpm install --frozen-lockfile
 pnpm run typecheck
 pnpm test
 pnpm build:renderer
-pnpm start
+pnpm build:standalone
+DATABASE_URL=postgres://cb8:pw@localhost:5432/cb8 pnpm start:standalone
 ```
 
-`pnpm test` runs Vitest through Electron's Node runtime. That is intentional:
-the SQLite native dependency is built for Electron, so DB-backed tests need the
-same ABI as the app.
+`pnpm test` runs Vitest on plain Node. Suites that need a real database are
+skipped unless `CB8_TEST_DATABASE_URL` points at a disposable Postgres (use a
+throwaway `pgvector/pgvector` container — the suites TRUNCATE tables).
 
-For frontend-only work, run these in separate terminals:
+For frontend-only work, run the API in one terminal (`start:standalone` above)
+and the renderer dev server in another:
 
 ```sh
-pnpm start:headless
 pnpm dev:renderer
 ```
 
@@ -28,9 +29,11 @@ The renderer dev server proxies `/api` to the CB8 server.
 
 ## Current Architecture
 
-CB8 has three main areas:
+CB8 is a standalone Node server (no Electron — that era is retired; the native
+client is the Flutter app at the repo root). Three main areas:
 
-- `src/main/`: server, Electron shell, SQLite, ingest, archive loading.
+- `src/main/`: the Fastify API (`standalone.ts`), the pg-boss background worker
+  (`worker.ts`), the Postgres layer, ingest, and archive loading.
 - `src/renderer/`: React SPA UI.
 - `src/shared/`: pure types and helpers that both sides may import.
 
@@ -87,12 +90,10 @@ using `@/lib/api`.
 
 1. Pick the nearest domain module: `comics.ts`, `folders.ts`, `reading.ts`,
    `admin.ts`, and so on.
-2. Reuse `get`, `post`, `put`, or `del` from `api/client.ts`; use
-   `postIngestStream()` from `api/stream.ts` for streamed ingest responses.
+2. Reuse `get`, `post`, `put`, or `del` from `api/client.ts`.
 3. Put renderer-facing types in `api/types.ts`. If the server also returns that
    shape, define it in `src/shared/apiTypes.ts` and import it from both sides.
-4. Keep product data on HTTP APIs. Use `hostBridge.ts` only for native desktop
-   capabilities like dialogs and window controls.
+4. Keep everything on HTTP APIs — the SPA has no privileged host bridge.
 
 ## Adding UI
 
@@ -124,9 +125,9 @@ Reader components follow the same idea. `ComicReader`, `EpubReader`, and
 files such as `comicReaderRules.ts`, `pdfReaderRules.ts`, or
 `epubReaderIframeEvents.ts`, and cover it with unit tests when it has branches.
 
-## Working In Main-Process Modules
+## Working In Server Modules
 
-Main-process files often touch slow or platform-specific systems: SQLite,
+`src/main` files often touch slow or platform-specific systems: Postgres,
 archives, spawned binaries, and the filesystem. Keep those boundaries explicit.
 
 - DB operation files should call query/metadata helpers instead of building
@@ -139,8 +140,8 @@ archives, spawned binaries, and the filesystem. Keep those boundaries explicit.
   (`archiveProcessHelpers.ts`), and backend orchestration (`archiveLoader.ts`).
 
 When you are not sure where a change belongs, put domain behavior near the
-domain module and keep helpers plain enough to unit test without Electron,
-Fastify, or a local media library.
+domain module and keep helpers plain enough to unit test without Fastify,
+Postgres, or a local media library.
 
 ## Adding DB-Backed Tests
 
@@ -164,5 +165,4 @@ pnpm test
 pnpm build:renderer
 ```
 
-Mention any skipped check or known warning in your final note. The renderer build
-currently emits a chunk-size warning; that is known and not a failure.
+Mention any skipped check or known warning in your final note.

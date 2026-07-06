@@ -7,17 +7,37 @@ The platform scaffolds (`macos/`, `windows/`, `linux/`) already exist, and most
 dependencies are desktop-ready. This list is ordered by phase; do Phase 0–2
 before worrying about packaging.
 
-## ✅ macOS status — runnable & verified (2026-06-26)
-The macOS app now **builds, launches, and all three readers work natively**:
+## ⚠️ Update 2026-07-06 — the EPUB engine changed under this list
+On **2026-06-30** the epub.js/WebView EPUB reader was **deleted** and replaced by a
+Readium-based reader (`flutter_readium`, `lib/features/reader/unified_reader_screen.dart`)
+that is **iOS/Android only** — see `tasks.md` for the adoption plan (Phase 0+1 done)
+and `ARCHITECTURE.md` §9. Consequences for this list:
+
+- The entire **macOS EPUB WKWebView workaround is obsolete** (script injection,
+  `readyToLoad`, dark-background forcing — all that code is gone with
+  `epub_reader_screen.dart`). The notes below are kept as history.
+- **macOS currently has no EPUB reader at all** (CBZ + PDF still work natively).
+  Desktop EPUB is now a *new* problem (a Readium desktop story or a second engine),
+  not a WebView-tuning problem — Phase 2 below is annotated accordingly.
+- The `flutter_epub_viewer` / `flutter_inappwebview` rows and prerequisites
+  (WebView2 on Windows, "no Linux webview") no longer describe the EPUB path.
+
+A large UI redesign (2026-07-02/03) and a perf pass (2026-07-05, see `perf.md`) also
+landed; they don't change the desktop/packaging items below.
+
+## ✅ macOS status — runnable & verified (2026-06-26; EPUB row obsolete, see above)
+The macOS app **builds, launches**, and at the time all three readers worked natively
+(EPUB has since become mobile-only):
 - Builds & runs to the library; Drift/sqlite + pdfium load; the library shell
   already adapts responsively (NavigationRail when wide / bottom bar when narrow).
 - **Entitlements** fixed: added `network.client` + `files.user-selected.read-write`
   to Debug **and** Release (file_picker + dio now work in the sandbox).
-- **CBZ** (archive+photo_view), **PDF** (pdfrx), **EPUB** all render & track progress.
-- **EPUB on macOS** needed a workaround (see Phase 2): the WebView blocks the
+- **CBZ** (archive+photo_view) and **PDF** (pdfrx) render & track progress.
+- ~~**EPUB on macOS** needed a workaround (see Phase 2): the WebView blocks the
   sibling-dir epub.js/jszip `<script>`s and ignores `transparentBackground`, so
   `epub_reader_screen.dart` injects the libs itself, drives the package's
-  `readyToLoad`, and forces the dark background. Mode switches re-run it.
+  `readyToLoad`, and forces the dark background. Mode switches re-run it.~~
+  *(2026-06-30: reader deleted; EPUB is Readium, mobile-only.)*
 - **Keyboard nav** (←/→/Space/PageUp-Dn/Home/End/Esc) added to all readers via a
   shared `reader_keyboard.dart` (HardwareKeyboard handler, beats Scrollable focus).
 - **Window**: min size + sensible default in `MainFlutterWindow.swift` (no collapse).
@@ -29,22 +49,23 @@ deferred, low-priority nit: PDF *keyboard* zoom over the giant multi-page layout
 (pinch/trackpad zoom works).
 
 Remaining for a *shippable* macOS build: code-sign + notarize + `.dmg` (Phase 6),
-drag-and-drop import (Phase 5). Windows & Linux are untouched.
+plus a decision on desktop EPUB (Phase 2, reframed). Drag-and-drop import landed
+(Phase 5). Windows & Linux are untouched.
 
-## Compatibility snapshot (from current `pubspec.yaml`)
+## Compatibility snapshot (updated 2026-07-06 for the Readium switch)
 
 | Concern | macOS | Windows | Linux | Notes |
 |---|---|---|---|---|
 | PDF reader (`pdfrx`) | ✅ | ✅ | ✅ | pdfium is cross-platform |
-| CBZ reader (`archive` + `photo_view`) | ✅ | ✅ | ✅ | pure Dart + widgets |
-| **EPUB reader** (`flutter_epub_viewer` → `flutter_inappwebview` 6.1.5) | ✅ WKWebView | ⚠️ WebView2 (runtime req.) | ❌ **unsupported** | **main blocker — see Phase 2** |
+| CBZ/CBT reader (`archive` + `photo_view`) | ✅ | ✅ | ✅ | pure Dart + widgets |
+| **EPUB reader** (`flutter_readium` — Readium native navigator) | ❌ no desktop impl | ❌ | ❌ | iOS/Android only; **desktop EPUB is now the Phase 2 decision** |
 | DB (`drift` + `sqlite3_flutter_libs`) | ✅ | ✅ | ✅ | bundles sqlite3 |
 | `dio` / cookies / secure_storage / shared_prefs | ✅ | ✅ | ✅* | *Linux secure_storage needs `libsecret` |
 | `file_picker` | ✅ | ✅ | ✅ | native dialogs |
 
 ---
 
-## Phase 0 — Baseline: build & run on each OS
+## Phase 0 — Baseline: build & run on each OS *(macOS: done in practice — builds, runs, verified 2026-06-26; Windows/Linux still unstarted)*
 - [ ] `flutter config --enable-macos-desktop --enable-windows-desktop --enable-linux-desktop`; confirm `flutter devices` lists each.
 - [ ] `flutter run -d macos` — get the app launching to the library on macOS.
 - [ ] `flutter run -d windows` and `-d linux` (on the respective machines/VMs); fix any compile/plugin-registration errors.
@@ -57,15 +78,24 @@ drag-and-drop import (Phase 5). Windows & Linux are untouched.
 - [ ] **flutter_secure_storage on Linux**: requires `libsecret-1-dev` (build) + `libsecret`/a keyring at runtime — document the dependency and add graceful fallback if no keyring is present.
 - [ ] **pdfium**: confirm `pdfrx` loads pdfium on each OS (it ships prebuilt binaries; verify on a real PDF).
 
-## Phase 2 — EPUB reader on desktop (the blocker)
-`flutter_inappwebview` declares **android/ios/macos/windows/web** — **no Linux**.
-- [ ] **macOS**: test the existing EPUB reader (WKWebView). Likely works as-is — verify epub.js loads, page modes + progress work, and remote/local sources resolve.
-- [ ] **Windows**: requires the **Edge WebView2 runtime** installed on the user's machine. Test; document the runtime prerequisite (and bundle the evergreen installer or detect+prompt).
-- [ ] **Linux** (no webview): pick a strategy —
-  - [ ] Option A: swap the EPUB engine for a non-WebView renderer on Linux (e.g. parse spine with `archive` + render reflowable HTML in Flutter, or evaluate a Dart/native epub renderer). Highest effort, best result.
-  - [ ] Option B: gate EPUB behind `Platform.isLinux` with a clear "not supported on Linux yet" message; ship CBZ+PDF on Linux first.
-  - [ ] Option C: use a system-webview plugin that supports Linux (WebKitGTK) if one is viable, behind a platform-conditional import.
-- [ ] Abstract the EPUB reader behind an interface so the engine can differ per platform without touching callers.
+## Phase 2 — EPUB reader on desktop (reframed 2026-07-06: it's a Readium problem now)
+~~`flutter_inappwebview` declares **android/ios/macos/windows/web** — **no Linux**.~~
+The epub.js/WebView engine is gone (2026-06-30); `flutter_readium` has **no desktop
+implementation on any OS**, and macOS was explicitly dropped as an EPUB target when
+Readium was adopted (`tasks.md`, "Out of scope"). If desktop EPUB ever matters again,
+the question is *all three* desktop OSes at once:
+- [ ] Decide whether desktop EPUB is wanted at all, or whether desktop ships CBZ+PDF
+      only with a clear "EPUB is mobile-only" message (the de-facto state today —
+      `ReaderDispatcher` will route an EPUB to a reader that can't build its platform
+      view on desktop; at minimum add an explicit gate + message).
+- [ ] Option A: a second EPUB engine for desktop behind the reader seam (e.g. a
+      WebView-based renderer again, or a Dart-native reflowable renderer). Highest
+      effort; re-imports all the problems the Readium switch deleted.
+- [ ] Option B: contribute/await desktop support in the Readium Kotlin/Swift toolkits'
+      Flutter bindings (nothing on the horizon as of 2026-07).
+- [x] ~~Abstract the EPUB reader behind an interface so the engine can differ per
+      platform~~ — the `ReaderDispatcher` extension-switch seam already provides this
+      (swapping engines never touched callers when Readium landed).
 
 ## Phase 3 — Input adaptation (mouse + keyboard)
 The readers are touch-first (`onTapUp` zones, swipe, pinch). Add desktop input:
@@ -92,9 +122,9 @@ The readers are touch-first (`onTapUp` zones, swipe, pinch). Add desktop input:
 ## Phase 6 — Packaging, signing & distribution
 - [ ] **App identity**: set product name, bundle/app id, version, and per-platform **icons** (macOS `.icns`, Windows `.ico`, Linux `.png` + `.desktop`).
 - [ ] **macOS**: `flutter build macos`; set entitlements (network client, user-selected file read/write; decide sandbox vs not); **code-sign** with a Developer ID; **notarize**; package as `.dmg`.
-- [ ] **Windows**: `flutter build windows`; package as **MSIX** (`msix` package) or an installer (Inno Setup); code-sign with an Authenticode cert; bundle/detect the **WebView2** runtime.
+- [ ] **Windows**: `flutter build windows`; package as **MSIX** (`msix` package) or an installer (Inno Setup); code-sign with an Authenticode cert. *(The old "bundle/detect WebView2" requirement is gone with the webview EPUB engine.)*
 - [ ] **Linux**: `flutter build linux`; package as **AppImage** and/or **Flatpak**/Snap/`.deb`; declare runtime deps (`libsecret`, GTK, `libsqlite3`); ship a `.desktop` entry + icon.
-- [ ] Decide distribution channels (direct download, Mac App Store?, MS Store, Flathub) — note: App Store sandboxing affects file access + may conflict with the EPUB webview.
+- [ ] Decide distribution channels (direct download, Mac App Store?, MS Store, Flathub) — note: App Store sandboxing affects file access. *(The old "EPUB webview" conflict is moot — no webview since the 2026-06-30 Readium switch.)*
 
 ## Phase 7 — Testing & CI
 - [ ] Per-OS smoke test: import a CBZ/PDF/EPUB → cover appears → open → page through (mouse + keyboard) → progress persists on reopen.
@@ -123,8 +153,10 @@ deployment-readiness / polish items for shipping the iOS and Android builds.
   via `flutter_launcher_icons`) replaces the stock Flutter logo — verified on the
   home screen.
 - **All three readers** open / render / page on iOS: CBZ (photo_view), PDF
-  (pdfrx/pdfium), EPUB (WKWebView/epub.js) — and **reading progress persists**
-  ("Continue Reading" repopulates after backing out).
+  (pdfrx/pdfium), EPUB (then WKWebView/epub.js; **since 2026-06-30 Readium /
+  `flutter_readium`** — re-verified on iOS as part of the Readium adoption,
+  `tasks.md` Epic 1.6) — and **reading progress persists** ("Continue Reading"
+  repopulates after backing out).
 - Library grid, cover thumbnails, format badges, and filter chips all render natively.
 - Verified via the iPhone 17 simulator + `--dart-define=SEED=true` sample content.
 - **Physical 13" iPad Air (M2)**: builds, **code-signs** (team CBCWMTN2X2), installs,
@@ -171,7 +203,9 @@ deployment-readiness / polish items for shipping the iOS and Android builds.
 
 ---
 
-### Suggested order of attack
-1. Phase 0 (get it launching everywhere) → 2. Phase 1 (data works) → 3. **Phase 2 EPUB** (the real risk; decide the Linux story early) → 4. Phase 3 + 4 (make it feel native) → 5. Phase 5 → 6. Phase 6 packaging → 7–8 testing/polish.
+### Suggested order of attack *(revised 2026-07-06)*
+1. Phase 0 (get it launching on Windows/Linux; macOS done) → 2. Phase 1 (data works) → 3. **Phase 2 decision** (is desktop EPUB in scope at all, post-Readium?) → 4. Phase 3 + 4 (done on macOS) → 5. Phase 5 → 6. Phase 6 packaging → 7–8 testing/polish.
 
-**Lowest-risk MVP:** ship **macOS first** (everything works, including EPUB via WKWebView), then Windows (add WebView2), then Linux (after solving the EPUB engine).
+**Lowest-risk MVP:** ship **macOS first as a CBZ + PDF app** (everything but EPUB works
+natively; EPUB went mobile-only with the 2026-06-30 Readium switch), then Windows, then
+Linux — same CBZ+PDF scope on all three unless Phase 2 lands a desktop EPUB engine.

@@ -2,7 +2,7 @@
 title: Configuration
 description: Environment variables, secrets, and optional services for the CB8 server
 published: true
-date: 2026-06-30T00:00:00.000Z
+date: 2026-07-06T00:00:00.000Z
 tags: cb8, configuration, reference
 editor: markdown
 dateCreated: 2026-06-30T00:00:00.000Z
@@ -57,7 +57,7 @@ These must be set or the server will not start.
 | --- | --- | --- |
 | `DATABASE_URL` | *(none — required)* | Postgres connection string, e.g. `postgres://cb8:PW@host:5432/cb8`. Both `cb8` and `cb8-worker` throw on startup if it is unset (`DATABASE_URL is required (a Postgres connection string)`). Postgres must have the **pgvector** extension available for ebook semantic search (the deployment manifests use the `pgvector/pgvector:pg18` image). |
 
-> CB8's standalone/worker entry points are Postgres-only. SQLite is used solely by the desktop/Electron build, not by the server documented here.
+> CB8's server is Postgres-only — both entry points (`cb8` and `cb8-worker`) require it. (An earlier desktop/Electron build kept its catalog in SQLite; that build is retired, and the native client is now the Flutter app.)
 
 ---
 
@@ -82,6 +82,24 @@ Login, sessions, and password verification are handled by the `better-auth` libr
 | `BETTER_AUTH_SECRET` | *(auto-generated and persisted in Postgres)* | Signs auth session cookies. **Keep it STABLE.** If set, it must be **at least 32 characters** or it is ignored. When unset (or too short), the server reads a secret stored in the `app_meta` table, generating and persisting a random one on first boot so sessions survive restarts. Provide an explicit value in multi-replica or container deploys so every instance signs with the same key. |
 | `BETTER_AUTH_TRUSTED_ORIGINS` | *(unset)* | Comma-separated list of extra origins better-auth will accept. These are **added** to an auto-computed set (the base URL, loopback hosts on the same port, and detected LAN IPv4 addresses). List every `scheme://host:port` the app is actually reached by — see [Trusted origins](#trusted-origins). |
 | `BETTER_AUTH_URL` | `http://localhost:8008` | Auth base URL, used to build links (e.g. password-reset emails) and seed the trusted-origin set. Set this to your public/proxied URL when running behind a reverse proxy. |
+| `CB8_TRUST_PROXY_HEADERS` | *(unset)* | Set to `1` **only** when CB8 sits behind a reverse proxy, so the forwarded `X-Forwarded-Host` / `X-Forwarded-Proto` headers are honoured for origin checks and the rate limiter sees real client IPs. Leave unset when clients hit CB8 directly — trusting these headers from arbitrary clients would let them spoof their origin/IP. See [Reverse proxy](/reverse-proxy). |
+
+### Accounts, signup, and guests
+
+Two access-policy facts worth knowing that are **not** environment variables:
+
+- **There is no public signup.** The sign-up endpoints are disabled server-side
+  (they return `403 Public signup is disabled`); an **admin** creates every
+  account from **User management** in the web UI (or via the admin-only
+  `/api/users` endpoint). Accounts are username-only — CB8 synthesizes an
+  internal `username@localhost` email for the auth library, so no real email
+  address is ever required. There is also no self-service password reset; the
+  sign-in page's "Forgot password?" directs users to an admin.
+- **Guest access** (whether signed-out visitors can browse and read) is a
+  runtime setting stored in the database (`app_meta`), toggled by an admin
+  under **Settings → Guest access** in the UI — not an environment variable.
+  It defaults to **on**. It also governs anonymous access to the OPDS catalog
+  (below).
 
 ### Generating secrets
 
@@ -158,6 +176,17 @@ Both the `cb8` API and the `cb8-worker` set `EMBED_URL`/`EMBED_MODEL` (the API f
 Only the `cb8` API talks to the upscaler. If `UPSCALE_URL` is unreachable, the API serves the original page unchanged.
 
 See the [Kubernetes guide](/installation/kubernetes) for the full `embeddings.yaml` / `upscale.yaml` manifests, including the GPU node placement.
+
+---
+
+## OPDS catalog (zero config)
+
+CB8 serves an **OPDS catalog** for third-party reader apps at `/api/opds`, with
+a Readium **WebPub manifest** per book at `/api/comics/<id>/manifest`. There is
+nothing to configure — it shares the API's address and port, and the signed-in
+**Settings** page shows the exact catalog URL under **Connect a reader app**.
+The guest-access setting above decides whether an OPDS app needs to be signed
+in to read. See [Usage](/usage) for the walkthrough.
 
 ---
 

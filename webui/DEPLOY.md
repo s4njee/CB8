@@ -69,10 +69,10 @@ docker build --platform linux/amd64 \
 docker push registry.s8njee.com/cb8:"$TAG"
 ```
 
-The renderer and standalone server are both built inside the Dockerfile
-(`pnpm build:standalone` runs `build:renderer` via its prebuild hook). Native
-modules (better-sqlite3, sharp, @napi-rs/canvas) compile in the builder stage, so
-this takes a few minutes.
+The renderer and both server bundles (`dist/standalone.mjs` + `dist/worker.mjs`)
+are built inside the Dockerfile (`pnpm build:standalone` runs `build:renderer`
+via its prebuild hook). Native modules (sharp, @napi-rs/canvas) compile in the
+builder stage, so this takes a few minutes.
 
 ### 2. Pin the new tag and push
 
@@ -98,6 +98,15 @@ kubectl --context freya -n argocd get application cb8 \
 
 Expect the pods to report `registry.s8njee.com/cb8:<TAG>` and Argo to read
 `Synced Healthy <commit>`. From the LAN the app is at `http://freya.local:4218/`.
+
+Argo polls the repo on an interval; to force an immediate re-check instead of
+waiting, refresh the Application (the `argocd` CLI's `argocd app get cb8
+--refresh`, the web UI's Refresh button, or annotating it):
+
+```sh
+kubectl --context freya -n argocd annotate application cb8 \
+  argocd.argoproj.io/refresh=normal --overwrite
+```
 
 ## Repointing Argo at a different branch
 
@@ -137,13 +146,25 @@ paths and rescanning.
 
 - **First-run admin password** is only printed on a fresh Postgres volume. This
   cluster is already provisioned, so a redeploy will not reprint it. Recover via
-  **Settings** while signed in.
+  **Settings → Temporary password** while signed in (shown until first changed).
 - **Trusted origins.** `BETTER_AUTH_TRUSTED_ORIGINS` (in `cb8-secrets` / the API
   env) must list every hostname/port the app is reached by (e.g.
   `http://freya.local:4218`) or logins from those origins are rejected as
   cross-site.
 - **`newTag` must point at a tag you actually pushed.** Argo will happily sync a
   manifest referencing a missing image and the pods will land in `ImagePullBackOff`.
-- The `packaging/k8s/overlays/netcup` overlay is a **separate** (cloud) target
-  with its own pinned tag — it is not freya. Argo's `path` is the base
-  `packaging/k8s`.
+- **The netcup overlay is decommissioned.** `packaging/k8s/overlays/netcup`
+  targeted a separate cloud cluster (`books.sanjee.dev`); that cluster's `cb8`
+  namespace has been deleted and nothing deploys from the overlay anymore. The
+  files stay in-repo as a reference for standing up a second, ingress-fronted
+  target. It was never Argo-managed — it was applied manually, and because the
+  overlay references its base via `../../`, `kubectl kustomize` needs the load
+  restrictor relaxed:
+
+  ```sh
+  kubectl kustomize --load-restrictor LoadRestrictionsNone \
+    webui/packaging/k8s/overlays/netcup | kubectl --context <ctx> apply -f -
+  ```
+
+  Argo's `path` is the base `packaging/k8s`; the overlay's own pinned tag is
+  frozen at its last deploy.

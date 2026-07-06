@@ -3,8 +3,9 @@
  * The Postgres Database Schema — server data model
  *
  * Architecture overview for Junior Devs:
- * This is the Postgres translation of the SQLite `SCHEMA` in `create.ts`, used by
- * the standalone server (the desktop app still uses SQLite). It is applied with
+ * This is the schema for the standalone server — originally translated from the
+ * retired SQLite-era `SCHEMA` (whose column/type conventions it preserves so the
+ * REST API's wire shapes stayed identical). It is applied with
  * `CREATE ... IF NOT EXISTS` on every startup, so running it against an existing
  * database is harmless.
  *

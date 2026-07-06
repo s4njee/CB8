@@ -1,153 +1,173 @@
 # AGENTS.md
 
-Guidance for coding agents working in this repository.
+Guidance for AI coding agents working in `webui/`. Humans: see
+[`README.md`](README.md) for an overview and [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
+full design.
 
-## Project Shape
+## What this is
 
-CB8 is an Electron + TypeScript comic/book reader with a shared Fastify HTTP
-API and a React SPA frontend.
+CB8 is a self-hosted **comic & e-book server**: a Fastify HTTP API + **Postgres**
+catalog + React SPA, shipped as **two Node processes** from one TypeScript codebase —
+the API server (`src/main/standalone.ts`) and a pg-boss background worker
+(`src/main/worker.ts`). It lives under `webui/` in a monorepo whose root is the Flutter
+client that speaks this server's REST API.
 
-- `src/main/` owns Electron lifecycle, the embedded/headless/standalone web
-  server, SQLite access, ingest, archive loading, IPC, and packaging-facing
-  Node code.
-- `src/renderer/` is the active frontend. It is a React 18 + Vite +
-  shadcn/Tailwind SPA served by the embedded server and loaded by Electron from
-  `http://127.0.0.1:<port>`.
-- `src/shared/` contains pure shared TypeScript utilities and types.
-- `src/web/` was the old vanilla SPA and is no longer present on this branch.
+There is **no Electron and no SQLite** anymore — no `index.ts`/`preload.ts`/IPC, no
+desktop mode. Electron-era comments still linger in some files (e.g. the `createPg.ts`
+header); treat them as history, not instructions.
 
-## Useful Commands
+**Read [`ARCHITECTURE.md`](ARCHITECTURE.md) before non-trivial changes**, and use
+[`docs/STUDY_GUIDE.md`](docs/STUDY_GUIDE.md) as the file-by-file map. The notes below
+are the operational essentials.
 
-Run these from the repo root:
+## Setup, build, and test
+
+Run from `webui/` with pnpm:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm run typecheck
-pnpm test
-pnpm build:renderer
-pnpm start
-pnpm run package
+
+pnpm typecheck            # tsc --noEmit — must be clean
+pnpm test                 # Vitest (plain Node; no Electron runner)
+
+pnpm dev:renderer         # Vite dev server for the SPA (proxies /api to :8008)
+pnpm build:renderer       # build src/renderer → dist/web
+pnpm build:standalone     # build dist/standalone.mjs + dist/worker.mjs (runs build:renderer first)
+pnpm start:standalone     # run the built API server (needs DATABASE_URL)
+pnpm docs:api             # TypeDoc → docs/api/
 ```
 
-`pnpm test` intentionally runs Vitest under Electron's Node runtime through
-`scripts/run-vitest-electron.mjs`, because `better-sqlite3` is rebuilt for
-Electron's Node ABI. Running plain `vitest` under system Node can skip or fail
-DB-backed tests.
+- **Postgres-backed tests are opt-in**: they skip unless `CB8_TEST_DATABASE_URL`
+  points at a throwaway **pgvector-enabled** Postgres (see `src/main/test/pgTestDb.ts`).
+  Run them when touching `src/main/db/` or route behavior:
 
-For DB-backed perf work, the search benchmark is:
+  ```sh
+  CB8_TEST_DATABASE_URL=postgres://cb8:pw@localhost:5432/cb8_test pnpm test
+  ```
 
-```sh
-ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron scripts/bench-search.mjs --rows 100000 --runs 5
+- Running the server needs `DATABASE_URL` (pgvector Postgres; the schema is applied
+  idempotently on first connect) and — for library scans to actually execute — the
+  worker process (`node dist/worker.mjs`). The API only enqueues.
+- Before handing off: `pnpm typecheck`, `pnpm test`, and `pnpm build:renderer` after
+  frontend changes. Mention any skipped check.
+
+## Project layout
+
+```
+src/main/                 Node side
+  standalone.ts           API entry (Fastify; producer-only pg-boss)
+  worker.ts               Worker entry (pg-boss consumer + auto-rescan scheduler)
+  libraryDatabase.ts      DB façade — one async method per operation
+  db/                     Postgres DAOs; pg.ts helper; schema/createPg.ts (idempotent DDL)
+  jobs/                   queues.ts (contract), boss.ts, producer.ts, handlers.ts
+  webServer/              server.ts (buildServer), middleware, auth (better-auth),
+                          rateLimit, archiveCache, mapping, ingest bridge
+    routes/               one file per resource; each exports handle: RouteHandler
+  search/                 ebook semantic search (FTS + pgvector, RRF fusion)
+  ingestService.ts etc.   ingest pipeline, archive loaders, image resize cache
+src/renderer/             React 18 SPA (Vite + Tailwind + shadcn/ui, HashRouter)
+  components/layout/AppShell.tsx   the route table + persistent chrome
+  pages/  components/  hooks/  lib/api/  store/
+src/shared/               pure TS shared by both sides (types, apiTypes, sorting…)
+packaging/                docker, k8s, argocd, systemd, GPU sidecars, wiki
+scripts/build-standalone.mjs      esbuild bundle of both entry points
+vite.renderer.config.ts   SPA build (dist/web, vendor-react/vendor-query chunks)
 ```
 
-## Code Map
+## Conventions & rules
 
-### Main Process / Server
+- **RouteHandler pattern.** API endpoints live in `src/main/webServer/routes/<resource>.ts`;
+  each exports `handle: RouteHandler` that inspects `ctx.pathname`/`ctx.method` and
+  returns `true` when it owns the request. Respond via `sendJson`/`sendError`
+  (`middleware.ts`), parse via `routes/validation.ts` helpers, gate admin actions with
+  `requireAdmin(ctx)`, and format paged lists with `routes/routeResponseHelpers.ts`.
+- **No SQL in routes.** Read/write logic goes in `db/<domain>.ts`, exposed through
+  `libraryDatabase.ts`. Domain functions take the `Db` interface from `db/pg.ts`
+  (works for both pool and transaction).
+- **Schema DDL must be idempotent.** `db/schema/createPg.ts` re-runs on every boot —
+  new tables/indexes use `CREATE … IF NOT EXISTS`, new columns
+  `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. There is no migrations table.
+- **Wire types live in `src/shared/apiTypes.ts`**, imported by both server and
+  renderer so the contract can't drift. `src/shared/` stays pure — no Node APIs, no DOM.
+- **Heavy work goes through the job queue.** Routes enqueue via `jobs/producer.ts`;
+  the worker's `jobs/handlers.ts` executes. If a handler might run for minutes, it's a job.
+- **Module doc-comment style.** Non-trivial modules open with an
+  `@module` doc comment headed "Architecture overview for Junior Devs" explaining the
+  file's role and design choices. Keep them accurate when changing behavior; write one
+  for substantial new modules.
+- **Tests are colocated Vitest** (`foo.ts` + `foo.test.ts` next to it). Extract
+  testable policy into pure `*Helpers.ts` / `*Rules.ts` files instead of testing
+  through components/handlers.
+- **Renderer state:** server data in React Query (`lib/queryClient.ts`), UI state in
+  Zustand stores. API calls go through `lib/api/<domain>.ts` (via `client.ts`); keep UI
+  imports on the `@/lib/api` barrel.
+- **Match existing idioms** — look at neighboring files before introducing a new
+  pattern, dependency, or directory.
 
-| Concern | Files |
-| --- | --- |
-| Electron lifecycle, window, headless mode | `src/main/index.ts` |
-| Standalone Node entry | `src/main/standalone.ts` |
-| Application menu | `src/main/menu.ts` |
-| IPC registration | `src/main/ipc/{index,libraryHandlers,readingHandlers,webServerHandlers,appHandlers}.ts` |
-| IPC channel types | `src/shared/ipcTypes.ts` |
-| Server bootstrap and raw-route adapter | `src/main/webServer.ts`, `src/main/webServer/server.ts` |
-| Web routes | `src/main/webServer/routes/{auth,comics,folders,libraries,progress,tags,upload,users,staticFiles}.ts` |
-| Middleware, auth gates, body limits, initial admin | `src/main/webServer/middleware.ts`, `src/main/webServer/context.ts` |
-| Better-auth wiring | `src/main/webServer/auth.ts` |
-| Rate limiting | `src/main/webServer/rateLimit.ts` |
-| SSRF-safe remote fetch | `src/main/webServer/safeFetch.ts` |
-| Archive handle cache | `src/main/webServer/archiveCache.ts` |
-| Web record mapping | `src/main/webServer/mapping.ts` |
+## Gotchas (don't relearn these the hard way)
 
-### Database / Catalog
+- **`reply.hijack()` — Fastify never sees API responses.** `/api/*` is dispatched to
+  raw-`http` handlers after hijacking the reply, so Fastify plugins, serializers, and
+  `onSend` payload hooks do **not** apply to API responses (the CORS `onSend` hook works
+  because headers are set before handlers write). Don't add a Fastify plugin and expect
+  it to affect `/api/*`; global behavior belongs in `dispatchApi` / `serverHelpers.ts`.
+- **Guest 401s are by design.** Anonymous access (when `guest_access` is on) is
+  read-only; guest writes (e.g. progress) return 401 and clients treat that as normal.
+  Don't "fix" it, and don't weaken `canAccessApiRequest`.
+- **No public signup — and email synthesis is load-bearing.** Sign-up endpoints 403;
+  `/api/auth/register` requires an admin. `db/users.ts:createUser` synthesizes
+  `username@localhost` and fills `email_verified`/`display_username`/`name` because
+  better-auth's username plugin rejects sign-ins for rows where those are null. Create
+  users only through `createUser`, or the account can never log in.
+- **Two per-user-state paths — keep them consistent.** The main library listing joins
+  progress/favorites in SQL (`queryComicsForUser`); other endpoints overlay via
+  `webServer/mapping.ts`. For lists always use `overlayUserStateMany` (two queries
+  total), never `overlayUserState` in a loop (N+1).
+- **List queries skip the cover BLOB on purpose** (`COMIC_NO_BLOB_COLUMNS`,
+  `getComicLite`). Covers are `BYTEA` on the row; selecting them in lists drags
+  megabytes through every page. Don't add `cover_thumbnail` to a list select.
+- **The rate limiter must cover better-auth's sign-in routes.** The SPA logs in via
+  `/api/auth/sign-in/username`, not the legacy `/api/auth/login` — the preHandler in
+  `server.ts` covers both plus `/sign-in/email`. Keep new auth endpoints behind it.
+  Related: proxy IPs are only trusted with `CB8_TRUST_PROXY_HEADERS=1`.
+- **Scans need the worker.** `add-path`/rescan endpoints only enqueue; without
+  `dist/worker.mjs` running, jobs sit in the queue forever. (Uploads ingest in-process
+  and work without it.)
+- **`mapping.ts` is a security boundary.** `toWebRecord` strips the server file path;
+  never return raw `MediaRecord`s from a route.
+- **Optional sidecars fail soft.** Semantic search (`EMBED_URL`) and HD upscaling
+  (`UPSCALE_URL`) are optional; keep new integrations degrading gracefully when unset.
+- **The netcup overlay is decommissioned.** `packaging/k8s/overlays/netcup` is legacy;
+  the only production target is the freya k3s cluster via Argo CD (see
+  [DEPLOY.md](DEPLOY.md)). Don't build on the netcup overlay.
 
-| Concern | Files |
-| --- | --- |
-| Schema, migrations, repairs | `src/main/db/schema/{create,migrations,open,repairs,index}.ts` |
-| DB facade | `src/main/libraryDatabase.ts` |
-| Comics and search queries | `src/main/db/comics.ts` |
-| Folder hierarchy and folder membership | `src/main/db/folders.ts` |
-| Libraries, tags, users | `src/main/db/{libraries,tags,users}.ts` |
-| Per-user state | `src/main/db/{progress,bookmarks,history,favorites}.ts` |
-| App metadata and maintenance | `src/main/db/{appMeta,maintenance}.ts` |
+## Testing notes
 
-### Ingest / Archive / Media
+- Pure logic: colocated `*.test.ts` run everywhere by plain `pnpm test`.
+- DB/route behavior: Postgres-backed suites (e.g. `db/comics.query.test.ts`,
+  `webServer/authRoutes.test.ts`, `jobs/jobs.integration.test.ts`) self-skip without
+  `CB8_TEST_DATABASE_URL`; they create/drop their own state via `src/main/test/pgTestDb.ts`.
+  Passing CI with them skipped is not proof a DB change works — run them locally.
+- Don't rely on local comic collections; tests generate their own fixtures.
 
-| Concern | Files |
-| --- | --- |
-| File scanning and ingest orchestration | `src/main/fileScanner.ts`, `src/main/ingestService.ts` |
-| Archive open/page extract | `src/main/archiveLoader.ts` |
-| 7-Zip binary lookup | `src/main/sevenZipPath.ts` |
-| JXL/odd image decode | `src/main/imageDecoder.ts` |
-| EPUB/PDF cover and page-count helpers | `src/main/{epubCoverExtractor,pdfCoverExtractor}.ts` |
-| Thumbnail generation | `src/main/thumbnailGenerator.ts` |
-| On-disk image resize cache | `src/main/imageResizer.ts` |
-| Ingest error log | `src/main/ingestErrorLog.ts` |
-| Series parser | `src/main/seriesParser.ts` |
+## Relationship to the Flutter app
 
-### Renderer
+The Flutter client at the monorepo root speaks this server's REST API verbatim (routes,
+camelCase fields, better-auth session cookie). `webServer/routes/*` + `mapping.ts` +
+`src/shared/apiTypes.ts` **are the contract** — breaking changes to response shapes
+break the app (and OPDS/WebPub reader apps). Extend additively where possible.
 
-| Concern | Files |
-| --- | --- |
-| App shell and routing | `src/renderer/App.tsx`, `src/renderer/components/layout/AppShell.tsx` |
-| Pages | `src/renderer/pages/*.tsx` |
-| Library cards/grid/context/selection | `src/renderer/components/library/*.tsx` |
-| Readers | `src/renderer/components/reader/{ComicReader,EpubReader,PdfReader,ReaderToolbar}.tsx` |
-| Admin panels | `src/renderer/components/admin/*.tsx` |
-| shadcn/Radix primitives | `src/renderer/components/ui/*.tsx` |
-| API client | `src/renderer/lib/api.ts` barrel + domain modules under `src/renderer/lib/api/` |
-| Electron host bridge | `src/renderer/lib/hostBridge.ts` |
-| React Query setup | `src/renderer/lib/queryClient.ts` |
-| Zustand stores | `src/renderer/store/*.ts` |
-| Global styles | `src/renderer/globals.css`, `tailwind.config.js` |
+## Scope & safety
 
-### Build / Packaging
-
-| Concern | Files |
-| --- | --- |
-| Electron Forge | `forge.config.ts` |
-| Main/preload Vite builds | `vite.main.config.ts`, `vite.preload.config.ts` |
-| Renderer Vite build | `vite.renderer.config.ts` |
-| Standalone build | `scripts/build-standalone.mjs` |
-| Docker/systemd/k8s | `packaging/` |
-
-## IPC Rules
-
-Most product operations go through the HTTP API, not IPC. Add IPC only for
-genuine shell concerns such as native dialogs, window controls, shell-open, and
-web-server host settings.
-
-When adding or changing IPC:
-
-1. Update `src/shared/ipcTypes.ts`.
-2. Register the handler in the matching `src/main/ipc/*Handlers.ts` module.
-3. Expose a browser-safe helper in `src/renderer/lib/hostBridge.ts`.
-4. Run `pnpm run typecheck`.
-
-The preload bridge whitelists channels from the shared IPC type maps. Missing
-channels fail at runtime.
-
-## Testing Expectations
-
-- Keep pure shared logic covered under `src/shared/*.test.ts`.
-- DB and route tests should use deterministic temp databases and run through
-  the default `pnpm test` command.
-- Avoid relying on local comic collections.
-- Run `pnpm run typecheck` before trusting main-process, route, IPC, or
-  renderer changes.
-- Run `pnpm build:renderer` after frontend changes.
-
-## Safety Notes
-
-- Do not delete underlying comic/book files when removing library records.
-  Library removal should update the database only.
-- New state-mutating web routes must be admin-gated (`requireAdmin`) or
-  host-gated (`isHostConnection`) as appropriate.
-- Keep remote fetching behind `safeFetchBuffer` unless there is a deliberate
-  reason and equivalent SSRF protection.
-- The desktop app binds locally unless LAN sharing is enabled; headless and
-  standalone deployments may bind to `0.0.0.0`.
-- Keep generated/build output out of commits: `node_modules/`, `dist/`,
-  `.vite/`, `out/`, local libraries, archives, and scratch output should not be
-  committed unless intentionally added as fixtures.
+- Don't commit, push, or open PRs unless asked.
+- **Never delete or move users' comic/book files.** Library removal updates the
+  database only; ingest references files in place.
+- New state-mutating routes must be gated (`requireAdmin`, or an explicit
+  authenticated-user check) — the guest gate only protects reads.
+- Keep outbound HTTP behind `webServer/safeFetch.ts` (SSRF protection) unless there is
+  a deliberate, documented reason.
+- Deployment is GitOps: changes under `packaging/k8s` roll out automatically via
+  Argo CD. Don't edit manifests casually, don't `kubectl apply` by hand — follow
+  [DEPLOY.md](DEPLOY.md).
+- Keep generated/build output out of commits: `node_modules/`, `dist/`, `docs/api/`,
+  local libraries/archives, and scratch output.

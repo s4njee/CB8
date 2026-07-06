@@ -13,35 +13,45 @@ file do?"** and **"where do I make my change?"**
 
 ## 1. The 60-second mental model
 
-CB8 is one TypeScript codebase that ships in three shapes:
+CB8 is one TypeScript codebase that ships as **two Node processes built from
+one image**:
 
-| Mode | Entry point | What runs |
+| Process | Entry point | What runs |
 | --- | --- | --- |
-| Desktop app | `src/main/index.ts` | Electron window + embedded HTTP server + SQLite |
-| Headless server | `src/main/index.ts --headless` | Same as desktop, no window |
-| Standalone (Docker/VPS) | `src/main/standalone.ts` | HTTP server + SQLite, no Electron |
+| API server | `src/main/standalone.ts` → `dist/standalone.mjs` | Fastify HTTP server: the React SPA + the whole `/api`. Only *enqueues* heavy jobs. |
+| Background worker | `src/main/worker.ts` → `dist/worker.mjs` | pg-boss consumer: library scans, ebook search backfill, the auto-rescan scheduler. No HTTP listener. |
 
-The key insight that explains the whole repo: **the UI is a web app, even on the
-desktop.** The Electron window doesn't talk to the database directly — it loads
-the React SPA from `http://127.0.0.1:<port>` and the SPA calls a normal HTTP API.
-So the data flow is almost always:
+Both connect to the same **Postgres** — the catalog, covers, users/sessions,
+reading progress, search vectors, and the job queue all live there. The only
+on-disk state is a regenerable image cache and uploaded archives under
+`CB8_DATA_DIR`.
+
+The key insight that explains the whole repo: **the UI is a web app, full
+stop.** The React SPA is served by the Fastify server and calls a normal HTTP
+API. So the data flow is almost always:
 
 ```
 React component → src/renderer/lib/api/* → fetch('/api/...') →
-  src/main/webServer/routes/* → src/main/db/* → SQLite
+  src/main/webServer/routes/* → src/main/db/* → Postgres
 ```
 
-Electron's native bridge (IPC) is used for **only** a handful of things a browser
-can't do: file pickers, window controls, opening a file from the OS. Everything
-else — listing comics, reading pages, progress, auth — is HTTP.
+Anything slow (scanning a folder, indexing book text) takes a detour: the route
+enqueues a job via `src/main/jobs/producer.ts`, and the worker's handlers in
+`src/main/jobs/handlers.ts` do the actual work. Jobs are durable (they live in
+Postgres) and idempotent, so restarts resume and retries never duplicate rows.
 
 The three source roots:
 
 - **`src/main/`** — Node side. Database, ingest, archive readers, HTTP server,
-  Electron lifecycle. Anything that touches the filesystem or `better-sqlite3`.
+  jobs, search. Anything that touches the filesystem or `pg`.
 - **`src/renderer/`** — the React 18 SPA (Vite + Tailwind + shadcn/ui).
 - **`src/shared/`** — pure TypeScript usable from both sides (sorting, types,
   validators). **No DOM, no Node APIs** — that's the rule that keeps it shareable.
+
+> Historical note: CB8 used to also ship as an Electron desktop app over
+> SQLite. That mode is gone from this branch — the native client is now the
+> Flutter app at the monorepo root — but you'll still meet Electron-era
+> comments and the SQLite-to-Postgres translation notes in `db/schema/`.
 
 ---
 
@@ -52,9 +62,9 @@ flows, instead of getting lost:
 
 1. **`src/shared/types.ts`** — the core `MediaRecord` and query types. Almost
    everything is a comic/book record; learn its shape first.
-2. **`src/main/index.ts`** — how the app boots (window vs headless), and the
-   `createWindow` / `startHeadless` split.
-3. **`src/main/db/schema/create.ts`** — the SQL schema. This *is* the data model.
+2. **`src/main/standalone.ts`** — how the API server boots (barely a page).
+   Then skim **`src/main/worker.ts`** for the other half.
+3. **`src/main/db/schema/createPg.ts`** — the SQL schema. This *is* the data model.
 4. **`src/main/libraryDatabase.ts`** — the façade every DB read/write goes through.
 5. **`src/main/webServer/server.ts`** — how an HTTP request gets routed.
 6. **`src/main/webServer/routes/comics.ts`** — a representative route handler.
@@ -67,55 +77,63 @@ flows, instead of getting lost:
 
 ## 3. Main process — `src/main/`
 
-### 3.1 Lifecycle & entry points
+### 3.1 Entry points & plumbing
 
 | File | Responsibility | Edit it when… |
 | --- | --- | --- |
-| `index.ts` | Electron entry. `app.ready` → `createWindow()` (desktop) or `startHeadless()`. Owns the `open-file` handler and the `before-quit` shutdown chain. | You change app startup, window creation, or OS file-open behavior. |
-| `standalone.ts` | Electron-free entry for Docker/VPS. Builds the Fastify server and listens on `CB8_HOST:CB8_PORT`, reads paths from `CB8_DATA_DIR`. | You change how the server boots *without* Electron. |
-| `menu.ts` | Builds the native app menu and its destructive actions (Clear DB, Reset Admin Password, Open Recent). Talks to the app only via an injected `MenuContext`. | You add/change a native menu item. |
-| `preload.ts` | The `contextBridge` that exposes `electronAPI` to the renderer. Whitelist is generated from `src/shared/ipcTypes.ts`. | Rarely — only when changing the IPC bridge mechanics. |
-| `adminReset.ts` | Implements the menu's "Reset Admin Password". | Changing admin password reset flow. |
+| `standalone.ts` | API entry. Reads `DATABASE_URL` / `CB8_DATA_DIR` / `CB8_HOST` / `CB8_PORT`, opens the DB, starts pg-boss in producer-only mode, builds the Fastify server, wires SIGINT/SIGTERM shutdown. | You change how the API server boots. |
+| `worker.ts` | Worker entry. Same DB, pg-boss as a full consumer, registers the `ingest-scan` and `search-backfill` handlers, starts the `FolderScheduler`. | You change what background work exists or how it starts. |
+| `jobs/queues.ts` | Queue names + job payload types — the contract between producer and worker. | Adding a job type (start here). |
+| `jobs/boss.ts` | pg-boss lifecycle (`startBoss` producer-only vs full worker, `stopBoss`). | Queue infrastructure. |
+| `jobs/producer.ts` | `enqueueScan` / `enqueueBackfill` — what routes call. | Enqueuing behavior. |
+| `jobs/handlers.ts` | The actual job implementations the worker runs. | The work itself. |
+| `folderScheduler.ts` | Auto-rescan: schedules the *next* run only after the current one finishes, interval from `auto_rescan_interval_min` in `app_meta` (0 disables). Enqueues durable scan jobs rather than scanning inline. | Watched-folder rescan behavior. |
 | `sevenZipPath.ts` | Finds a usable `7z`/`7zz`/`7za` binary (honors `CB8_SEVENZIP_PATH`). | 7-Zip discovery issues. |
-| `logger.ts` | App-wide logging helper. | — |
+| `logger.ts` | App-wide logging helper (`CB8_LOG_LEVEL`). | — |
+| `upscaleClient.ts` | HTTP client for the optional Real-ESRGAN upscale sidecar (`UPSCALE_URL`); fails soft. | HD page upscaling. |
 | `utils/timeout.ts` | `withTimeout` helper used by ingest. | — |
 
 ### 3.2 Database — `src/main/db/`
 
-The pattern: **`libraryDatabase.ts` is a thin façade.** It opens one
-`better-sqlite3` handle and exposes one method per operation; each method
-delegates to a free function in a per-domain file. So to change a query you edit
-the domain file, not the façade (unless you're adding a brand-new method).
+The pattern: **`libraryDatabase.ts` is a thin façade.** It opens one Postgres
+pool (via `db/schema/openPg.ts` → `db/pg.ts`) and exposes one async method per
+operation; each method delegates to a free function in a per-domain file. So to
+change a query you edit the domain file, not the façade (unless you're adding a
+brand-new method). Every method is async — callers `await` them.
 
 | File | Owns |
 | --- | --- |
 | `libraryDatabase.ts` | The façade. One method per logical DB operation; delegates to the files below. Add a method here when you expose a new DB operation to the rest of the app. |
-| `schema/open.ts` | Opens the DB, sets pragmas (WAL, foreign keys), wipes-and-recreates on corruption, runs migrations + repairs. Exposes `DbStartupError`. |
-| `schema/create.ts` | The `SCHEMA` string — every table definition. **This is the data model.** |
-| `schema/migrations.ts` | Versioned migrations (`CURRENT_VERSION`). Add a migration here when you change `create.ts`. |
-| `schema/repairs.ts` | Idempotent post-startup data fixes, gated by `app_meta` flags. |
-| `comics.ts` | Comic CRUD, series metadata, paged user queries (`queryComicsForUser`), continue/recently-read lists. Query construction lives in `comicQueryHelpers.ts`; metadata update mapping lives in `comicMetadataHelpers.ts`. |
-| `folders.ts` | Folder CRUD and folder membership. Series/volume/chapter rollup SQL lives in `folderHierarchyQueries.ts`, with scope/query/record helpers in sibling `folder*Helpers.ts` files. |
-| `libraries.ts` | Libraries (`comic` vs `book` buckets) and their membership. |
+| `pg.ts` | `PgDatabase` / `PgTx` — the thin promise-based helper over `pg.Pool` that every domain function receives. |
+| `schema/openPg.ts` | Builds the pool and applies the schema on startup. No corruption-wipe fallback — that was a SQLite concern. |
+| `schema/createPg.ts` | The `PG_SCHEMA` string — every table, index, and generated column. **This is the data model.** Fully idempotent (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`), so it re-runs safely on every boot; the header documents the SQLite→Postgres translation choices (tsvector search column, `lower()` indexes for NOCASE, `BYTEA` covers). |
+| `comics.ts` | Comic CRUD, series metadata, paged user queries (`queryComicsForUser`), continue/recently-read lists, and `getComicLite` — the cover-blob-free record fetch used on hot paths. Query construction lives in `comicQueryHelpers.ts` / `folderComicQueryHelpers.ts`; metadata update mapping in `comicMetadataHelpers.ts`. |
+| `folders.ts` | Folder CRUD and folder membership. Series/volume/chapter rollup SQL lives in `folderHierarchyQueries.ts`, with scope/record helpers in sibling `folderHierarchy*`/`folderRecordHelpers` files. |
+| `libraries.ts` | Libraries (`comic` vs `book` buckets, shown as "Collections" in the UI) and their membership. |
 | `tags.ts` | Tag CRUD + bulk ops. |
-| `users.ts` | User table, admin counts, credential-account upserts that bridge to better-auth. |
-| `progress.ts` | Per-user `user_progress` rows; powers continue/recently-read. |
+| `users.ts` | User table, admin counts, credential-account upserts that bridge to better-auth. Synthesizes `username@localhost` emails — accounts are username-first. |
+| `progress.ts` | Per-user `user_progress` rows (page index or EPUB CFI + whole-book percent); powers continue/recently-read. |
 | `bookmarks.ts` / `favorites.ts` / `history.ts` | Side tables, self-explanatory. |
-| `appMeta.ts` | Single-row config `get`/`set` against `app_meta`. |
+| `ebookSearch.ts` | FTS + pgvector candidate queries for semantic search. |
+| `jobs.ts` | The `scan_jobs` mirror table the UI polls for progress. |
+| `ingestErrors.ts` | Per-file ingest failure rows. |
+| `appMeta.ts` | Single-row config `get`/`set` against `app_meta` (guest access, rescan interval, auth secret, initial password). |
 | `maintenance.ts` | `clearLibrary` — truncate catalog but keep users/auth. |
 | `cast.ts` / `transaction.ts` / `types.ts` | Small shared helpers (row casting, transaction wrapper, DB types). |
 
-> **Schema change recipe:** edit `create.ts` → add a numbered migration in
-> `migrations.ts` (bump `CURRENT_VERSION`) → add the read/write in the relevant
-> domain file → expose via `libraryDatabase.ts` → add a test like
-> `db/comics.query.test.ts`.
+> **Schema change recipe:** add the DDL to `createPg.ts` — as `CREATE … IF NOT
+> EXISTS` for new tables/indexes or `ALTER TABLE … ADD COLUMN IF NOT EXISTS`
+> for new columns, so existing databases pick it up on next boot → add the
+> read/write in the relevant domain file → expose via `libraryDatabase.ts` →
+> add a test like `db/comics.query.test.ts` (Postgres-backed tests run only
+> when `CB8_TEST_DATABASE_URL` is set — see `src/main/test/pgTestDb.ts`).
 
 ### 3.3 Ingest pipeline (getting files into the library)
 
 | File | Responsibility |
 | --- | --- |
-| `fileScanner.ts` | Stable public surface (`FileScannerImpl`) used by the upload route. Delegates to `IngestService`. |
-| `ingestService.ts` | The worker: prepares inserts, runs bounded workers, extracts covers, batches inserts in one transaction, parses series info. Tune concurrency via `CB8_INGEST_CONCURRENCY`. |
+| `fileScanner.ts` | Stable public surface (`FileScannerImpl`) used by the upload route and the scan-job handler. Delegates to `IngestService`. |
+| `ingestService.ts` | The engine: prepares inserts, runs bounded workers, extracts covers, batches inserts in one transaction, parses series info. Tune concurrency via `CB8_INGEST_CONCURRENCY`. |
 | `ingestDiscovery.ts` | Recursive and incremental directory discovery. It only collects matching file paths. |
 | `ingestQueue.ts` | Async producer/consumer queue used by ingest workers. |
 | `ingestPathHelpers.ts` | Extension sets and series-name inference from scan-root folders. |
@@ -126,28 +144,22 @@ the domain file, not the façade (unless you're adding a brand-new method).
 | `epubCoverExtractor.ts` / `pdfCoverExtractor.ts` | Format-specific cover + page-count helpers. |
 | `imageDecoder.ts` | Decodes odd formats (e.g. JXL) so `sharp` can handle them. |
 | `thumbnailGenerator.ts` | Encodes cover thumbnails (+ placeholder on failure). |
-| `imageResizer.ts` | On-demand page resizing via `sharp`, cached on disk under `<userData>/image-cache`. |
-| `metadataScraper.ts` | External metadata lookups (used by the comics route). |
+| `imageResizer.ts` | On-demand page resizing via `sharp`, cached on disk under `CB8_DATA_DIR/image-cache`; also owns the upscale cache root. |
+| `metadataScraper.ts` | External metadata lookups (ComicVine/AniList/MangaDex, used by the comics route). |
 | `seriesParser.ts` | Pure filename parser: `name v01 c003.cbz` → `{ seriesName, volumeNumber, chapterNumber }`. Well unit-tested. |
 | `ingestErrorLog.ts` | Classifies/persists per-file failures so the upload UI can show what dropped and why. |
-| `folderScheduler.ts` | Schedules folder rescans. |
 
-### 3.4 IPC handlers — `src/main/ipc/`
+### 3.4 Semantic search — `src/main/search/`
 
-The IPC surface is intentionally tiny — most features go through HTTP instead.
+Optional (needs an embeddings endpoint; see `EMBED_URL` in the docs). Fails
+soft when unconfigured.
 
-| File | Channels |
+| File | Responsibility |
 | --- | --- |
-| `ipc/index.ts` | Composes `registerIpcHandlers` (re-exported by `ipcHandlers.ts`). |
-| `ipc/libraryHandlers.ts` | Native file/dir pickers (`dialog:open-file`, `dialog:open-directory`). |
-| `ipc/readingHandlers.ts` | `reading:get-comic-by-path` — turn an OS file-open into a comic id. |
-| `ipc/webServerHandlers.ts` | `webserver:get-settings` / `set-settings`; server lifecycle from the renderer's view. |
-| `ipc/appHandlers.ts` | Window controls + `shell:open-path`. |
-
-> **Add an IPC channel:** declare it in `src/shared/ipcTypes.ts` (this updates the
-> preload allowlist automatically) → handle it in the right `ipc/*Handlers.ts` →
-> call it from `src/renderer/lib/hostBridge.ts`. Only do this for native
-> capabilities a browser lacks; for product data, add an HTTP route instead.
+| `embedClient.ts` | Calls the OpenAI-compatible embeddings endpoint (`EMBED_URL`/`EMBED_MODEL`/`EMBED_KEY`). |
+| `epubText.ts` | Extracts and chunks EPUB text for indexing. |
+| `indexer.ts` | Builds/refreshes the pgvector index (run by the worker's `search-backfill` job). |
+| `searchUtil.ts` | `rrfFuse` — reciprocal-rank fusion of keyword (Postgres FTS) and vector candidates. |
 
 ### 3.5 Embedded web server — `src/main/webServer/`
 
@@ -157,23 +169,32 @@ the entire `/api`.
 | File | Responsibility | Edit it when… |
 | --- | --- | --- |
 | `webServer.ts` (parent dir) | Public façade: `startWebServer(db, port, host)` + `getLanIp()`. | Changing how the server is started/stopped. |
-| `webServer/server.ts` | `buildServer(db)`: rate-limit hooks, CORS, mounts `/api/auth/*` (better-auth), `/api/*` (`dispatchApi`), and static SPA. | Adding a top-level mount or global hook. |
-| `webServer/middleware.ts` | Cookie parsing, loopback detection, body reading with size limits, guest-access policy, initial-admin bootstrap, `sendJson`/`sendError`. | Cross-cutting request behavior. |
-| `webServer/auth.ts` | better-auth setup against the existing SQLite handle; bridges to our `users` table; persists `auth_secret`. | Auth/session behavior. |
+| `webServer/server.ts` | `buildServer(db)`: rate-limit hooks, CORS, mounts `/api/auth/*` (better-auth), `/api/*` (`dispatchApi` → the `RouteHandler` chain), and static SPA. | Adding a top-level mount or global hook. |
+| `webServer/serverHelpers.ts` | Pure request policy: guest-access API gate, static-root resolution, better-auth delegation, proxy-header trust (`CB8_TRUST_PROXY_HEADERS`). | Cross-cutting request rules (tested). |
+| `webServer/middleware.ts` | Cookie parsing, body reading with size limits, guest-access flag (+cache), initial-admin bootstrap (the password banner), `sendJson`/`sendError`. | Cross-cutting request behavior. |
+| `webServer/auth.ts` | better-auth setup against Postgres; bridges to our `users` table; persists `auth_secret`; computes trusted origins. | Auth/session behavior. |
+| `webServer/authHelpers.ts` | Pure auth helpers (reset links, origin math) with tests. | — |
 | `webServer/context.ts` | `RequestContext` and `RouteHandler` types + `requireAdmin`. | Adding shared per-request context. |
 | `webServer/routes/*.ts` | **One file per resource.** Each exports `handle: RouteHandler` returning `true` when it owns the request. | **Most endpoint work happens here.** |
-| `webServer/routes/validation.ts` | Reusable request helpers: `requireCurrentUser`, `requireComic`, `readJsonBody`, `parseBoundedInteger`, `readPageIndex`. | Use these in new handlers instead of hand-rolling parsing. |
+| `webServer/routes/validation.ts` | Reusable request helpers: `requireCurrentUser`, `requireComic` (uses `getComicLite`), `readJsonBody`, `parseBoundedInteger`, `readPageIndex`. | Use these in new handlers instead of hand-rolling parsing. |
 | `webServer/routes/*RouteHelpers.ts` | Pure parsing, response, and policy helpers for route modules. | Put reusable route rules here with colocated tests. |
 | `webServer/routes/routeResponseHelpers.ts` | Shared paged comic/book response formatting. | Use for endpoints that return `{ records, totalCount }`. |
 | `webServer/archiveCache.ts` | LRU of open archive handles keyed by comic id; concurrent page fetches share one open handle (`withArchive`). | Page-read performance/caching. |
 | `webServer/ingest.ts` | Bridges the upload route to `IngestService` with a streaming event interface. | Upload streaming behavior. |
-| `webServer/mapping.ts` | `toWebRecord` / `overlayUserState` — internal `MediaRecord` → API shape + per-user overlay. | Changing what the API returns for a comic. |
+| `webServer/mapping.ts` | `toWebRecord` / `overlayUserState` / `overlayUserStateMany` — internal `MediaRecord` → API shape + per-user overlay. The `Many` variant batches the per-user lookups for list endpoints instead of one query per record. | Changing what the API returns for a comic. |
 | `webServer/rateLimit.ts` | Login + forgot-password limiters. | Rate-limit tuning. |
 | `webServer/safeFetch.ts` | SSRF-safe outbound HTTP for the scraper. | Outbound request safety. |
 | `webServer/emailSender.ts` | better-auth email hooks; no-ops without SMTP. | Email/verification. |
 
-The route files: `auth.ts`, `users.ts`, `comics.ts`, `folders.ts`,
-`libraries.ts`, `progress.ts`, `tags.ts`, `upload.ts`, `staticFiles.ts`.
+The route files: `auth.ts` (sign-in; **public signup is disabled** — the
+sign-up endpoints return 403 and `/api/auth/register` requires an admin
+session), `users.ts` (admin user management), `comics.ts` (records, thumbnails,
+pages with `?width=`/`?upscale=1`, file download, metadata search), `folders.ts`,
+`libraries.ts`, `progress.ts`, `tags.ts`, `upload.ts`, `search.ts` (hybrid
+FTS + vector ebook search), `jobs.ts` (scan-job progress polling), `opds.ts`
+(`GET /api/opds` — an OPDS 2 catalog for external reader apps), `webpub.ts`
+(`GET /api/comics/:id/manifest` — a Readium WebPub manifest per book), and
+`staticFiles.ts` (the SPA, with `immutable` caching for hashed `/assets/`).
 
 > **Add an endpoint recipe:** pick the resource file in `routes/` → parse ids with
 > a regex + `parseInt` → use the `validation.ts` helpers → return via `sendJson`/
@@ -195,8 +216,14 @@ Zustand to cache server data — that's React Query's job.
 | --- | --- |
 | `main.tsx` | React root mount. |
 | `App.tsx` | Wraps app in `QueryClientProvider` + `HashRouter`; does session bootstrap. |
-| `components/layout/AppShell.tsx` | The persistent layout (navbar, sidebar, mobile tab bar, reader overlay) and **the `<Routes>` declaration**. Listens to host-bridge events. Add a new route here. |
+| `components/layout/AppShell.tsx` | The persistent layout (navbar, sidebar, mobile tab bar, reader overlay, command palette) and **the `<Routes>` declaration**. Library pages stay mounted (hidden) while the reader is open so scroll position survives. Add a new route here. |
 | `index.html` / `globals.css` | HTML shell and global/Tailwind styles. |
+
+Performance notes baked into the shell: `SettingsPage`, `UsersPage`, and
+`AdminModal` are `React.lazy` so admin code stays out of the initial bundle;
+the three readers are lazy inside `ReaderPage`; and
+`vite.renderer.config.ts` splits `vendor-react` / `vendor-query` chunks so the
+hashed assets (served with `Cache-Control: immutable`) change less often.
 
 ### 4.2 Pages — `src/renderer/pages/`
 
@@ -205,22 +232,26 @@ One file per top-level route. To add a page: create it here, then wire it into
 
 | File | Route(s) |
 | --- | --- |
-| `AllPage` / `RecentPage` / `ContinuePage` | Library-wide views. |
-| `LibraryPage` | A single library by id. |
+| `AllPage` / `RecentPage` / `ContinuePage` | Library-wide views. `AllPage` is the home page: a `ContinueShelf` hero + up-next row above the grid. |
+| `LoginPage` | `/login` — sign-in, with an inline forgot-password notice (no email reset; it points you at an admin). |
+| `SettingsPage` | `/settings` — wraps `SettingsPanel`; any signed-in user. |
+| `UsersPage` | `/users` — wraps `UsersPanel`; admin only (others are redirected). |
+| `LibraryPage` | A single collection by id. |
 | `FolderPages.tsx` | Folder + folder series/volume/chapter drill-down. |
 | `BrowsePages.tsx` | Global series/volume/chapter drill-down. |
+| `HierarchyPageFrame.tsx` (+ `hierarchyPageHelpers.ts`) | Shared frame for the drill-down pages. |
 | `TagPage` | Tag-scoped listing. |
-| `ReaderPage.tsx` | Resolves the record then picks `ComicReader` / `EpubReader` / `PdfReader`. |
+| `ReaderPage.tsx` (+ `readerPageHelpers.ts`) | Resolves the record, picks the lazy `ComicReader` / `EpubReader` / `PdfReader`, owns the immersive chrome + chrome-level keys (Escape/f). |
 | `AuthPages.tsx` | Reset-password and verified pages. |
 
 ### 4.3 Components
 
 | Folder | What's in it | Edit when… |
 | --- | --- | --- |
-| `components/layout/` | `Navbar`, `Sidebar`, `TabBar`, `TabPanel`, `SortSheet`, `ReaderOverlay`. | Changing chrome/navigation. |
-| `components/library/` | `ComicCard`, `FolderCard`, `GroupCard`, `LibraryGrid`, `ContextMenu`(+`ContextMenuDialogs`), `ContinueShelf`, `Breadcrumb`, `FilterStrips`, `SelectionBar`. | Changing how the grid/cards/menus look or behave. |
-| `components/reader/` | `ComicReader`, `EpubReader`, `PdfReader`, `ReaderToolbar`, presentational `*View` files, controls/sheets/types, and tested rule helpers such as `comicReaderRules`, `pdfReaderRules`, `epubReaderInteractions`, `epubReaderIframeEvents`, `epubReaderLinks`, and `epubRenditionTheme`. | Reader UI behavior (see `docs/READER.md`). |
-| `components/admin/` | `AdminModal` + tab panels: `Login`, `Signup`, `ForgotPassword`, `ResetPassword`, `Settings`, `Upload`, `AddPath`, `Users`, `AdminMenu`. | Auth/settings/upload UI. |
+| `components/layout/` | `Navbar` (search box, add-content `+` menu, identity chip with initials avatar → Settings / User management / Sign out, or a Sign in button), `NavbarThemeMenu`, `Sidebar`+`SidebarNav`, `TabBar` (mobile bottom nav: Home / Browse / Settings), `TabPanel` (the mobile Browse sheet with Collections / Folders / Tags pivots), `SortSheet`, `CommandPalette` (⌘K/Ctrl+K; `/` focuses search). | Changing chrome/navigation. |
+| `components/library/` | `ComicCard` (quiet cards: humanized caption via `comicCaption`, finished items dim + check — no colored format badges), `FolderCard`, `GroupCard`, `LibraryGrid`, `ContextMenu`(+`Content`,`Dialogs`), `ContinueShelf` (home hero + up-next), `Breadcrumb`, `FilterStrips`, `SelectionBar`. | Changing how the grid/cards/menus look or behave. |
+| `components/reader/` | `ComicReader`, `EpubReader`, `PdfReader`, `ReaderToolbar`, presentational `*View`/`*Controls`/`*Sheets` files, and tested rule helpers such as `comicReaderRules`, `pdfReaderRules`, `epubReaderInteractions`, `epubReaderIframeEvents`, `epubReaderLinks`, `epubRenditionTheme`. | Reader UI behavior (see `docs/READER.md`). |
+| `components/admin/` | `AdminModal` — now only the four admin content actions (`upload`, `add-path`, `create-collection`, `create-folder`); auth and settings moved to real routes. Plus the panels those pages reuse: `LoginPanel`, `ForgotPasswordPanel`, `ResetPasswordPanel`, `SettingsPanel`(+`Sections`, incl. the OPDS "Connect a reader app" card), `UploadPanel`, `AddPathPanel`, `UsersPanel`. | Auth/settings/upload UI. |
 | `components/ui/` | shadcn-style primitives over Radix (button, dialog, sheet, slider, select, tabs, toast…). | Reuse these before inventing new primitives. |
 
 ### 4.4 Hooks, lib, stores
@@ -228,20 +259,20 @@ One file per top-level route. To add a page: create it here, then wire it into
 | File | Responsibility |
 | --- | --- |
 | `hooks/useDrop.ts` | Drag-and-drop ingest path. |
+| `hooks/useImmersiveChrome.ts` | Shared reader chrome: hidden on open, center-tap toggle, 3s auto-hide, hover pinning. Pure `nextChromeState` rule + tests. |
 | `hooks/useComicGestures.ts` / `useComicKeyboard.ts` / `useReaderViewportControls.ts` | Reader gesture, keyboard, fullscreen, and orientation-lock handling. |
 | `hooks/useInfiniteComics.ts` | Infinite-scroll paging over the library. |
 | `hooks/usePullToRefresh.ts` / `useWakeLock.ts` / `useToast.ts` | Mobile/UX helpers. |
 | `lib/api.ts` | **Barrel only** — re-exports `./api/index`. Keep UI imports pointed at `@/lib/api`. |
 | `lib/api/client.ts` | Owns `get`/`post`/`put`/`del` fetch + error handling. |
-| `lib/api/stream.ts` | `postIngestStream()` for NDJSON ingest streams. |
 | `lib/api/types.ts` | Renderer-facing API types. (Shared shapes go in `src/shared/apiTypes.ts`.) |
-| `lib/api/{comics,folders,libraries,reading,browse,tags,admin,users,auth,settings,metadata}.ts` | Endpoint groups by domain. |
-| `lib/hostBridge.ts` | Optional Electron bridge; no-ops in a plain browser so the SPA degrades gracefully. |
+| `lib/api/{comics,folders,libraries,reading,browse,tags,admin,users,auth,settings,metadata,search,jobs}.ts` | Endpoint groups by domain. |
+| `lib/catalogQueryHelpers.ts` | Shared query-key/params helpers for the catalog queries. |
 | `lib/queryClient.ts` | React Query setup + `invalidateLibraryQueries`. |
-| `lib/dropUtils.ts` / `lib/utils.ts` / `lib/errors.ts` | `cn` helper, drop helpers, error types. |
-| `store/readerStore.ts` | Reader prefs (zoom, direction, spread, EPUB font/theme), persisted to `localStorage`. |
+| `lib/dropUtils.ts` / `lib/utils.ts` / `lib/errors.ts` | `cn` helper, `comicCaption`/`isFinished`/`progressPercentFor` caption rules, drop helpers, error types. |
+| `store/readerStore.ts` | Reader prefs (zoom, direction, spread, HD, EPUB font/theme), persisted to `localStorage`. |
 | `store/selectionStore.ts` | Multi-select state for bulk operations. |
-| `store/uiStore.ts` | Global UI state. |
+| `store/uiStore.ts` | Global UI state (admin panel, mobile tab panel, sort sheet). |
 
 > **Add a renderer API call recipe:** pick the domain module in `lib/api/` → use
 > `get/post/put/del` from `client.ts` → put types in `api/types.ts` (or
@@ -259,7 +290,6 @@ a colocated `.test.ts` run by Vitest.
 | --- | --- |
 | `types.ts` | Canonical `MediaRecord`, `QueryOptions`, `QueryResult`, `ScanProgress`, `NavigationState`. |
 | `apiTypes.ts` | Shapes returned by the HTTP API, shared by server + renderer. |
-| `ipcTypes.ts` | Source of truth for the IPC channel surface (drives the preload allowlist). |
 | `mediaTypes.ts` | File-extension → `'comic' \| 'book'` mapping. |
 | `naturalSort.ts` | Natural filename comparison (`page2 < page10`). |
 | `coverSelection.ts` | Picks the cover entry from an archive's image list. |
@@ -277,18 +307,22 @@ a colocated `.test.ts` run by Vitest.
 
 | Goal | Start here |
 | --- | --- |
-| Add a column / table | `db/schema/create.ts` → `db/schema/migrations.ts` → domain file → `libraryDatabase.ts` |
+| Add a column / table | `db/schema/createPg.ts` (idempotent DDL) → domain file → `libraryDatabase.ts` |
 | Add or change an API endpoint | `webServer/routes/<resource>.ts` (+ `routes/validation.ts`, `shared/apiTypes.ts`) |
 | Change what a comic record returns to the UI | `webServer/mapping.ts` |
 | Add a UI page | `pages/` + register in `components/layout/AppShell.tsx` |
 | Add a UI call to the server | `lib/api/<domain>.ts` (via `client.ts`) |
-| Change the library grid / cards | `components/library/` |
+| Change the library grid / cards / captions | `components/library/` + `lib/utils.ts` caption rules |
+| Change the command palette | `components/layout/CommandPalette.tsx` + `commandPaletteHelpers.ts` |
 | Change reader behavior | `components/reader/` + `store/readerStore.ts`; start with the relevant `*Rules.ts`/interaction helper before editing the component (see `docs/READER.md`) |
+| Change reader chrome (toolbar show/hide, Escape/f) | `pages/ReaderPage.tsx` + `hooks/useImmersiveChrome.ts` |
 | Change how files are imported | `ingestService.ts`; use `ingestDiscovery.ts`, `ingestPathHelpers.ts`, `ingestQueue.ts`, `seriesParser.ts`, and `archiveLoader.ts` for their specific boundaries |
-| Change page image rendering/caching | `imageResizer.ts` + `webServer/archiveCache.ts` |
-| Add a native (Electron-only) capability | `shared/ipcTypes.ts` → `ipc/*Handlers.ts` → `lib/hostBridge.ts` |
-| Change app startup | `main/index.ts` (desktop/headless) or `main/standalone.ts` (Docker) |
-| Change auth / sessions | `webServer/auth.ts` + `webServer/routes/auth.ts` |
+| Change background jobs / auto-rescan | `jobs/` + `folderScheduler.ts` |
+| Change semantic search | `search/` + `db/ebookSearch.ts` + `routes/search.ts` |
+| Change OPDS / WebPub output | `routes/opds.ts` / `routes/webpub.ts` |
+| Change page image rendering/caching | `imageResizer.ts` + `webServer/archiveCache.ts` (+ `upscaleClient.ts` for HD) |
+| Change server startup | `main/standalone.ts` (API) or `main/worker.ts` (worker) |
+| Change auth / sessions / signup policy | `webServer/auth.ts` + `webServer/routes/auth.ts` |
 
 ---
 
@@ -297,39 +331,48 @@ a colocated `.test.ts` run by Vitest.
 | Command | What it does |
 | --- | --- |
 | `pnpm install --frozen-lockfile` | Install deps. |
-| `pnpm start` | Run the Electron desktop app. |
-| `pnpm start:headless` | Run the server with no window. |
-| `pnpm dev:renderer` | Vite dev server for the SPA (proxies `/api` to the CB8 server). Run alongside `start:headless` for fast frontend work. |
-| `pnpm test` | Vitest **through Electron's Node runtime** — required because `better-sqlite3` is built for Electron's ABI. |
+| `pnpm dev:renderer` | Vite dev server for the SPA (proxies `/api` to a running CB8 server). |
+| `pnpm build:renderer` | Build the SPA bundle into `dist/web`. |
+| `pnpm build:standalone` | Build `dist/standalone.mjs` + `dist/worker.mjs` (runs `build:renderer` first). |
+| `pnpm start:standalone` | Run the built API server (needs `DATABASE_URL`). |
+| `pnpm test` | Vitest. Postgres-backed tests skip unless `CB8_TEST_DATABASE_URL` points at a throwaway pgvector database. |
 | `pnpm typecheck` | `tsc --noEmit`. |
-| `pnpm build:renderer` | Build the SPA bundle. |
-| `pnpm build:standalone` | Build the Electron-free Node bundle for Docker/VPS. |
+| `pnpm docs:api` | TypeDoc HTML API docs into `docs/api/`. |
 
 Before handing off: run `pnpm typecheck`, `pnpm test`, and `pnpm build:renderer`,
-and mention any skipped check. (The renderer build emits a known chunk-size
-warning — not a failure.)
+and mention any skipped check.
 
 ### Config knobs
 
-- **Env vars:** `CB8_HEADLESS`, `CB8_DATA_DIR`, `CB8_PORT`, `CB8_HOST`,
+- **Env vars:** `DATABASE_URL`, `CB8_DATA_DIR`, `CB8_PORT`, `CB8_HOST`,
   `CB8_INGEST_CONCURRENCY`, `CB8_SEVENZIP_PATH`, `CB8_UNRAR_PATH`,
   `CB8_ARCHIVE_LIST_TIMEOUT_MS`, `CB8_ARCHIVE_EXTRACT_TIMEOUT_MS`,
-  `BETTER_AUTH_SECRET`.
-- **Persistent settings** live in the `app_meta` table.
-- **On-disk artifacts:** `library.db` (+WAL/SHM), `image-cache/`, `web-uploads/`,
-  ingest-error log — under the platform `userData` dir (or `CB8_DATA_DIR`).
+  `CB8_TRUST_PROXY_HEADERS`, `BETTER_AUTH_SECRET`,
+  `BETTER_AUTH_TRUSTED_ORIGINS`, plus the optional-service vars
+  (`EMBED_URL`, `UPSCALE_URL`, …) — full reference in
+  [docs/DEPLOYMENT.md](DEPLOYMENT.md).
+- **Persistent settings** live in the `app_meta` table (guest access,
+  auto-rescan interval, auth secret, initial admin password until changed).
+- **On-disk artifacts:** `image-cache/`, `web-uploads/`, `upscale-cache/` —
+  under `CB8_DATA_DIR`. Everything durable is in Postgres.
 
 ---
 
 ## 8. Conventions worth internalizing early
 
-- **Product data goes over HTTP, native capabilities go over IPC.** When in doubt,
-  it's HTTP.
+- **Everything is HTTP.** There is no privileged client; the SPA, the Flutter
+  app, and OPDS readers all speak the same API.
 - **`src/shared/` stays pure.** If you're tempted to import `fs` or touch
   `document` there, the code belongs in `main/` or `renderer/` instead.
 - **The DB façade pattern:** read/write logic lives in `db/<domain>.ts`;
   `libraryDatabase.ts` just exposes it. Don't put SQL in routes.
 - **Types that cross the wire live in `src/shared/apiTypes.ts`** and are imported
   by both server and renderer, so the contract can't drift.
-- **Schema changes always need a migration.** Editing `create.ts` without bumping
-  `migrations.ts` breaks existing databases.
+- **Schema DDL must be idempotent.** `createPg.ts` re-runs on every boot;
+  new tables/columns need `IF NOT EXISTS` guards so existing databases upgrade
+  in place.
+- **Heavy work goes through the job queue.** Routes enqueue; the worker
+  executes. If a request handler might run for minutes, it's a job.
+- **Extract testable rules.** UI timing/policy logic lives in pure helper files
+  (`*Rules.ts`, `*Helpers.ts`, `nextChromeState`) with colocated tests, not
+  inside components.

@@ -57,6 +57,7 @@ lib/
     shell/             adaptive nav (rail / bottom bar) + top bar
     library/ organize/ connections/ import/ settings/
     reader/            dispatcher + comic / pdf readers + unified (EPUB) reader
+                       + progress_saver.dart (debounced writes) + reader_keyboard.dart
 test/                  tests + test/support/fake_cb8_server.dart
 ```
 
@@ -89,6 +90,31 @@ test/                  tests + test/support/fake_cb8_server.dart
   Readium Locator in `lastLocation`; it's paginated-only (single/two-column — scroll is
   per-resource, see `later.md`). Building needs Flutter SPM disabled, iOS 15+, and Android
   `desugar_jdk_libs` 2.1.5+. Read ARCHITECTURE §9 before touching it.
+- **Readium `progression` ≠ `totalProgression`.** `locations.progression` is position
+  within the *current chapter* (drives the scrubber — `goToProgression` can only seek
+  within the current resource); `locations.totalProgression` is position in the *whole
+  book* (drives the "Ch 7/38 · 42%" label and the `completed` check in
+  `unified_reader_screen.dart`). Using per-chapter progression for `completed` marked
+  books finished at the end of chapter 1 (bugs.md #6) — don't reintroduce it.
+- **Progress writes are debounced; catalog refetches are throttled.** Readers save
+  through `ProgressSaver` (`reader/progress_saver.dart`, 800 ms trailing, `flush()` on
+  dispose), and `libraryChangesProvider` throttles Drift's per-statement events
+  (400 ms, leading+trailing). Never persist per page-turn / per locator event — each
+  write refetches every catalog provider.
+- **`LibraryQuery` has value equality because it keys `browseComicsProvider`** (a
+  `.family`). If you add a field, extend `==`/`hashCode` too — with identity equality,
+  every navigation created and permanently cached a fresh provider instance.
+- **Foreign keys are ON (schema v4).** `beforeOpen` runs `PRAGMA foreign_keys = ON`,
+  so every `onDelete: cascade` in the schema is *real* now — deletes actually cascade
+  (favorites, tags, history, memberships). The v4 migration swept the orphans from the
+  FK-off era; don't add code that relies on children surviving a parent delete.
+- **List queries skip the cover BLOB column on purpose** (both `LocalSource` and the
+  server). Covers load lazily per-card via `localCoverProvider` (30 s keep-alive).
+  Don't add `coverThumbnail` back into a list select "for convenience".
+- **`ReaderKeyboard` is a process-global `HardwareKeyboard` handler.** It stays active
+  under modal sheets, and only stands down via the `EditableText` primary-focus guard
+  (`reader_keyboard.dart`). Keep that guard when adding text fields to reader chrome,
+  or Space/`f`/arrows will page the book instead of typing.
 - **Storage paths are relative** to `getApplicationSupportDirectory()` (iOS container UUIDs
   change on reinstall). Never persist absolute file paths.
 
