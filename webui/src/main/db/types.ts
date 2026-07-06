@@ -75,6 +75,19 @@ export const COMIC_FULL_COLUMNS = `
 `;
 
 /**
+ * SELECT column list matching `ComicRow`'s shape but without fetching the
+ * cover BLOB (`cover_thumbnail` comes back NULL).
+ *
+ * List-shaped API responses never send the blob, so skipping it avoids
+ * shipping megabytes of BYTEA out of Postgres per request. Unaliased — use
+ * against `FROM comics` without a table alias. Maps to `ComicRow`.
+ */
+export const COMIC_NO_BLOB_COLUMNS = `
+  id, file_path, title, page_count, file_size, NULL as cover_thumbnail,
+  date_added, last_page, last_location, last_percent, last_read, media_type
+`;
+
+/**
  * SELECT column list for a comic *list* row (no cover BLOB).
  *
  * Omits the heavy `cover_thumbnail` blob and instead exposes a

@@ -129,7 +129,7 @@ export const handle: RouteHandler = async (ctx) => {
       name: f.name,
       comicCount: f.comicCount,
       mediaType: f.mediaType,
-      thumbnailUrl: folderThumbnailUrl(f.id, Boolean(f.coverThumbnail)),
+      thumbnailUrl: folderThumbnailUrl(f.id, f.hasCoverThumbnail),
     }));
     sendJson(res, 200, safe);
     return true;

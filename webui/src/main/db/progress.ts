@@ -61,6 +61,39 @@ export async function getUserProgress(
   return { lastPage: row.last_page, lastLocation: row.last_location, lastPercent: row.last_percent, lastRead: row.last_read, completed: !!row.completed };
 }
 
+/**
+ * Batched per-user progress lookup for list responses.
+ *
+ * The per-record `getUserProgress` turns a list endpoint into N queries;
+ * this fetches the same rows for every comic id in one round trip. Returns a
+ * map keyed by comic id — absent ids simply have no progress row.
+ */
+export async function getUserProgressForComics(
+  db: Db,
+  userId: number,
+  comicIds: number[],
+): Promise<Map<number, { lastPage: number | null; lastLocation: string | null; lastPercent: number | null; lastRead: string | null; completed: boolean }>> {
+  const out = new Map<number, { lastPage: number | null; lastLocation: string | null; lastPercent: number | null; lastRead: string | null; completed: boolean }>();
+  const ids = Array.from(new Set(comicIds));
+  if (!ids.length) return out;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await db.all<{ comic_id: number; last_page: number | null; last_location: string | null; last_percent: number | null; last_read: string | null; completed: number }>(
+    `SELECT comic_id, last_page, last_location, last_percent, last_read, completed
+     FROM user_progress WHERE user_id = ? AND comic_id IN (${placeholders})`,
+    [userId, ...ids],
+  );
+  for (const row of rows) {
+    out.set(row.comic_id, {
+      lastPage: row.last_page,
+      lastLocation: row.last_location,
+      lastPercent: row.last_percent,
+      lastRead: row.last_read,
+      completed: !!row.completed,
+    });
+  }
+  return out;
+}
+
 export async function getRecentlyReadByUser(
   db: Db,
   userId: number,
@@ -72,7 +105,7 @@ export async function getRecentlyReadByUser(
   if (mediaType) params.push(mediaType);
   params.push(limit);
   const rows = await db.all<ComicRow>(
-    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added,
+    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, NULL as cover_thumbnail, c.date_added,
             up.last_page, up.last_location, up.last_percent, up.last_read, c.media_type
      FROM user_progress up
      JOIN comics c ON up.comic_id = c.id
@@ -95,7 +128,7 @@ export async function getContinueReadingByUser(
   if (mediaType) params.push(mediaType);
   params.push(limit);
   const rows = await db.all<ComicRow>(
-    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, c.cover_thumbnail, c.date_added,
+    `SELECT c.id, c.file_path, c.title, c.page_count, c.file_size, NULL as cover_thumbnail, c.date_added,
             up.last_page, up.last_location, up.last_percent, up.last_read, c.media_type
      FROM user_progress up
      JOIN comics c ON up.comic_id = c.id

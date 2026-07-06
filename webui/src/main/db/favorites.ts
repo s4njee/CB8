@@ -22,3 +22,19 @@ export async function isFavorite(db: Db, userId: number, comicId: number): Promi
   const row = await db.get('SELECT 1 FROM user_favorites WHERE user_id = ? AND comic_id = ?', [userId, comicId]);
   return row !== undefined;
 }
+
+/**
+ * Batched favorite lookup for list responses — one query for all comic ids
+ * instead of a per-record `isFavorite` round trip.
+ * @returns The subset of `comicIds` this user has favorited.
+ */
+export async function getFavoritedComicIds(db: Db, userId: number, comicIds: number[]): Promise<Set<number>> {
+  const ids = Array.from(new Set(comicIds));
+  if (!ids.length) return new Set();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await db.all<{ comic_id: number }>(
+    `SELECT comic_id FROM user_favorites WHERE user_id = ? AND comic_id IN (${placeholders})`,
+    [userId, ...ids],
+  );
+  return new Set(rows.map((r) => r.comic_id));
+}

@@ -184,9 +184,22 @@ CREATE INDEX IF NOT EXISTS idx_comics_date_added ON comics(date_added);
 CREATE INDEX IF NOT EXISTS idx_comics_file_size ON comics(file_size);
 CREATE INDEX IF NOT EXISTS idx_comics_page_count ON comics(page_count);
 CREATE INDEX IF NOT EXISTS idx_comics_search ON comics USING GIN (search_vector);
+-- Shared recently-read / continue-reading shelves: ORDER BY last_read DESC on
+-- rows that have been read at all. Partial keeps it tiny on large libraries.
+CREATE INDEX IF NOT EXISTS idx_comics_last_read ON comics(last_read DESC) WHERE last_read IS NOT NULL;
+-- Series rollups: getAllSeries groups/correlates on the raw column,
+-- getSeriesComics + the hierarchy filters match on lower(series_name).
+CREATE INDEX IF NOT EXISTS idx_comics_series_name ON comics(series_name);
+CREATE INDEX IF NOT EXISTS idx_comics_series_lower ON comics(lower(series_name));
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_comic ON bookmarks(user_id, comic_id);
 CREATE INDEX IF NOT EXISTS idx_history_user ON reading_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_history_timestamp ON reading_history(timestamp);
+-- Per-user recently-read / continue-reading: WHERE user_id ORDER BY last_read
+-- DESC LIMIT n straight off the index instead of sorting the user's rows.
+CREATE INDEX IF NOT EXISTS idx_user_progress_user_lastread ON user_progress(user_id, last_read DESC);
+-- Reverse lookup for the tag filter (tag -> comics). The PK only covers
+-- comic-first access.
+CREATE INDEX IF NOT EXISTS idx_comic_tags_tag ON comic_tags(tag_id);
 
 CREATE TABLE IF NOT EXISTS libraries (
   id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

@@ -1,12 +1,12 @@
 import { sendJson, sendError } from '../middleware';
-import { toWebRecord, overlayUserState } from '../mapping';
+import { toWebRecord, overlayUserStateMany } from '../mapping';
 import type { RouteHandler } from '../context';
 import {
   parseBoundedInteger,
   readJsonBody,
   readPageIndex,
   requireBookmarkInComic,
-  requireComic,
+  requireComicLite,
   requireCurrentUser,
 } from './validation';
 import {
@@ -43,7 +43,7 @@ export const handle: RouteHandler = async (ctx) => {
       return true;
     }
     const id = parseInt(progressMatch[1], 10);
-    const comic = await requireComic(ctx, id);
+    const comic = await requireComicLite(ctx, id);
     if (!comic) return true;
     const parsedBody = await readJsonBody<ProgressUpdateBody>(req, res);
     if (!parsedBody.ok) return true;
@@ -77,7 +77,7 @@ export const handle: RouteHandler = async (ctx) => {
     const user = requireCurrentUser(ctx);
     if (!user) return true;
     const id = parseInt(progressMatch[1], 10);
-    if (!(await requireComic(ctx, id))) return true;
+    if (!(await requireComicLite(ctx, id))) return true;
     await db.clearUserProgress(user.id, id);
     sendJson(res, 200, { ok: true });
     return true;
@@ -89,7 +89,7 @@ export const handle: RouteHandler = async (ctx) => {
     const user = requireCurrentUser(ctx);
     if (!user) return true;
     const id = parseInt(favMatch[1], 10);
-    if (!(await requireComic(ctx, id))) return true;
+    if (!(await requireComicLite(ctx, id))) return true;
     if (method === 'POST') await db.addFavorite(user.id, id);
     else await db.removeFavorite(user.id, id);
     sendJson(res, 200, { ok: true });
@@ -102,7 +102,7 @@ export const handle: RouteHandler = async (ctx) => {
     const user = requireCurrentUser(ctx);
     if (!user) return true;
     const id = parseInt(bookmarksMatch[1], 10);
-    if (!(await requireComic(ctx, id))) return true;
+    if (!(await requireComicLite(ctx, id))) return true;
     sendJson(res, 200, await db.listBookmarks(user.id, id));
     return true;
   }
@@ -110,7 +110,7 @@ export const handle: RouteHandler = async (ctx) => {
     const user = requireCurrentUser(ctx);
     if (!user) return true;
     const id = parseInt(bookmarksMatch[1], 10);
-    const comic = await requireComic(ctx, id);
+    const comic = await requireComicLite(ctx, id);
     if (!comic) return true;
     const parsedBody = await readJsonBody<{ page?: number; note?: string | null }>(req, res);
     if (!parsedBody.ok) return true;
@@ -126,7 +126,7 @@ export const handle: RouteHandler = async (ctx) => {
     if (!user) return true;
     const comicId = parseInt(bookmarkItemMatch[1], 10);
     const bookmarkId = parseInt(bookmarkItemMatch[2], 10);
-    if (!(await requireComic(ctx, comicId))) return true;
+    if (!(await requireComicLite(ctx, comicId))) return true;
     if (!(await requireBookmarkInComic(ctx, user.id, comicId, bookmarkId))) return true;
     const parsedBody = await readJsonBody<{ note?: string | null }>(req, res);
     if (!parsedBody.ok) return true;
@@ -139,7 +139,7 @@ export const handle: RouteHandler = async (ctx) => {
     if (!user) return true;
     const comicId = parseInt(bookmarkItemMatch[1], 10);
     const bookmarkId = parseInt(bookmarkItemMatch[2], 10);
-    if (!(await requireComic(ctx, comicId))) return true;
+    if (!(await requireComicLite(ctx, comicId))) return true;
     if (!(await requireBookmarkInComic(ctx, user.id, comicId, bookmarkId))) return true;
     await db.deleteBookmark(user.id, bookmarkId);
     sendJson(res, 200, { ok: true });
@@ -156,7 +156,7 @@ export const handle: RouteHandler = async (ctx) => {
     if (typeof parsed.comicId !== 'number' || typeof parsed.action !== 'string') {
       sendError(res, 400, 'Provide "comicId" and "action"'); return true;
     }
-    const comic = await requireComic(ctx, parsed.comicId);
+    const comic = await requireComicLite(ctx, parsed.comicId);
     if (!comic) return true;
     const action = parsed.action.trim();
     if (!action) { sendError(res, 400, 'Provide non-empty "action"'); return true; }
@@ -192,7 +192,7 @@ export const handle: RouteHandler = async (ctx) => {
     const name = decodeURIComponent(seriesComicsMatch[1]);
     const records = await db.getSeriesComics(name);
     const uid = currentUser?.id ?? null;
-    sendJson(res, 200, await Promise.all(records.map((r) => overlayUserState(toWebRecord(r)!, db, uid))));
+    sendJson(res, 200, await overlayUserStateMany(records.map((r) => toWebRecord(r)!), db, uid));
     return true;
   }
 

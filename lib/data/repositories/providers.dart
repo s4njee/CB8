@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -41,6 +42,14 @@ final localSourceProvider = Provider<LibrarySource>((ref) {
 /// covers are loaded/decoded, and `autoDispose` frees them as cards scroll off.
 final localCoverProvider =
     FutureProvider.autoDispose.family<Uint8List?, String>((ref, id) async {
+  // Keep the bytes alive briefly after the last card stops watching, so
+  // scrolling back doesn't re-hit the DB — and, because MemoryImage keys the
+  // decoded-image cache by byte-buffer identity, doesn't re-decode either.
+  final link = ref.keepAlive();
+  Timer? evict;
+  ref.onCancel(() => evict = Timer(const Duration(seconds: 30), link.close));
+  ref.onResume(() => evict?.cancel());
+  ref.onDispose(() => evict?.cancel());
   final source = ref.watch(localSourceProvider);
   if (source is LocalSource) return source.coverBytes(id);
   return null;
@@ -259,9 +268,47 @@ class LibraryQueryController extends Notifier<LibraryQuery> {
 /// The value must change each event: mapping every change to the same value
 /// (e.g. null) makes Riverpod dedupe `AsyncData(null) == AsyncData(null)` and
 /// skip the refetch after the first change.
+///
+/// Events are throttled (leading + trailing): Drift emits one event per write,
+/// so a page turn (progress + history rows) or a bulk import would otherwise
+/// refetch every catalog provider once per statement. The leading edge keeps a
+/// single change (favorite toggle, one import) instantly visible; anything
+/// arriving inside the window is coalesced into one trailing tick.
 final libraryChangesProvider = StreamProvider<int>((ref) {
+  const window = Duration(milliseconds: 400);
   var tick = 0;
-  return ref.watch(activeSourceProvider).watchChanges().map((_) => ++tick);
+  var pending = false;
+  Timer? timer;
+  final controller = StreamController<int>();
+
+  void emit() {
+    if (!controller.isClosed) controller.add(++tick);
+  }
+
+  void onWindowEnd() {
+    if (pending) {
+      pending = false;
+      emit();
+      timer = Timer(window, onWindowEnd); // keep coalescing sustained bursts
+    } else {
+      timer = null;
+    }
+  }
+
+  final sub = ref.watch(activeSourceProvider).watchChanges().listen((_) {
+    if (timer == null) {
+      emit();
+      timer = Timer(window, onWindowEnd);
+    } else {
+      pending = true;
+    }
+  });
+  ref.onDispose(() {
+    sub.cancel();
+    timer?.cancel();
+    controller.close();
+  });
+  return controller.stream;
 });
 
 /// Catalog results for the active source + current query.

@@ -13,6 +13,7 @@ import '../../data/local_files.dart';
 import '../../data/models/comic_summary.dart';
 import '../../data/repositories/providers.dart';
 import 'comic/reading_mode.dart';
+import 'progress_saver.dart';
 import 'reader_keyboard.dart';
 import 'widgets/reader_widgets.dart';
 
@@ -79,6 +80,7 @@ class UnifiedReaderScreen extends ConsumerStatefulWidget {
 class _UnifiedReaderScreenState extends ConsumerState<UnifiedReaderScreen> {
   Publication? _pub;
   late FlutterReadium _reader;
+  final ProgressSaver _progress = ProgressSaver();
   Locator? _locator;
   Locator? _initialLocator;
   String? _error;
@@ -153,6 +155,7 @@ class _UnifiedReaderScreenState extends ConsumerState<UnifiedReaderScreen> {
 
   @override
   void dispose() {
+    _progress.flush(); // persist the final position before leaving
     _ttsSubscription?.cancel();
     _statusSubscription?.cancel();
     _locatorSubscription?.cancel();
@@ -326,18 +329,22 @@ class _UnifiedReaderScreenState extends ConsumerState<UnifiedReaderScreen> {
   }
 
   void _saveProgress(Locator locator) {
-    ref
-        .read(activeSourceProvider)
-        .setProgress(
-          widget.comic.id,
-          location: jsonEncode(locator.toJson()),
-          // Use whole-book progression, not the per-resource `progression`
-          // (which is position within the current chapter) — otherwise reaching
-          // the end of any chapter would mark the entire book completed.
-          completed:
-              locator.locations?.totalProgression != null &&
-              locator.locations!.totalProgression! >= 0.99,
-        );
+    // Debounced: locator events fire on every page swipe (and mid-navigation),
+    // and each write kicks off a catalog-wide provider refresh. Capture the
+    // source now; persist once the position settles.
+    final source = ref.read(activeSourceProvider);
+    _progress.schedule(
+      () => source.setProgress(
+        widget.comic.id,
+        location: jsonEncode(locator.toJson()),
+        // Use whole-book progression, not the per-resource `progression`
+        // (which is position within the current chapter) — otherwise reaching
+        // the end of any chapter would mark the entire book completed.
+        completed:
+            locator.locations?.totalProgression != null &&
+            locator.locations!.totalProgression! >= 0.99,
+      ),
+    );
   }
 
   Future<void> _applyPreferences() async {

@@ -48,7 +48,7 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'DELETE' && deleteMatch) {
     if (!requireAdmin(ctx)) return true;
     const id = parseInt(deleteMatch[1], 10);
-    if (!(await db.getComic(id))) { sendError(res, 404, 'Comic not found'); return true; }
+    if (!(await db.getComicLite(id))) { sendError(res, 404, 'Comic not found'); return true; }
     await evictFromCache(id);
     await db.removeComics([id]);
     sendJson(res, 200, { ok: true });
@@ -139,7 +139,9 @@ export const handle: RouteHandler = async (ctx) => {
   if (method === 'GET' && pageMatch) {
     const comicId = parseInt(pageMatch[1], 10);
     const pageIndex = parseInt(pageMatch[2], 10);
-    const record = await db.getComic(comicId);
+    // Lite fetch: page serving only needs the file path/media type — the full
+    // record would drag the cover blob + a tags query along on every page turn.
+    const record = await db.getComicLite(comicId);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     if (record.mediaType !== 'comic') { sendError(res, 400, 'Not a comic archive'); return true; }
     try {
@@ -217,7 +219,7 @@ export const handle: RouteHandler = async (ctx) => {
   const fileMatch = pathname.match(/^\/api\/comics\/(\d+)\/file$/);
   if (method === 'GET' && fileMatch) {
     const id = parseInt(fileMatch[1], 10);
-    const record = await db.getComic(id);
+    const record = await db.getComicLite(id);
     if (!record) { sendError(res, 404, 'Comic not found'); return true; }
     if (record.mediaType !== 'book') { sendError(res, 400, 'Not a book'); return true; }
     const mime = bookMimeForPath(record.filePath);

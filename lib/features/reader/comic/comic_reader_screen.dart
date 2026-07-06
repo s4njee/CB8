@@ -11,6 +11,7 @@ import '../../../data/local_files.dart';
 import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
 import '../../../data/sources/remote_source.dart';
+import '../progress_saver.dart';
 import '../reader_keyboard.dart';
 import '../widgets/reader_widgets.dart';
 import 'cbz_archive.dart';
@@ -35,6 +36,7 @@ class ComicReaderScreen extends ConsumerStatefulWidget {
 class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
   ComicPageSource? _source;
   String? _error;
+  final ProgressSaver _progress = ProgressSaver();
   int _page = 0;
   bool _chrome = true;
   late ReadingMode _mode;
@@ -109,6 +111,8 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         _page = start;
       });
       _setupControllers();
+      // Warm the neighbours of the resume page once the first frame is up.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _precacheAround(start));
     } catch (e) {
       if (mounted) setState(() => _error = 'Failed to open comic:\n$e');
     }
@@ -166,6 +170,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
 
   @override
   void dispose() {
+    _progress.flush(); // persist the final position before leaving
     restoreSystemChrome(); // bring the system bars back when leaving the reader
     _pageController?.dispose();
     if (_scrollListening) _positions.itemPositions.removeListener(_onScrollPositions);
@@ -185,11 +190,26 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     final completed = page >= _pageCount - 1;
     // Explicit bool so paging back from the last page clears `completed` and the
     // book returns to Continue Reading (a `true`-or-null write could never undo it).
-    ref.read(activeSourceProvider).setProgress(
-          widget.comic.id,
-          page: page,
-          completed: completed,
-        );
+    // Debounced: capture the source now, write after the flipping settles.
+    final source = ref.read(activeSourceProvider);
+    _progress.schedule(
+      () => source.setProgress(widget.comic.id, page: page, completed: completed),
+    );
+  }
+
+  /// Warms the image cache for the pages around [page] so the next turn paints
+  /// instantly — local pages decode ahead of the swipe, remote pages fetch ahead.
+  void _precacheAround(int page) {
+    final source = _source;
+    if (source == null || !mounted) return;
+    // Two-page mode shows [page, page+1], so reach one spread (2 pages) further.
+    final ahead = _mode == ReadingMode.doublePage ? 3 : 1;
+    final behind = _mode == ReadingMode.doublePage ? 2 : 1;
+    for (var i = page - behind; i <= page + ahead; i++) {
+      if (i == page || i < 0 || i >= source.pageCount) continue;
+      // Errors surface via the page's errorBuilder when actually shown.
+      precacheImage(source.imageFor(i), context, onError: (_, _) {});
+    }
   }
 
   void _onPagedChanged(int controllerIndex) {
@@ -197,6 +217,7 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
         _mode == ReadingMode.doublePage ? _leftPageOf(controllerIndex) : controllerIndex;
     setState(() => _page = page);
     _saveProgress(page);
+    _precacheAround(page);
   }
 
   void _turn({required bool forward}) {

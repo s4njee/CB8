@@ -101,31 +101,33 @@ export async function deleteFolder(db: Db, id: number): Promise<void> {
 export async function getAllFolders(
   db: Db,
   libraryId?: number | null,
-): Promise<{ id: number; name: string; comicCount: number; coverThumbnail: Buffer | null; mediaType: FolderMediaType }[]> {
+): Promise<{ id: number; name: string; comicCount: number; hasCoverThumbnail: boolean; mediaType: FolderMediaType }[]> {
   const where = libraryId != null
     ? 'WHERE f.id IN (SELECT folder_id FROM library_folders WHERE library_id = ?)'
     : '';
   const params = libraryId != null ? [libraryId] : [];
   // Count comic vs book items per folder so the caller can decide whether a
   // folder is relevant for the current media-type filter. An empty folder is
-  // neither and gets flagged so the sidebar can hide it. The 1:1 cover join is
-  // added to GROUP BY (Postgres has no max(bytea) aggregate to collapse it).
+  // neither and gets flagged so the sidebar can hide it. Callers only need to
+  // know whether a cover exists, so the 1:1 cover join reduces to a boolean —
+  // fetching (and GROUPing BY) the BYTEA blob itself pulled every folder's
+  // cover image out of Postgres just to be thrown away.
   const rows = await db.all<{
     id: number; name: string; comic_count: number;
     n_comic: number | null; n_book: number | null;
-    cover_thumbnail: Buffer | null;
+    has_cover: boolean;
   }>(
     `SELECT f.id, f.name,
             COUNT(fc.comic_id) as comic_count,
             SUM(CASE WHEN ic.media_type = 'comic' THEN 1 ELSE 0 END) as n_comic,
             SUM(CASE WHEN ic.media_type = 'book'  THEN 1 ELSE 0 END) as n_book,
-            cc.cover_thumbnail
+            (cc.cover_thumbnail IS NOT NULL) as has_cover
      FROM folders f
      LEFT JOIN folder_comics fc ON f.id = fc.folder_id
      LEFT JOIN comics ic ON fc.comic_id = ic.id
      LEFT JOIN comics cc ON f.cover_comic_id = cc.id
      ${where}
-     GROUP BY f.id, cc.cover_thumbnail
+     GROUP BY f.id, (cc.cover_thumbnail IS NOT NULL)
      ORDER BY lower(f.name)`,
     params,
   );
@@ -133,7 +135,7 @@ export async function getAllFolders(
     id: r.id,
     name: r.name,
     comicCount: r.comic_count,
-    coverThumbnail: r.cover_thumbnail,
+    hasCoverThumbnail: Boolean(r.has_cover),
     mediaType: resolveFolderMediaType(r.comic_count, r.n_comic, r.n_book),
   }));
 }

@@ -103,3 +103,47 @@ export async function overlayUserState(
   }
   return { ...base, favorited };
 }
+
+/**
+ * Batched `overlayUserState` for list endpoints.
+ *
+ * Overlaying records one at a time costs two queries per record (progress +
+ * favorite) — an N+1 that grows with the list. This fetches the user's
+ * progress and favorites for every id in two total queries, then applies the
+ * same priority rules as `overlayUserState`.
+ *
+ * @param bases The user-agnostic web records from `toWebRecord`.
+ * @param db The library database to read per-user state from.
+ * @param userId The current user's id, or `null` for a guest.
+ * @returns Copies of `bases` with this user's progress and `favorited` flags.
+ */
+export async function overlayUserStateMany(
+  bases: WebComicRecord[],
+  db: LibraryDatabase,
+  userId: number | null,
+): Promise<(WebComicRecord & { favorited: boolean })[]> {
+  // Guests resume from the shared position already carried on each base.
+  if (userId == null || bases.length === 0) {
+    return bases.map((base) => ({ ...base, favorited: false }));
+  }
+  const ids = bases.map((base) => base.id);
+  const [progressById, favoritedIds] = await Promise.all([
+    db.getUserProgressForComics(userId, ids),
+    db.getFavoritedComicIds(userId, ids),
+  ]);
+  return bases.map((base) => {
+    const up = progressById.get(base.id);
+    const favorited = favoritedIds.has(base.id);
+    if (up) {
+      return {
+        ...base,
+        lastPage: up.lastPage,
+        lastLocation: up.lastLocation,
+        lastPercent: up.lastPercent,
+        lastRead: up.lastRead,
+        favorited,
+      };
+    }
+    return { ...base, favorited };
+  });
+}

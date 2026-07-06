@@ -8,7 +8,6 @@ import TabPanel from './TabPanel';
 import SortSheet from './SortSheet';
 import CommandPalette from './CommandPalette';
 import { Toaster } from '@/components/ui/sonner';
-import AdminModal from '@/components/admin/AdminModal';
 import { cn } from '@/lib/utils';
 import { useDrop } from '@/hooks/useDrop';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
@@ -35,8 +34,13 @@ import {
 } from '@/pages/BrowsePages';
 import { ResetPasswordPage, VerifiedPage } from '@/pages/AuthPages';
 import LoginPage from '@/pages/LoginPage';
-import SettingsPage from '@/pages/SettingsPage';
-import UsersPage from '@/pages/UsersPage';
+
+// Lazy-loaded so the admin-only panels (settings, user management, ingest)
+// stay out of the initial library bundle — they're only fetched when an admin
+// actually opens them.
+const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'));
+const UsersPage = React.lazy(() => import('@/pages/UsersPage'));
+const AdminModal = React.lazy(() => import('@/components/admin/AdminModal'));
 
 /**
  * @module
@@ -58,17 +62,38 @@ import UsersPage from '@/pages/UsersPage';
 export default function AppShell() {
   const [sortOpen, setSortOpen] = useState(false);
   const [adminPanel, setAdminPanel] = useState<string | null>(null);
+  // Whether the lazy AdminModal chunk has ever been requested. Kept mounted
+  // after the first open so the dialog's close animation still plays.
+  const [adminMounted, setAdminMounted] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<{ file: File; relPath: string }[]>([]);
   const location = useLocation();
   const queryClient = useQueryClient();
   const mainScrollRef = useRef<HTMLElement | null>(null);
 
+  const openAdminModal = (panel: string) => {
+    setAdminMounted(true);
+    setAdminPanel(panel);
+  };
+
   const { dragging } = useDrop({
     onFilesDropped: (files) => {
       setDroppedFiles(files);
-      setAdminPanel('upload');
+      openAdminModal('upload');
     }
   });
+
+  // Warm the reader chunks (comic/epub/pdf) once the browser is idle so opening
+  // a book doesn't stall on a network fetch. The library shell paints first;
+  // these only fill the HTTP cache. Safari lacks requestIdleCallback.
+  useEffect(() => {
+    const prefetch = () => {
+      void import('@/components/reader/ComicReader').catch(() => {});
+      void import('@/components/reader/EpubReader').catch(() => {});
+      void import('@/components/reader/PdfReader').catch(() => {});
+    };
+    if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(prefetch);
+    else window.setTimeout(prefetch, 2000);
+  }, []);
   const { pullOffset, pullState } = usePullToRefresh(mainScrollRef, () =>
     invalidateLibraryQueries(queryClient)
   );
@@ -91,7 +116,7 @@ export default function AppShell() {
       {!isReader && (
         <Navbar
           onOpenSortSheet={() => setSortOpen(true)}
-          onOpenAdminModal={(panel) => setAdminPanel(panel)}
+          onOpenAdminModal={openAdminModal}
         />
       )}
 
@@ -99,7 +124,7 @@ export default function AppShell() {
       <div className={cn("flex-1 min-h-0 flex flex-col overflow-hidden", !isReader && "pt-2")}>
         <div className={cn("flex-1 min-h-0 flex overflow-hidden", !isReader && "border-t border-border")}>
           {/* Sidebar (Desktop only) */}
-          {!isReader && <Sidebar onOpenAdminModal={(panel) => setAdminPanel(panel)} />}
+          {!isReader && <Sidebar onOpenAdminModal={openAdminModal} />}
 
           {/* Library pages container (hidden when reader is open, but stays mounted) */}
           <div className={cn("flex-1 min-h-0 flex flex-col overflow-hidden", isReader && "hidden")}>
@@ -114,6 +139,14 @@ export default function AppShell() {
                 </div>
               </div>
             )}
+            {/* Suspense catches the lazy admin pages while their chunk loads. */}
+            <React.Suspense
+              fallback={
+                <div className="flex items-center justify-center py-20 text-muted-foreground select-none">
+                  <RefreshCw className="h-5 w-5 animate-spin text-primary" />
+                </div>
+              }
+            >
             <Routes location={lastLibraryLocation}>
               <Route path="/" element={<AllPage />} />
               <Route path="recent" element={<RecentPage />} />
@@ -134,6 +167,7 @@ export default function AppShell() {
               <Route path="tag/:name" element={<TagPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </React.Suspense>
             </main>
           </div>
 
@@ -157,18 +191,22 @@ export default function AppShell() {
       <TabPanel />
       <CommandPalette />
 
-      {/* Admin Action Modal Dialog */}
-      <AdminModal
-        open={adminPanel !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setAdminPanel(null);
-            setDroppedFiles([]);
-          }
-        }}
-        initialPanel={adminPanel}
-        droppedFiles={droppedFiles}
-      />
+      {/* Admin Action Modal Dialog (lazy: only fetched once an admin opens it) */}
+      {adminMounted && (
+        <React.Suspense fallback={null}>
+          <AdminModal
+            open={adminPanel !== null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setAdminPanel(null);
+                setDroppedFiles([]);
+              }
+            }}
+            initialPanel={adminPanel}
+            droppedFiles={droppedFiles}
+          />
+        </React.Suspense>
+      )}
 
       {/* Global Drag-and-drop Overlay */}
       {dragging && (

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Folder, WebComicRecord } from '@/lib/api';
 import ComicCard from './ComicCard';
@@ -57,12 +57,14 @@ export default function LibraryGrid({
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
   const [menuTargetComic, setMenuTargetComic] = useState<WebComicRecord | null>(null);
 
-  const handleContextMenu = (e: React.MouseEvent, record: WebComicRecord) => {
+  // Stable reference so the memoized ComicCards don't re-render when the menu
+  // opens/moves (state setters are stable, so no dependencies).
+  const handleContextMenu = useCallback((e: React.MouseEvent, record: WebComicRecord) => {
     e.preventDefault();
     setMenuPos({ x: e.clientX, y: e.clientY });
     setMenuTargetComic(record);
     setMenuOpen(true);
-  };
+  }, []);
 
   // Infinite Scroll Sentinel Observer
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -86,8 +88,9 @@ export default function LibraryGrid({
     return () => observer.disconnect();
   }, [fetchNextPage, hasNextPage, isLoading]);
 
-  // Build the list of ordered IDs currently visible for range selections
-  const orderedIds = comics.map((c) => c.id);
+  // Build the list of ordered IDs currently visible for range selections.
+  // Memoized so the memoized ComicCards keep a stable prop between renders.
+  const orderedIds = useMemo(() => comics.map((c) => c.id), [comics]);
 
   if (isLoading && comics.length === 0 && folders.length === 0 && groups.length === 0) {
     return (

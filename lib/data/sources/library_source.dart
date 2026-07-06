@@ -126,6 +126,31 @@ class LibraryQuery {
       offset: offset ?? this.offset,
     );
   }
+
+  /// Value equality. Queries key Riverpod *family* providers (e.g.
+  /// `browseComicsProvider`); without it, every rebuild that constructs an
+  /// equal-but-new query created a fresh provider — a refetch per rebuild plus
+  /// a permanently cached duplicate result set.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LibraryQuery &&
+          other.search == search &&
+          other.mediaType == mediaType &&
+          other.readStatus == readStatus &&
+          other.favoritesOnly == favoritesOnly &&
+          other.tag == tag &&
+          other.libraryId == libraryId &&
+          other.seriesName == seriesName &&
+          other.hasBeenRead == hasBeenRead &&
+          other.sort == sort &&
+          other.descending == descending &&
+          other.limit == limit &&
+          other.offset == offset;
+
+  @override
+  int get hashCode => Object.hash(search, mediaType, readStatus, favoritesOnly,
+      tag, libraryId, seriesName, hasBeenRead, sort, descending, limit, offset);
 }
 
 /// The seam that makes the app hybrid: the UI depends only on this interface,

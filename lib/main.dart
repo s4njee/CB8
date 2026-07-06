@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cookie_jar/cookie_jar.dart';
@@ -15,10 +16,14 @@ import 'data/repositories/providers.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   pdfrxFlutterInitialize();
-  final prefs = await SharedPreferences.getInstance();
+  // Both are platform-channel round trips with no dependency on each other;
+  // running them concurrently shaves their combined latency off first frame.
+  final (prefs, supportDir) = await (
+    SharedPreferences.getInstance(),
+    getApplicationSupportDirectory(),
+  ).wait;
 
   // Persistent cookie jar so server sessions survive restarts.
-  final supportDir = await getApplicationSupportDirectory();
   final cookieDir = Directory(p.join(supportDir.path, '.cookies'));
   await cookieDir.create(recursive: true);
   final cookieJar = PersistCookieJar(storage: FileStorage('${cookieDir.path}/'));

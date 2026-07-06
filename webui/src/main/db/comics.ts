@@ -18,7 +18,7 @@ import {
   type ComicMetadataRow,
   type ComicMetadataUpdateFields,
 } from './comicMetadataHelpers';
-import { COMIC_FULL_COLUMNS, COMIC_LIST_COLUMNS } from './types';
+import { COMIC_FULL_COLUMNS, COMIC_LIST_COLUMNS, COMIC_NO_BLOB_COLUMNS } from './types';
 import { addTag } from './tags';
 
 /**
@@ -213,6 +213,20 @@ export async function getComic(db: Db, id: number): Promise<MediaRecord | null> 
   return rowToRecord(db, row);
 }
 
+/**
+ * Fetch a comic without the cover blob or tags — one light query.
+ *
+ * For hot routes (page/file streaming, existence checks) that only need the
+ * file path and basic metadata, `getComic` wastes work: it pulls the BYTEA
+ * cover out of Postgres and runs a second query for tags, neither of which
+ * the caller uses. The returned record has `coverThumbnail: null`, `tags: []`.
+ */
+export async function getComicLite(db: Db, id: number): Promise<MediaRecord | null> {
+  const row = await db.get<ComicRow>(`SELECT ${COMIC_NO_BLOB_COLUMNS} FROM comics WHERE id = ?`, [id]);
+  if (!row) return null;
+  return rowToRecordBase(row, []);
+}
+
 export async function comicExistsByPath(db: Db, filePath: string): Promise<boolean> {
   const row = await db.get('SELECT 1 FROM comics WHERE file_path = ?', [filePath]);
   return row !== undefined;
@@ -279,7 +293,7 @@ async function readingList(
     params.push(mediaType);
   }
   const rows = await db.all<ComicRow>(
-    `SELECT ${COMIC_FULL_COLUMNS} FROM comics
+    `SELECT ${COMIC_NO_BLOB_COLUMNS} FROM comics
      WHERE ${conditions.join(' AND ')}
      ORDER BY last_read DESC LIMIT ?`,
     [...params, limit],
@@ -327,7 +341,7 @@ export async function getAllSeries(db: Db): Promise<{ name: string; count: numbe
 
 export async function getSeriesComics(db: Db, name: string): Promise<MediaRecord[]> {
   const rows = await db.all<ComicRow>(
-    `SELECT ${COMIC_FULL_COLUMNS}
+    `SELECT ${COMIC_NO_BLOB_COLUMNS}
      FROM comics
      WHERE lower(series_name) = lower(?)
      ORDER BY COALESCE(volume_number, 999999), COALESCE(chapter_number, 999999), lower(title)`,
@@ -383,8 +397,15 @@ export async function queryComicsForUser(
 
   const allParams = [...userOverlay.joinParams, ...params];
 
-  const countSql = `SELECT COUNT(*) as cnt FROM comics c ${userOverlay.progressJoin} ${userOverlay.favoriteJoin} ${where}`;
-  const countRow = await db.get<CountRow>(countSql, allParams);
+  // The up/uf LEFT JOINs are 1:1 (both PK'd on user_id, comic_id) so they never
+  // change the row count. Only include them in COUNT(*) when the WHERE actually
+  // references them (read-status / favorites filters) — otherwise the count scan
+  // does two needless index lookups per comic.
+  const countNeedsOverlay = userId != null && (Boolean(options.readStatus) || Boolean(options.favorites));
+  const countSql = countNeedsOverlay
+    ? `SELECT COUNT(*) as cnt FROM comics c ${userOverlay.progressJoin} ${userOverlay.favoriteJoin} ${where}`
+    : `SELECT COUNT(*) as cnt FROM comics c ${where}`;
+  const countRow = await db.get<CountRow>(countSql, countNeedsOverlay ? allParams : params);
   const totalCount = countRow?.cnt ?? 0;
 
   const rowsSql = `SELECT ${COMIC_LIST_COLUMNS},

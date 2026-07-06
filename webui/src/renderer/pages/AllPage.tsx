@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useUiStore } from '@/store/uiStore';
@@ -30,10 +30,13 @@ export default function AllPage() {
     favoritesOnly: favoritesOnly || undefined,
   });
 
-  // Flatten the infinite query pages into a single flat array of WebComicRecord
-  const comics = infiniteQuery.data
-    ? infiniteQuery.data.pages.flatMap((page) => page.records)
-    : [];
+  // Flatten the infinite query pages into a single flat array of WebComicRecord.
+  // Memoized so the grid's memoized cards keep stable props between re-renders.
+  const infiniteData = infiniteQuery.data;
+  const comics = useMemo(
+    () => infiniteData?.pages.flatMap((page) => page.records) ?? [],
+    [infiniteData],
+  );
 
   // 2. Query for global series-grouped browse list (when search is active)
   const { data: searchGroupsResponse, isLoading: searchLoading } = useQuery({

@@ -70,10 +70,16 @@ export async function serveStatic(
     const stat = await fsp.stat(absPath);
     const ext = path.extname(absPath).toLowerCase();
     const mime = STATIC_MIME[ext] ?? 'application/octet-stream';
+    // Vite emits content-hashed filenames under /assets/ (e.g.
+    // index-C8hzdvhv.js), so those bytes never change for a given URL — let
+    // browsers cache them forever instead of revalidating every load.
+    // Everything else (index.html, manifest.json, favicon) stays no-cache so
+    // deploys are picked up immediately.
+    const immutable = relPath.startsWith('/assets/');
     res.writeHead(200, {
       'Content-Type': mime,
       'Content-Length': String(stat.size),
-      'Cache-Control': 'no-cache',
+      'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
     });
     const staticStream = fs.createReadStream(absPath);
     staticStream.on('error', (err) => {

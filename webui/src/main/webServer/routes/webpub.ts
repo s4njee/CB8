@@ -13,7 +13,7 @@ export const handle: RouteHandler = async (ctx) => {
   const manifestMatch = pathname.match(/^\/api\/comics\/(\d+)\/manifest$/);
   if (method === 'GET' && manifestMatch) {
     const id = parseInt(manifestMatch[1], 10);
-    const record = await db.getComic(id);
+    const record = await db.getComicLite(id);
     if (!record) {
       sendError(res, 404, 'Comic not found');
       return true;

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useUiStore } from '@/store/uiStore';
@@ -49,9 +49,12 @@ export default function TagPage() {
     getNextPageParam: nextCatalogPageParam,
   });
 
-  const comics = infiniteQuery.data
-    ? infiniteQuery.data.pages.flatMap((page) => page.records)
-    : [];
+  // Memoized so the grid's memoized cards keep stable props between re-renders.
+  const infiniteData = infiniteQuery.data;
+  const comics = useMemo(
+    () => infiniteData?.pages.flatMap((page) => page.records) ?? [],
+    [infiniteData],
+  );
 
   return (
     <div className="flex flex-col min-h-full">

@@ -34,6 +34,18 @@ export async function requireComic(ctx: RequestContext, comicId: number): Promis
   return null;
 }
 
+/**
+ * Like `requireComic`, but skips the cover blob and tags queries. Use on hot
+ * paths (progress saves, bookmarks, history) that only need existence and
+ * basic fields like `pageCount` — the returned record has `tags: []`.
+ */
+export async function requireComicLite(ctx: RequestContext, comicId: number): Promise<MediaRecord | null> {
+  const comic = await ctx.db.getComicLite(comicId);
+  if (comic) return comic;
+  sendError(ctx.res, 404, 'Comic not found');
+  return null;
+}
+
 export function parseBoundedInteger(
   raw: string | undefined,
   fallback: number,

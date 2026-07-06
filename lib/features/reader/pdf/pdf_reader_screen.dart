@@ -12,6 +12,7 @@ import '../../../data/local_files.dart';
 import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
 import '../comic/reading_mode.dart';
+import '../progress_saver.dart';
 import '../reader_keyboard.dart';
 import '../widgets/reader_widgets.dart';
 
@@ -39,6 +40,7 @@ class PdfReaderScreen extends ConsumerStatefulWidget {
 
 class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
   final PdfViewerController _controller = PdfViewerController();
+  final ProgressSaver _progress = ProgressSaver();
   String? _path;
   String? _error;
   int _page = 0; // 0-based current page
@@ -55,6 +57,7 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
 
   @override
   void dispose() {
+    _progress.flush(); // persist the final position before leaving
     restoreSystemChrome(); // bring the system bars back when leaving the reader
     super.dispose();
   }
@@ -80,11 +83,11 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
     final completed = _pageCount > 0 && page >= _pageCount - 1;
     // Explicit bool so paging back from the last page clears `completed` and the
     // book returns to Continue Reading (a `true`-or-null write could never undo it).
-    ref.read(activeSourceProvider).setProgress(
-          widget.comic.id,
-          page: page,
-          completed: completed,
-        );
+    // Debounced: capture the source now, write after the flipping settles.
+    final source = ref.read(activeSourceProvider);
+    _progress.schedule(
+      () => source.setProgress(widget.comic.id, page: page, completed: completed),
+    );
   }
 
   /// Lay pages out for the active reading mode. Returns one rect per page (in

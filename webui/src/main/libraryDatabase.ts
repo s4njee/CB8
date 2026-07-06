@@ -82,6 +82,8 @@ export class LibraryDatabase {
   removeComics(ids: number[]) { return comics.removeComics(this.db, ids); }
   isDismissed(filePath: string) { return comics.isDismissed(this.db, filePath); }
   getComic(id: number) { return comics.getComic(this.db, id); }
+  /** Light single-comic fetch: no cover blob, no tags. For hot read paths. */
+  getComicLite(id: number) { return comics.getComicLite(this.db, id); }
   comicExistsByPath(filePath: string) { return comics.comicExistsByPath(this.db, filePath); }
   updateCoverThumbnailByPath(filePath: string, coverThumbnail: Buffer | null) {
     return comics.updateCoverThumbnailByPath(this.db, filePath, coverThumbnail);
@@ -242,6 +244,9 @@ export class LibraryDatabase {
   getUserProgress(userId: number, comicId: number) {
     return progress.getUserProgress(this.db, userId, comicId);
   }
+  getUserProgressForComics(userId: number, comicIds: number[]) {
+    return progress.getUserProgressForComics(this.db, userId, comicIds);
+  }
   getRecentlyReadByUser(userId: number, limit: number, mediaType?: 'comic' | 'book') {
     return progress.getRecentlyReadByUser(this.db, userId, limit, mediaType);
   }
@@ -275,6 +280,9 @@ export class LibraryDatabase {
   addFavorite(userId: number, comicId: number) { return favorites.addFavorite(this.db, userId, comicId); }
   removeFavorite(userId: number, comicId: number) { return favorites.removeFavorite(this.db, userId, comicId); }
   isFavorite(userId: number, comicId: number) { return favorites.isFavorite(this.db, userId, comicId); }
+  getFavoritedComicIds(userId: number, comicIds: number[]) {
+    return favorites.getFavoritedComicIds(this.db, userId, comicIds);
+  }
 
   // --- background jobs (scan_jobs progress mirror) ---
   createScanJob(input: Parameters<typeof jobs.createScanJob>[1]) { return jobs.createScanJob(this.db, input); }

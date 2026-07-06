@@ -14,18 +14,21 @@ interface ComicCardProps {
   onContextMenu: (e: React.MouseEvent, record: WebComicRecord) => void;
 }
 
-export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }: ComicCardProps) {
+function ComicCard({ record, isAdmin, orderedIds, onContextMenu }: ComicCardProps) {
   const navigate = useNavigate();
   const [imgSrc, setImgSrc] = useState<string>(
     `/api/comics/${record.id}/thumbnail?v=${encodeURIComponent(record.dateAdded)}`
   );
   const [imgLoading, setImgLoading] = useState(true);
 
-  const selectedIds = useSelectionStore((state) => state.selectedIds);
+  // Granular subscriptions: derive booleans instead of subscribing to the
+  // selectedIds array itself, so toggling a selection only re-renders the
+  // affected card (and the whole grid only on the 0 <-> 1 transition) rather
+  // than every card on every change.
+  const isSelected = useSelectionStore((state) => state.selectedIds.includes(record.id));
+  const hasSelection = useSelectionStore((state) => state.selectedIds.length > 0);
   const toggleSelect = useSelectionStore((state) => state.toggleSelect);
   const selectRange = useSelectionStore((state) => state.selectRange);
-
-  const isSelected = selectedIds.includes(record.id);
 
   // Gesture handling for mobile long-press context menu
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
@@ -64,7 +67,7 @@ export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }
 
   const handleCardClick = (e: React.MouseEvent) => {
     // If in bulk selection mode, clicking the card toggles selection instead of opening
-    if (selectedIds.length > 0 && isAdmin) {
+    if (hasSelection && isAdmin) {
       handleCheckboxClick(e);
     } else {
       // Normal navigate
@@ -98,6 +101,7 @@ export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }
           src={imgSrc}
           alt={record.title}
           loading="lazy"
+          decoding="async"
           className={cn(
             "object-cover w-full h-full transition-transform duration-300 group-hover:scale-105",
             imgLoading ? "opacity-30 blur-xs" : isCompleted ? "opacity-55" : "opacity-100"
@@ -115,7 +119,7 @@ export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }
             onClick={handleCheckboxClick}
             className={cn(
               "absolute top-2 left-2 z-10 transition-opacity duration-200",
-              isSelected || selectedIds.length > 0 ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              isSelected || hasSelection ? "opacity-100" : "opacity-0 group-hover:opacity-100"
             )}
           >
             <Checkbox
@@ -163,3 +167,9 @@ export default function ComicCard({ record, isAdmin, orderedIds, onContextMenu }
     </div>
   );
 }
+
+// Memoized so grid-level re-renders (context menu opening, pages appending,
+// session refreshes) don't re-render every card. React Query's structural
+// sharing keeps `record` references stable, and LibraryGrid memoizes
+// `orderedIds`/`onContextMenu`, so the shallow prop check holds.
+export default React.memo(ComicCard);
