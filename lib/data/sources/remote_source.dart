@@ -254,6 +254,7 @@ class RemoteSource implements LibrarySource {
     String id, {
     int? page,
     String? location,
+    double? percent,
     bool? completed,
   }) async {
     // Best-effort and fire-and-forget from the readers: a failed write (e.g. a
@@ -262,7 +263,12 @@ class RemoteSource implements LibrarySource {
     try {
       await _dio.put(
         '/api/comics/$id/progress',
-        data: {'page': ?page, 'location': ?location, 'completed': ?completed},
+        data: {
+          'page': ?page,
+          'location': ?location,
+          'percent': ?percent,
+          'completed': ?completed,
+        },
       );
     } catch (e) {
       // ignore: avoid_print

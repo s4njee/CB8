@@ -237,7 +237,7 @@ source-agnostic row the UI renders. Both sources map into it. Notable fields:
 ### LocalSource
 
 Drift queries over the on-device SQLite DB. The schema
-(`data/db/database.dart`, currently **v4**) mirrors CB8's tables trimmed to the
+(`data/db/database.dart`, currently **v5**) mirrors CB8's tables trimmed to the
 single-user case: `comics`, `bookmarks`, `readingHistory`, `favorites`,
 `libraries`+`libraryComics`, `folders`+`folderComics`, `tags`+`comicTags`,
 `wantToRead`, `watchedFolders`, and `connections`. Two things worth knowing:
@@ -250,8 +250,10 @@ single-user case: `comics`, `bookmarks`, `readingHistory`, `favorites`,
   lazily per-card via `localCoverProvider`.
 
 `watchChanges()` is backed by real Drift table-update notifications, so local
-edits refresh the UI instantly. `setProgress` writes `lastPage`/`lastLocation`/
-`completed`/`lastRead` and appends a `readingHistory` row.
+edits refresh the UI instantly. `setProgress` writes `lastPage`, `lastLocation`,
+`lastPercent`, `completed`, and `lastRead`, and appends a `readingHistory` row.
+(`lastPercent` is the whole-book percent for EPUBs; the v5 migration backfilled
+it from already-stored Locators via SQLite's `json_extract`.)
 
 ### RemoteSource
 

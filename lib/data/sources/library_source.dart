@@ -184,8 +184,15 @@ abstract interface class LibrarySource {
   /// Single item detail.
   Future<ComicSummary?> getComic(String id);
 
-  /// Persist reading progress for a book.
-  Future<void> setProgress(String id, {int? page, String? location, bool? completed});
+  /// Persist reading progress for a book. [percent] is whole-book progress
+  /// 0–100 for reflowable formats (EPUB), where a page index is meaningless.
+  Future<void> setProgress(
+    String id, {
+    int? page,
+    String? location,
+    double? percent,
+    bool? completed,
+  });
 
   /// Toggle favorite state.
   Future<void> setFavorite(String id, bool favorite);

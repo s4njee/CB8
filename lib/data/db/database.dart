@@ -48,6 +48,10 @@ class Comics extends Table {
   /// Opaque reader locator for resume; null for paged formats.
   TextColumn get lastLocation => text().nullable()();
 
+  /// Whole-book reading position 0–100 for reflowable formats (EPUB), where a
+  /// page index is meaningless. Null for paged formats / unopened books.
+  RealColumn get lastPercent => real().nullable()();
+
   /// Timestamp of the most recent read, used by the Recent shelf.
   DateTimeColumn get lastRead => dateTime().nullable()();
 
@@ -310,7 +314,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -331,6 +335,17 @@ class AppDatabase extends _$AppDatabase {
       // left behind before enforcement kicks in. Runs before beforeOpen (FK still
       // off here), so these bulk deletes don't themselves trip constraints.
       if (from < 4) await _sweepOrphans();
+      // v5 adds whole-book percent for reflowable formats. Backfill from the
+      // stored Readium Locator JSON so existing in-progress EPUBs show book
+      // progress immediately (json_extract ships in the bundled sqlite3).
+      if (from < 5) {
+        await m.addColumn(comics, comics.lastPercent);
+        await customStatement(
+          "UPDATE comics SET last_percent = "
+          "json_extract(last_location, '\$.locations.totalProgression') * 100 "
+          "WHERE last_location IS NOT NULL AND json_valid(last_location)",
+        );
+      }
     },
     beforeOpen: (details) async {
       // SQLite defaults foreign_keys to OFF; without this every onDelete cascade

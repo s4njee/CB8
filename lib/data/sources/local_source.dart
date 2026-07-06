@@ -46,6 +46,7 @@ class LocalSource implements LibrarySource {
       coverThumbnail: row.coverThumbnail,
       lastPage: row.lastPage,
       lastLocation: row.lastLocation,
+      lastPercent: row.lastPercent,
       completed: row.completed,
       isFavorite: favorite,
       seriesName: row.seriesName,
@@ -69,6 +70,7 @@ class LocalSource implements LibrarySource {
       c.mediaType,
       c.lastPage,
       c.lastLocation,
+      c.lastPercent,
       c.completed,
       c.seriesName,
       c.volumeNumber,
@@ -88,6 +90,7 @@ class LocalSource implements LibrarySource {
       coverThumbnail: null, // loaded lazily by the card to keep lists light
       lastPage: r.read(c.lastPage),
       lastLocation: r.read(c.lastLocation),
+      lastPercent: r.read(c.lastPercent),
       completed: r.read(c.completed)!,
       isFavorite: favIds.contains(id),
       seriesName: r.read(c.seriesName),
@@ -234,6 +237,7 @@ class LocalSource implements LibrarySource {
     String id, {
     int? page,
     String? location,
+    double? percent,
     bool? completed,
   }) async {
     final intId = int.tryParse(id);
@@ -242,6 +246,7 @@ class LocalSource implements LibrarySource {
       ComicsCompanion(
         lastPage: page == null ? const Value.absent() : Value(page),
         lastLocation: location == null ? const Value.absent() : Value(location),
+        lastPercent: percent == null ? const Value.absent() : Value(percent),
         completed: completed == null ? const Value.absent() : Value(completed),
         lastRead: Value(DateTime.now()),
       ),

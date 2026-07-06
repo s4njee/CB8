@@ -110,6 +110,17 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _lastPercentMeta = const VerificationMeta(
+    'lastPercent',
+  );
+  @override
+  late final GeneratedColumn<double> lastPercent = GeneratedColumn<double>(
+    'last_percent',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _lastReadMeta = const VerificationMeta(
     'lastRead',
   );
@@ -239,6 +250,7 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
     dateAdded,
     lastPage,
     lastLocation,
+    lastPercent,
     lastRead,
     completed,
     mediaType,
@@ -321,6 +333,15 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
         lastLocation.isAcceptableOrUnknown(
           data['last_location']!,
           _lastLocationMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_percent')) {
+      context.handle(
+        _lastPercentMeta,
+        lastPercent.isAcceptableOrUnknown(
+          data['last_percent']!,
+          _lastPercentMeta,
         ),
       );
     }
@@ -441,6 +462,10 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
         DriftSqlType.string,
         data['${effectivePrefix}last_location'],
       ),
+      lastPercent: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}last_percent'],
+      ),
       lastRead: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_read'],
@@ -517,11 +542,16 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
   /// When the row was imported; defaults to now.
   final DateTime dateAdded;
 
-  /// Reading progress. `lastPage` for comics/PDF; `lastLocation` is an EPUB CFI.
+  /// Reading progress. `lastPage` for paged formats; `lastLocation` is a
+  /// Readium Locator JSON string for EPUB.
   final int? lastPage;
 
-  /// EPUB CFI (or other opaque locator) for resume; null for paged formats.
+  /// Opaque reader locator for resume; null for paged formats.
   final String? lastLocation;
+
+  /// Whole-book reading position 0–100 for reflowable formats (EPUB), where a
+  /// page index is meaningless. Null for paged formats / unopened books.
+  final double? lastPercent;
 
   /// Timestamp of the most recent read, used by the Recent shelf.
   final DateTime? lastRead;
@@ -565,6 +595,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     required this.dateAdded,
     this.lastPage,
     this.lastLocation,
+    this.lastPercent,
     this.lastRead,
     required this.completed,
     required this.mediaType,
@@ -594,6 +625,9 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     }
     if (!nullToAbsent || lastLocation != null) {
       map['last_location'] = Variable<String>(lastLocation);
+    }
+    if (!nullToAbsent || lastPercent != null) {
+      map['last_percent'] = Variable<double>(lastPercent);
     }
     if (!nullToAbsent || lastRead != null) {
       map['last_read'] = Variable<DateTime>(lastRead);
@@ -644,6 +678,9 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
       lastLocation: lastLocation == null && nullToAbsent
           ? const Value.absent()
           : Value(lastLocation),
+      lastPercent: lastPercent == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastPercent),
       lastRead: lastRead == null && nullToAbsent
           ? const Value.absent()
           : Value(lastRead),
@@ -689,6 +726,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
       dateAdded: serializer.fromJson<DateTime>(json['dateAdded']),
       lastPage: serializer.fromJson<int?>(json['lastPage']),
       lastLocation: serializer.fromJson<String?>(json['lastLocation']),
+      lastPercent: serializer.fromJson<double?>(json['lastPercent']),
       lastRead: serializer.fromJson<DateTime?>(json['lastRead']),
       completed: serializer.fromJson<bool>(json['completed']),
       mediaType: serializer.fromJson<String>(json['mediaType']),
@@ -715,6 +753,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
       'dateAdded': serializer.toJson<DateTime>(dateAdded),
       'lastPage': serializer.toJson<int?>(lastPage),
       'lastLocation': serializer.toJson<String?>(lastLocation),
+      'lastPercent': serializer.toJson<double?>(lastPercent),
       'lastRead': serializer.toJson<DateTime?>(lastRead),
       'completed': serializer.toJson<bool>(completed),
       'mediaType': serializer.toJson<String>(mediaType),
@@ -739,6 +778,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     DateTime? dateAdded,
     Value<int?> lastPage = const Value.absent(),
     Value<String?> lastLocation = const Value.absent(),
+    Value<double?> lastPercent = const Value.absent(),
     Value<DateTime?> lastRead = const Value.absent(),
     bool? completed,
     String? mediaType,
@@ -762,6 +802,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     dateAdded: dateAdded ?? this.dateAdded,
     lastPage: lastPage.present ? lastPage.value : this.lastPage,
     lastLocation: lastLocation.present ? lastLocation.value : this.lastLocation,
+    lastPercent: lastPercent.present ? lastPercent.value : this.lastPercent,
     lastRead: lastRead.present ? lastRead.value : this.lastRead,
     completed: completed ?? this.completed,
     mediaType: mediaType ?? this.mediaType,
@@ -791,6 +832,9 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
       lastLocation: data.lastLocation.present
           ? data.lastLocation.value
           : this.lastLocation,
+      lastPercent: data.lastPercent.present
+          ? data.lastPercent.value
+          : this.lastPercent,
       lastRead: data.lastRead.present ? data.lastRead.value : this.lastRead,
       completed: data.completed.present ? data.completed.value : this.completed,
       mediaType: data.mediaType.present ? data.mediaType.value : this.mediaType,
@@ -823,6 +867,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
           ..write('dateAdded: $dateAdded, ')
           ..write('lastPage: $lastPage, ')
           ..write('lastLocation: $lastLocation, ')
+          ..write('lastPercent: $lastPercent, ')
           ..write('lastRead: $lastRead, ')
           ..write('completed: $completed, ')
           ..write('mediaType: $mediaType, ')
@@ -839,7 +884,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     uri,
     title,
@@ -849,6 +894,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     dateAdded,
     lastPage,
     lastLocation,
+    lastPercent,
     lastRead,
     completed,
     mediaType,
@@ -860,7 +906,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     genre,
     year,
     summary,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -877,6 +923,7 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
           other.dateAdded == this.dateAdded &&
           other.lastPage == this.lastPage &&
           other.lastLocation == this.lastLocation &&
+          other.lastPercent == this.lastPercent &&
           other.lastRead == this.lastRead &&
           other.completed == this.completed &&
           other.mediaType == this.mediaType &&
@@ -900,6 +947,7 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
   final Value<DateTime> dateAdded;
   final Value<int?> lastPage;
   final Value<String?> lastLocation;
+  final Value<double?> lastPercent;
   final Value<DateTime?> lastRead;
   final Value<bool> completed;
   final Value<String> mediaType;
@@ -921,6 +969,7 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     this.dateAdded = const Value.absent(),
     this.lastPage = const Value.absent(),
     this.lastLocation = const Value.absent(),
+    this.lastPercent = const Value.absent(),
     this.lastRead = const Value.absent(),
     this.completed = const Value.absent(),
     this.mediaType = const Value.absent(),
@@ -943,6 +992,7 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     this.dateAdded = const Value.absent(),
     this.lastPage = const Value.absent(),
     this.lastLocation = const Value.absent(),
+    this.lastPercent = const Value.absent(),
     this.lastRead = const Value.absent(),
     this.completed = const Value.absent(),
     this.mediaType = const Value.absent(),
@@ -966,6 +1016,7 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     Expression<DateTime>? dateAdded,
     Expression<int>? lastPage,
     Expression<String>? lastLocation,
+    Expression<double>? lastPercent,
     Expression<DateTime>? lastRead,
     Expression<bool>? completed,
     Expression<String>? mediaType,
@@ -988,6 +1039,7 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
       if (dateAdded != null) 'date_added': dateAdded,
       if (lastPage != null) 'last_page': lastPage,
       if (lastLocation != null) 'last_location': lastLocation,
+      if (lastPercent != null) 'last_percent': lastPercent,
       if (lastRead != null) 'last_read': lastRead,
       if (completed != null) 'completed': completed,
       if (mediaType != null) 'media_type': mediaType,
@@ -1012,6 +1064,7 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     Value<DateTime>? dateAdded,
     Value<int?>? lastPage,
     Value<String?>? lastLocation,
+    Value<double?>? lastPercent,
     Value<DateTime?>? lastRead,
     Value<bool>? completed,
     Value<String>? mediaType,
@@ -1034,6 +1087,7 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
       dateAdded: dateAdded ?? this.dateAdded,
       lastPage: lastPage ?? this.lastPage,
       lastLocation: lastLocation ?? this.lastLocation,
+      lastPercent: lastPercent ?? this.lastPercent,
       lastRead: lastRead ?? this.lastRead,
       completed: completed ?? this.completed,
       mediaType: mediaType ?? this.mediaType,
@@ -1077,6 +1131,9 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     }
     if (lastLocation.present) {
       map['last_location'] = Variable<String>(lastLocation.value);
+    }
+    if (lastPercent.present) {
+      map['last_percent'] = Variable<double>(lastPercent.value);
     }
     if (lastRead.present) {
       map['last_read'] = Variable<DateTime>(lastRead.value);
@@ -1126,6 +1183,7 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
           ..write('dateAdded: $dateAdded, ')
           ..write('lastPage: $lastPage, ')
           ..write('lastLocation: $lastLocation, ')
+          ..write('lastPercent: $lastPercent, ')
           ..write('lastRead: $lastRead, ')
           ..write('completed: $completed, ')
           ..write('mediaType: $mediaType, ')
@@ -4658,6 +4716,7 @@ typedef $$ComicsTableCreateCompanionBuilder =
       Value<DateTime> dateAdded,
       Value<int?> lastPage,
       Value<String?> lastLocation,
+      Value<double?> lastPercent,
       Value<DateTime?> lastRead,
       Value<bool> completed,
       Value<String> mediaType,
@@ -4681,6 +4740,7 @@ typedef $$ComicsTableUpdateCompanionBuilder =
       Value<DateTime> dateAdded,
       Value<int?> lastPage,
       Value<String?> lastLocation,
+      Value<double?> lastPercent,
       Value<DateTime?> lastRead,
       Value<bool> completed,
       Value<String> mediaType,
@@ -4895,6 +4955,11 @@ class $$ComicsTableFilterComposer
 
   ColumnFilters<String> get lastLocation => $composableBuilder(
     column: $table.lastLocation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get lastPercent => $composableBuilder(
+    column: $table.lastPercent,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5208,6 +5273,11 @@ class $$ComicsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get lastPercent => $composableBuilder(
+    column: $table.lastPercent,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get lastRead => $composableBuilder(
     column: $table.lastRead,
     builder: (column) => ColumnOrderings(column),
@@ -5301,6 +5371,11 @@ class $$ComicsTableAnnotationComposer
 
   GeneratedColumn<String> get lastLocation => $composableBuilder(
     column: $table.lastLocation,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get lastPercent => $composableBuilder(
+    column: $table.lastPercent,
     builder: (column) => column,
   );
 
@@ -5590,6 +5665,7 @@ class $$ComicsTableTableManager
                 Value<DateTime> dateAdded = const Value.absent(),
                 Value<int?> lastPage = const Value.absent(),
                 Value<String?> lastLocation = const Value.absent(),
+                Value<double?> lastPercent = const Value.absent(),
                 Value<DateTime?> lastRead = const Value.absent(),
                 Value<bool> completed = const Value.absent(),
                 Value<String> mediaType = const Value.absent(),
@@ -5611,6 +5687,7 @@ class $$ComicsTableTableManager
                 dateAdded: dateAdded,
                 lastPage: lastPage,
                 lastLocation: lastLocation,
+                lastPercent: lastPercent,
                 lastRead: lastRead,
                 completed: completed,
                 mediaType: mediaType,
@@ -5634,6 +5711,7 @@ class $$ComicsTableTableManager
                 Value<DateTime> dateAdded = const Value.absent(),
                 Value<int?> lastPage = const Value.absent(),
                 Value<String?> lastLocation = const Value.absent(),
+                Value<double?> lastPercent = const Value.absent(),
                 Value<DateTime?> lastRead = const Value.absent(),
                 Value<bool> completed = const Value.absent(),
                 Value<String> mediaType = const Value.absent(),
@@ -5655,6 +5733,7 @@ class $$ComicsTableTableManager
                 dateAdded: dateAdded,
                 lastPage: lastPage,
                 lastLocation: lastLocation,
+                lastPercent: lastPercent,
                 lastRead: lastRead,
                 completed: completed,
                 mediaType: mediaType,

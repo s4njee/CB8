@@ -117,6 +117,7 @@ void main() {
           id,
           location:
               '{"href":"chapter-1.xhtml","locations":{"progression":0.42}}',
+          percent: 17.0,
           completed: false,
         );
 
@@ -132,6 +133,12 @@ void main() {
 
         final shelf = await source.continueReading();
         expect(shelf.map((c) => c.id), contains(id));
+
+        // Whole-book percent surfaces on the summary and drives the card /
+        // home-hero progress bar (books have no meaningful lastPage).
+        final book = shelf.firstWhere((c) => c.id == id);
+        expect(book.lastPercent, 17.0);
+        expect(book.progress, closeTo(0.17, 0.001));
       },
     );
   });

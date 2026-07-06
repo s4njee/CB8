@@ -333,16 +333,16 @@ class _UnifiedReaderScreenState extends ConsumerState<UnifiedReaderScreen> {
     // and each write kicks off a catalog-wide provider refresh. Capture the
     // source now; persist once the position settles.
     final source = ref.read(activeSourceProvider);
+    // Whole-book progression, not the per-resource `progression` (which is
+    // position within the current chapter) — it drives the completed flag and
+    // the persisted percent that library cards and the home hero show.
+    final total = locator.locations?.totalProgression;
     _progress.schedule(
       () => source.setProgress(
         widget.comic.id,
         location: jsonEncode(locator.toJson()),
-        // Use whole-book progression, not the per-resource `progression`
-        // (which is position within the current chapter) — otherwise reaching
-        // the end of any chapter would mark the entire book completed.
-        completed:
-            locator.locations?.totalProgression != null &&
-            locator.locations!.totalProgression! >= 0.99,
+        percent: total == null ? null : (total.clamp(0.0, 1.0) * 100),
+        completed: total != null && total >= 0.99,
       ),
     );
   }
