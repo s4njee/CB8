@@ -16,7 +16,7 @@ Node, generic Docker, other clusters) see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT
 
 Argo CD (in the cluster's `argocd` namespace) runs an `Application`
 ([`packaging/argocd/cb8.yaml`](packaging/argocd/cb8.yaml)) that watches
-**`webui/packaging/k8s`** on the **`redesign2`** branch and keeps the `cb8`
+**`webui/packaging/k8s`** on the **`main`** branch and keeps the `cb8`
 namespace in sync — `automated` sync with `selfHeal` and `prune`. So a `git push`
 that changes those manifests rolls out on its own; you do not run `kubectl apply`
 for a normal deploy.
@@ -48,7 +48,7 @@ survive.
 
 The image is **not** built by CI (the only GitHub workflow is the docs site), so
 a frontend/backend change reaches freya in two moves: **build + push a new
-image**, then **bump the pinned tag and push to `redesign2`**. Argo does the rest.
+image**, then **bump the pinned tag and push to `main`**. Argo does the rest.
 
 ### 1. Build and push the image
 
@@ -79,7 +79,7 @@ builder stage, so this takes a few minutes.
 ```sh
 # edit packaging/k8s/kustomization.yaml → images: → newTag: "<TAG>"
 git commit -am "deploy: cb8 <TAG>"
-git push origin redesign2
+git push origin main
 ```
 
 Argo picks up the commit within its sync interval (or immediately if you refresh
@@ -111,7 +111,7 @@ kubectl --context freya -n argocd annotate application cb8 \
 ## Repointing Argo at a different branch
 
 Argo's tracked branch lives in the `Application`'s `spec.source.targetRevision`
-(currently `redesign2`). Changing it is a one-time cluster operation — edit
+(currently `main`). Changing it is a one-time cluster operation — edit
 [`packaging/argocd/cb8.yaml`](packaging/argocd/cb8.yaml) and re-apply the
 Application itself (Argo does not manage its own definition):
 
@@ -125,7 +125,7 @@ Because the deployed version is just the pinned tag in Git, a rollback is a Git
 operation — revert the tag bump and push; Argo syncs back:
 
 ```sh
-git revert <the deploy commit> && git push origin redesign2
+git revert <the deploy commit> && git push origin main
 ```
 
 Or roll back live and let `selfHeal` be overridden temporarily via the Argo UI /
