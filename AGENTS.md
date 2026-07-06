@@ -56,7 +56,7 @@ lib/
   features/
     shell/             adaptive nav (rail / bottom bar) + top bar
     library/ organize/ connections/ import/ settings/
-    reader/            dispatcher + comic / pdf / epub readers
+    reader/            dispatcher + comic / pdf readers + unified (EPUB) reader
 test/                  tests + test/support/fake_cb8_server.dart
 ```
 
