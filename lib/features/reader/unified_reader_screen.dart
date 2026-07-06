@@ -1182,10 +1182,39 @@ class _UnifiedReaderScreenState extends ConsumerState<UnifiedReaderScreen> {
     );
   }
 
+  /// Index of the locator's resource in the reading order (0-based), or null
+  /// when it can't be resolved. Locator hrefs may carry a fragment; compare on
+  /// the path part only.
+  int? _chapterIndex() {
+    final href = _locator?.href.split('#').first;
+    final order = _pub?.readingOrder;
+    if (href == null || order == null) return null;
+    final i = order.indexWhere((l) => l.href.split('#').first == href);
+    return i < 0 ? null : i;
+  }
+
   Widget _progressBar(BuildContext context) {
+    // The slider stays per-chapter — Readium's goToProgression only seeks
+    // within the current resource — but the label answers "how far into the
+    // BOOK am I", with chapter context so the scrubber still reads sensibly.
     final rawProgression = _locator?.locations?.progression ?? 0.0;
     final progression = rawProgression.clamp(0.0, 1.0).toDouble();
-    final percent = (progression * 100).round();
+
+    final total = _locator?.locations?.totalProgression;
+    final chapterCount = _pub?.readingOrder.length ?? 0;
+    final chapter = _chapterIndex();
+    final bookPercent =
+        total == null ? null : (total.clamp(0.0, 1.0) * 100).round();
+
+    // "Ch 7/38 · 42%" for multi-chapter books with a known whole-book
+    // position; degrade gracefully to whichever part is available.
+    final label = [
+      if (chapter != null && chapterCount > 1) 'Ch ${chapter + 1}/$chapterCount',
+      if (bookPercent != null)
+        '$bookPercent%'
+      else if (chapter == null || chapterCount <= 1)
+        '${(progression * 100).round()}%',
+    ].join(' · ');
 
     return Container(
       color: _readerChromeColor,
@@ -1197,7 +1226,7 @@ class _UnifiedReaderScreenState extends ConsumerState<UnifiedReaderScreen> {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          const labelWidth = 42.0;
+          const labelWidth = 104.0;
           const gap = 16.0;
           final sliderWidth = math.max(
             240.0,
@@ -1238,8 +1267,10 @@ class _UnifiedReaderScreenState extends ConsumerState<UnifiedReaderScreen> {
                   SizedBox(
                     width: labelWidth,
                     child: Text(
-                      '$percent%',
+                      label,
                       textAlign: TextAlign.right,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 12,
