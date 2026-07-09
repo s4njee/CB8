@@ -14,6 +14,7 @@ import '../../data/models/comic_summary.dart';
 import '../../data/repositories/providers.dart';
 import 'comic/reading_mode.dart';
 import 'progress_saver.dart';
+import 'progress_sync.dart';
 import 'reader_keyboard.dart';
 import 'widgets/reader_widgets.dart';
 
@@ -337,14 +338,25 @@ class _UnifiedReaderScreenState extends ConsumerState<UnifiedReaderScreen> {
     // position within the current chapter) — it drives the completed flag and
     // the persisted percent that library cards and the home hero show.
     final total = locator.locations?.totalProgression;
-    _progress.schedule(
-      () => source.setProgress(
+    final location = jsonEncode(locator.toJson());
+    final percent = total == null ? null : (total.clamp(0.0, 1.0) * 100);
+    final completed = total != null && total >= 0.99;
+    _progress.schedule(() {
+      source.setProgress(
         widget.comic.id,
-        location: jsonEncode(locator.toJson()),
-        percent: total == null ? null : (total.clamp(0.0, 1.0) * 100),
-        completed: total != null && total >= 0.99,
-      ),
-    );
+        location: location,
+        percent: percent,
+        completed: completed,
+      );
+      // Downloaded copy? Mirror to its origin server for cross-device sync.
+      mirrorProgressToOrigin(
+        ref,
+        widget.comic,
+        location: location,
+        percent: percent,
+        completed: completed,
+      );
+    });
   }
 
   Future<void> _applyPreferences() async {

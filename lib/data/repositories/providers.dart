@@ -12,6 +12,7 @@ import '../db/database.dart';
 import '../models/comic_summary.dart';
 import '../models/connection.dart';
 import '../models/groups.dart';
+import '../models/reading_stats.dart';
 import '../sources/library_source.dart';
 import '../sources/local_source.dart';
 import '../sources/remote_source.dart';
@@ -425,6 +426,14 @@ final librariesProvider = FutureProvider<List<LibraryInfo>>((ref) async {
 final seriesProvider = FutureProvider<List<SeriesGroup>>((ref) async {
   ref.watch(libraryChangesProvider);
   return ref.watch(activeSourceProvider).listSeries();
+});
+
+/// Aggregated reading stats for the active source (null when unsupported, e.g.
+/// a remote server). Refetches when the catalog changes so finishing a book
+/// updates the numbers.
+final readingStatsProvider = FutureProvider<ReadingStats?>((ref) async {
+  ref.watch(libraryChangesProvider);
+  return ref.watch(activeSourceProvider).readingStats();
 });
 
 /// Force every catalog provider to refetch from the active source.

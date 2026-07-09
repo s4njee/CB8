@@ -313,7 +313,7 @@ class ImportController extends Notifier<ImportState> {
     }
 
     await _db.into(_db.comics).insert(
-          _companionForDownload(rel, probe, remote),
+          _companionForDownload(rel, probe, remote, source),
           mode: InsertMode.insertOrIgnore,
         );
     // The local library refreshes via the DB change stream when it's the active
@@ -368,6 +368,7 @@ class ImportController extends Notifier<ImportState> {
     String relPath,
     ProbeResult probe,
     ComicSummary remote,
+    RemoteSource source,
   ) {
     final m = probe.embedded;
     return ComicsCompanion.insert(
@@ -385,6 +386,9 @@ class ImportController extends Notifier<ImportState> {
       genre: Value(m.genre),
       year: Value(m.year),
       summary: Value(m.summary),
+      // Link the copy to its server row so reading it offline can sync back.
+      originConnectionId: Value(source.id),
+      originComicId: Value(remote.id),
     );
   }
 }

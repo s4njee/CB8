@@ -13,6 +13,7 @@ import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
 import '../comic/reading_mode.dart';
 import '../progress_saver.dart';
+import '../progress_sync.dart';
 import '../reader_keyboard.dart';
 import '../widgets/reader_widgets.dart';
 
@@ -85,9 +86,11 @@ class _PdfReaderScreenState extends ConsumerState<PdfReaderScreen> {
     // book returns to Continue Reading (a `true`-or-null write could never undo it).
     // Debounced: capture the source now, write after the flipping settles.
     final source = ref.read(activeSourceProvider);
-    _progress.schedule(
-      () => source.setProgress(widget.comic.id, page: page, completed: completed),
-    );
+    _progress.schedule(() {
+      source.setProgress(widget.comic.id, page: page, completed: completed);
+      // Downloaded copy? Mirror to its origin server for cross-device sync.
+      mirrorProgressToOrigin(ref, widget.comic, page: page, completed: completed);
+    });
   }
 
   /// Lay pages out for the active reading mode. Returns one rect per page (in

@@ -58,6 +58,17 @@ class Comics extends Table {
   /// Whether the book has been read to the end.
   BoolColumn get completed => boolean().withDefault(const Constant(false))();
 
+  // Origin of a downloaded-for-offline copy — the server it came from and its id
+  // there. Both null for locally-imported items. Together they let a downloaded
+  // copy sync progress back to its server row (see the reader's sync path), so
+  // reading offline shows up on your other devices.
+
+  /// Connection id of the server this item was downloaded from; null if imported.
+  TextColumn get originConnectionId => text().nullable()();
+
+  /// This item's id on its origin server; null if imported.
+  TextColumn get originComicId => text().nullable()();
+
   /// `comic` or `book` — see [MediaTypes].
   TextColumn get mediaType =>
       text().withDefault(const Constant(MediaTypes.comic))();
@@ -314,7 +325,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -345,6 +356,13 @@ class AppDatabase extends _$AppDatabase {
           "json_extract(last_location, '\$.locations.totalProgression') * 100 "
           "WHERE last_location IS NOT NULL AND json_valid(last_location)",
         );
+      }
+      // v6 links downloaded copies back to their server origin for cross-device
+      // progress sync. Existing downloads predate the link and stay unlinked
+      // (they keep working as local-only copies).
+      if (from < 6) {
+        await m.addColumn(comics, comics.originConnectionId);
+        await m.addColumn(comics, comics.originComicId);
       }
     },
     beforeOpen: (details) async {

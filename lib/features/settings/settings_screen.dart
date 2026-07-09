@@ -7,6 +7,7 @@ import '../../core/theme/theme_controller.dart';
 import '../../data/repositories/providers.dart';
 import '../import/import_controller.dart';
 import '../library/duplicates_screen.dart';
+import 'reading_stats_screen.dart';
 import 'watched_folders_screen.dart';
 
 /// Settings: appearance (accent color) and library import.
@@ -40,6 +41,19 @@ class SettingsScreen extends ConsumerWidget {
                   onTap: () => ref.read(accentThemeProvider.notifier).select(a),
                 ),
             ],
+          ),
+          const Divider(height: 40),
+          const Text('Reading', style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.insights_outlined),
+            title: const Text('Reading stats'),
+            subtitle: const Text('Time read, streaks, and finished books'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ReadingStatsScreen()),
+            ),
           ),
           const Divider(height: 40),
           const Text('Library', style: TextStyle(fontWeight: FontWeight.w600)),

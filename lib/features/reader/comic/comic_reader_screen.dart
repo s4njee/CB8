@@ -12,6 +12,7 @@ import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
 import '../../../data/sources/remote_source.dart';
 import '../progress_saver.dart';
+import '../progress_sync.dart';
 import '../reader_keyboard.dart';
 import '../widgets/reader_widgets.dart';
 import 'cbz_archive.dart';
@@ -192,9 +193,11 @@ class _ComicReaderScreenState extends ConsumerState<ComicReaderScreen> {
     // book returns to Continue Reading (a `true`-or-null write could never undo it).
     // Debounced: capture the source now, write after the flipping settles.
     final source = ref.read(activeSourceProvider);
-    _progress.schedule(
-      () => source.setProgress(widget.comic.id, page: page, completed: completed),
-    );
+    _progress.schedule(() {
+      source.setProgress(widget.comic.id, page: page, completed: completed);
+      // Downloaded copy? Mirror to its origin server for cross-device sync.
+      mirrorProgressToOrigin(ref, widget.comic, page: page, completed: completed);
+    });
   }
 
   /// Warms the image cache for the pages around [page] so the next turn paints

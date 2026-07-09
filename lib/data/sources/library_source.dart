@@ -1,6 +1,7 @@
 import '../models/comic_metadata.dart';
 import '../models/comic_summary.dart';
 import '../models/groups.dart';
+import '../models/reading_stats.dart';
 
 /// How the library is sorted. Mirrors CB8's sort options
 /// (`src/main/webServer/routes/comics.ts`).
@@ -257,4 +258,11 @@ abstract interface class LibrarySource {
 
   /// Distinct parsed series with counts and a cover.
   Future<List<SeriesGroup>> listSeries();
+
+  // --- Reading activity ---
+
+  /// Aggregated reading stats for this source, or null when the source can't
+  /// provide them (e.g. remote — the server doesn't expose an aggregate yet).
+  /// Local computes them from the on-device reading-history log.
+  Future<ReadingStats?> readingStats();
 }

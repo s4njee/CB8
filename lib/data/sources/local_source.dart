@@ -8,6 +8,7 @@ import '../local_files.dart';
 import '../models/comic_metadata.dart';
 import '../models/comic_summary.dart';
 import '../models/groups.dart';
+import '../models/reading_stats.dart';
 import 'library_source.dart';
 
 /// On-device library backed by the Drift database.
@@ -54,6 +55,8 @@ class LocalSource implements LibrarySource {
       chapterNumber: row.chapterNumber,
       extension: _extOf(row.uri),
       sourceUri: row.uri,
+      originConnectionId: row.originConnectionId,
+      originComicId: row.originComicId,
     );
   }
 
@@ -75,6 +78,8 @@ class LocalSource implements LibrarySource {
       c.seriesName,
       c.volumeNumber,
       c.chapterNumber,
+      c.originConnectionId,
+      c.originComicId,
     ];
   }
 
@@ -98,6 +103,8 @@ class LocalSource implements LibrarySource {
       chapterNumber: r.read(c.chapterNumber),
       extension: _extOf(uri),
       sourceUri: uri,
+      originConnectionId: r.read(c.originConnectionId),
+      originComicId: r.read(c.originComicId),
     );
   }
 
@@ -657,5 +664,22 @@ class LocalSource implements LibrarySource {
           ),
         )
         .toList();
+  }
+
+  @override
+  Future<ReadingStats?> readingStats() async {
+    final h = _db.readingHistory;
+    final rows = await (_db.selectOnly(h)
+          ..addColumns([h.comicId, h.timestamp, h.action]))
+        .get();
+    final events = [
+      for (final r in rows)
+        HistoryEvent(
+          comicId: r.read(h.comicId)!,
+          timestamp: r.read(h.timestamp)!,
+          completed: r.read(h.action) == 'completed',
+        ),
+    ];
+    return computeReadingStats(events);
   }
 }

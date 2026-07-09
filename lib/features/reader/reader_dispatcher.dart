@@ -10,6 +10,7 @@ import '../../data/repositories/providers.dart';
 import '../../data/sources/remote_source.dart';
 import 'comic/comic_reader_screen.dart';
 import 'pdf/pdf_reader_screen.dart';
+import 'progress_sync.dart';
 import 'unified_reader_screen.dart';
 import 'widgets/reader_widgets.dart';
 
@@ -69,6 +70,33 @@ class _ReaderDispatcherState extends ConsumerState<ReaderDispatcher> {
         }
         resolved = comic.copyWith(sourceUri: path);
       }
+
+      // Downloaded-for-offline copy? Its origin server may have a newer position
+      // from another device. Offer to jump there before opening.
+      if (resolved.hasServerOrigin) {
+        final remote = await pullNewerOriginProgress(ref, resolved);
+        if (remote != null && mounted) {
+          final jump = await _askJump(remote.fraction);
+          if (jump == true) {
+            resolved = resolved.withProgress(
+              lastPage: remote.lastPage,
+              lastLocation: remote.lastLocation,
+              lastPercent: remote.lastPercent,
+              completed: remote.completed,
+            );
+            // Persist locally so the adopted position sticks even if they stop
+            // before it's re-saved by reading.
+            await ref.read(activeSourceProvider).setProgress(
+                  resolved.id,
+                  page: remote.lastPage,
+                  location: remote.lastLocation,
+                  percent: remote.lastPercent,
+                  completed: remote.completed,
+                );
+          }
+        }
+      }
+
       if (!mounted) return;
       setState(() {
         _comic = resolved;
@@ -82,6 +110,31 @@ class _ReaderDispatcherState extends ConsumerState<ReaderDispatcher> {
         });
       }
     }
+  }
+
+  /// Asks whether to jump to the server's newer position ([fraction] is 0..1).
+  Future<bool?> _askJump(double fraction) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Continue from another device?'),
+        content: Text(
+          'You’re further along on your server — ${(fraction * 100).round()}% '
+          'read. Jump there, or keep reading from your saved place on this '
+          'device?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Stay here'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Jump ahead'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

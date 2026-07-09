@@ -7,6 +7,7 @@ import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 import '../models/comic_metadata.dart';
 import '../models/comic_summary.dart';
 import '../models/groups.dart';
+import '../models/reading_stats.dart';
 import 'library_source.dart';
 
 /// Auth state of a [RemoteSource]'s current session — drives the guest-mode
@@ -403,6 +404,10 @@ class RemoteSource implements LibrarySource {
 
   @override
   Future<List<SeriesGroup>> listSeries() async => const [];
+
+  // The server has no aggregate-stats endpoint yet; stats are a local feature.
+  @override
+  Future<ReadingStats?> readingStats() async => null;
 
   /// Download a remote item's original file to [destPath] for local reading.
   /// [onReceiveProgress] reports `(received, total)` bytes as they arrive (total

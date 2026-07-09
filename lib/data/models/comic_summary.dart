@@ -24,6 +24,8 @@ class ComicSummary {
     this.extension,
     this.sourceUri,
     this.imageHeaders,
+    this.originConnectionId,
+    this.originComicId,
   });
 
   /// Stable id within the active source.
@@ -82,6 +84,19 @@ class ComicSummary {
   /// for a remote item. Null for local items.
   final Map<String, String>? imageHeaders;
 
+  /// For a downloaded-for-offline copy, the connection id of the server it came
+  /// from; null for imported items and for remote items themselves. Paired with
+  /// [originComicId] to sync this copy's progress back to its server row.
+  final String? originConnectionId;
+
+  /// For a downloaded copy, this item's id on its origin server; null otherwise.
+  final String? originComicId;
+
+  /// True when this local row is a downloaded copy linked to a server item, so
+  /// its progress can be mirrored back (see the reader's sync path).
+  bool get hasServerOrigin =>
+      originConnectionId != null && originComicId != null;
+
   /// Returns a copy with [sourceUri] overridden (used after resolving a remote
   /// download to a local temp path).
   ComicSummary copyWith({String? sourceUri}) => ComicSummary(
@@ -102,6 +117,38 @@ class ComicSummary {
         extension: extension,
         sourceUri: sourceUri ?? this.sourceUri,
         imageHeaders: imageHeaders,
+        originConnectionId: originConnectionId,
+        originComicId: originComicId,
+      );
+
+  /// Returns a copy with reading-position fields overridden — used when adopting
+  /// a newer position pulled from a downloaded copy's origin server.
+  ComicSummary withProgress({
+    int? lastPage,
+    String? lastLocation,
+    double? lastPercent,
+    bool? completed,
+  }) =>
+      ComicSummary(
+        id: id,
+        title: title,
+        pageCount: pageCount,
+        mediaType: mediaType,
+        coverThumbnail: coverThumbnail,
+        coverUrl: coverUrl,
+        lastPage: lastPage ?? this.lastPage,
+        lastLocation: lastLocation ?? this.lastLocation,
+        lastPercent: lastPercent ?? this.lastPercent,
+        completed: completed ?? this.completed,
+        isFavorite: isFavorite,
+        seriesName: seriesName,
+        volumeNumber: volumeNumber,
+        chapterNumber: chapterNumber,
+        extension: extension,
+        sourceUri: sourceUri,
+        imageHeaders: imageHeaders,
+        originConnectionId: originConnectionId,
+        originComicId: originComicId,
       );
 
   /// Fraction read in the range 0..1, for the progress bar drawn on the card.

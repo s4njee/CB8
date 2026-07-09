@@ -147,6 +147,28 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _originConnectionIdMeta =
+      const VerificationMeta('originConnectionId');
+  @override
+  late final GeneratedColumn<String> originConnectionId =
+      GeneratedColumn<String>(
+        'origin_connection_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _originComicIdMeta = const VerificationMeta(
+    'originComicId',
+  );
+  @override
+  late final GeneratedColumn<String> originComicId = GeneratedColumn<String>(
+    'origin_comic_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _mediaTypeMeta = const VerificationMeta(
     'mediaType',
   );
@@ -253,6 +275,8 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
     lastPercent,
     lastRead,
     completed,
+    originConnectionId,
+    originComicId,
     mediaType,
     seriesName,
     volumeNumber,
@@ -355,6 +379,24 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
       context.handle(
         _completedMeta,
         completed.isAcceptableOrUnknown(data['completed']!, _completedMeta),
+      );
+    }
+    if (data.containsKey('origin_connection_id')) {
+      context.handle(
+        _originConnectionIdMeta,
+        originConnectionId.isAcceptableOrUnknown(
+          data['origin_connection_id']!,
+          _originConnectionIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('origin_comic_id')) {
+      context.handle(
+        _originComicIdMeta,
+        originComicId.isAcceptableOrUnknown(
+          data['origin_comic_id']!,
+          _originComicIdMeta,
+        ),
       );
     }
     if (data.containsKey('media_type')) {
@@ -474,6 +516,14 @@ class $ComicsTable extends Comics with TableInfo<$ComicsTable, ComicRow> {
         DriftSqlType.bool,
         data['${effectivePrefix}completed'],
       )!,
+      originConnectionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}origin_connection_id'],
+      ),
+      originComicId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}origin_comic_id'],
+      ),
       mediaType: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}media_type'],
@@ -559,6 +609,12 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
   /// Whether the book has been read to the end.
   final bool completed;
 
+  /// Connection id of the server this item was downloaded from; null if imported.
+  final String? originConnectionId;
+
+  /// This item's id on its origin server; null if imported.
+  final String? originComicId;
+
   /// `comic` or `book` — see [MediaTypes].
   final String mediaType;
 
@@ -598,6 +654,8 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     this.lastPercent,
     this.lastRead,
     required this.completed,
+    this.originConnectionId,
+    this.originComicId,
     required this.mediaType,
     this.seriesName,
     this.volumeNumber,
@@ -633,6 +691,12 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
       map['last_read'] = Variable<DateTime>(lastRead);
     }
     map['completed'] = Variable<bool>(completed);
+    if (!nullToAbsent || originConnectionId != null) {
+      map['origin_connection_id'] = Variable<String>(originConnectionId);
+    }
+    if (!nullToAbsent || originComicId != null) {
+      map['origin_comic_id'] = Variable<String>(originComicId);
+    }
     map['media_type'] = Variable<String>(mediaType);
     if (!nullToAbsent || seriesName != null) {
       map['series_name'] = Variable<String>(seriesName);
@@ -685,6 +749,12 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
           ? const Value.absent()
           : Value(lastRead),
       completed: Value(completed),
+      originConnectionId: originConnectionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(originConnectionId),
+      originComicId: originComicId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(originComicId),
       mediaType: Value(mediaType),
       seriesName: seriesName == null && nullToAbsent
           ? const Value.absent()
@@ -729,6 +799,10 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
       lastPercent: serializer.fromJson<double?>(json['lastPercent']),
       lastRead: serializer.fromJson<DateTime?>(json['lastRead']),
       completed: serializer.fromJson<bool>(json['completed']),
+      originConnectionId: serializer.fromJson<String?>(
+        json['originConnectionId'],
+      ),
+      originComicId: serializer.fromJson<String?>(json['originComicId']),
       mediaType: serializer.fromJson<String>(json['mediaType']),
       seriesName: serializer.fromJson<String?>(json['seriesName']),
       volumeNumber: serializer.fromJson<double?>(json['volumeNumber']),
@@ -756,6 +830,8 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
       'lastPercent': serializer.toJson<double?>(lastPercent),
       'lastRead': serializer.toJson<DateTime?>(lastRead),
       'completed': serializer.toJson<bool>(completed),
+      'originConnectionId': serializer.toJson<String?>(originConnectionId),
+      'originComicId': serializer.toJson<String?>(originComicId),
       'mediaType': serializer.toJson<String>(mediaType),
       'seriesName': serializer.toJson<String?>(seriesName),
       'volumeNumber': serializer.toJson<double?>(volumeNumber),
@@ -781,6 +857,8 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     Value<double?> lastPercent = const Value.absent(),
     Value<DateTime?> lastRead = const Value.absent(),
     bool? completed,
+    Value<String?> originConnectionId = const Value.absent(),
+    Value<String?> originComicId = const Value.absent(),
     String? mediaType,
     Value<String?> seriesName = const Value.absent(),
     Value<double?> volumeNumber = const Value.absent(),
@@ -805,6 +883,12 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     lastPercent: lastPercent.present ? lastPercent.value : this.lastPercent,
     lastRead: lastRead.present ? lastRead.value : this.lastRead,
     completed: completed ?? this.completed,
+    originConnectionId: originConnectionId.present
+        ? originConnectionId.value
+        : this.originConnectionId,
+    originComicId: originComicId.present
+        ? originComicId.value
+        : this.originComicId,
     mediaType: mediaType ?? this.mediaType,
     seriesName: seriesName.present ? seriesName.value : this.seriesName,
     volumeNumber: volumeNumber.present ? volumeNumber.value : this.volumeNumber,
@@ -837,6 +921,12 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
           : this.lastPercent,
       lastRead: data.lastRead.present ? data.lastRead.value : this.lastRead,
       completed: data.completed.present ? data.completed.value : this.completed,
+      originConnectionId: data.originConnectionId.present
+          ? data.originConnectionId.value
+          : this.originConnectionId,
+      originComicId: data.originComicId.present
+          ? data.originComicId.value
+          : this.originComicId,
       mediaType: data.mediaType.present ? data.mediaType.value : this.mediaType,
       seriesName: data.seriesName.present
           ? data.seriesName.value
@@ -870,6 +960,8 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
           ..write('lastPercent: $lastPercent, ')
           ..write('lastRead: $lastRead, ')
           ..write('completed: $completed, ')
+          ..write('originConnectionId: $originConnectionId, ')
+          ..write('originComicId: $originComicId, ')
           ..write('mediaType: $mediaType, ')
           ..write('seriesName: $seriesName, ')
           ..write('volumeNumber: $volumeNumber, ')
@@ -897,6 +989,8 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
     lastPercent,
     lastRead,
     completed,
+    originConnectionId,
+    originComicId,
     mediaType,
     seriesName,
     volumeNumber,
@@ -926,6 +1020,8 @@ class ComicRow extends DataClass implements Insertable<ComicRow> {
           other.lastPercent == this.lastPercent &&
           other.lastRead == this.lastRead &&
           other.completed == this.completed &&
+          other.originConnectionId == this.originConnectionId &&
+          other.originComicId == this.originComicId &&
           other.mediaType == this.mediaType &&
           other.seriesName == this.seriesName &&
           other.volumeNumber == this.volumeNumber &&
@@ -950,6 +1046,8 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
   final Value<double?> lastPercent;
   final Value<DateTime?> lastRead;
   final Value<bool> completed;
+  final Value<String?> originConnectionId;
+  final Value<String?> originComicId;
   final Value<String> mediaType;
   final Value<String?> seriesName;
   final Value<double?> volumeNumber;
@@ -972,6 +1070,8 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     this.lastPercent = const Value.absent(),
     this.lastRead = const Value.absent(),
     this.completed = const Value.absent(),
+    this.originConnectionId = const Value.absent(),
+    this.originComicId = const Value.absent(),
     this.mediaType = const Value.absent(),
     this.seriesName = const Value.absent(),
     this.volumeNumber = const Value.absent(),
@@ -995,6 +1095,8 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     this.lastPercent = const Value.absent(),
     this.lastRead = const Value.absent(),
     this.completed = const Value.absent(),
+    this.originConnectionId = const Value.absent(),
+    this.originComicId = const Value.absent(),
     this.mediaType = const Value.absent(),
     this.seriesName = const Value.absent(),
     this.volumeNumber = const Value.absent(),
@@ -1019,6 +1121,8 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     Expression<double>? lastPercent,
     Expression<DateTime>? lastRead,
     Expression<bool>? completed,
+    Expression<String>? originConnectionId,
+    Expression<String>? originComicId,
     Expression<String>? mediaType,
     Expression<String>? seriesName,
     Expression<double>? volumeNumber,
@@ -1042,6 +1146,9 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
       if (lastPercent != null) 'last_percent': lastPercent,
       if (lastRead != null) 'last_read': lastRead,
       if (completed != null) 'completed': completed,
+      if (originConnectionId != null)
+        'origin_connection_id': originConnectionId,
+      if (originComicId != null) 'origin_comic_id': originComicId,
       if (mediaType != null) 'media_type': mediaType,
       if (seriesName != null) 'series_name': seriesName,
       if (volumeNumber != null) 'volume_number': volumeNumber,
@@ -1067,6 +1174,8 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     Value<double?>? lastPercent,
     Value<DateTime?>? lastRead,
     Value<bool>? completed,
+    Value<String?>? originConnectionId,
+    Value<String?>? originComicId,
     Value<String>? mediaType,
     Value<String?>? seriesName,
     Value<double?>? volumeNumber,
@@ -1090,6 +1199,8 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
       lastPercent: lastPercent ?? this.lastPercent,
       lastRead: lastRead ?? this.lastRead,
       completed: completed ?? this.completed,
+      originConnectionId: originConnectionId ?? this.originConnectionId,
+      originComicId: originComicId ?? this.originComicId,
       mediaType: mediaType ?? this.mediaType,
       seriesName: seriesName ?? this.seriesName,
       volumeNumber: volumeNumber ?? this.volumeNumber,
@@ -1141,6 +1252,12 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
     if (completed.present) {
       map['completed'] = Variable<bool>(completed.value);
     }
+    if (originConnectionId.present) {
+      map['origin_connection_id'] = Variable<String>(originConnectionId.value);
+    }
+    if (originComicId.present) {
+      map['origin_comic_id'] = Variable<String>(originComicId.value);
+    }
     if (mediaType.present) {
       map['media_type'] = Variable<String>(mediaType.value);
     }
@@ -1186,6 +1303,8 @@ class ComicsCompanion extends UpdateCompanion<ComicRow> {
           ..write('lastPercent: $lastPercent, ')
           ..write('lastRead: $lastRead, ')
           ..write('completed: $completed, ')
+          ..write('originConnectionId: $originConnectionId, ')
+          ..write('originComicId: $originComicId, ')
           ..write('mediaType: $mediaType, ')
           ..write('seriesName: $seriesName, ')
           ..write('volumeNumber: $volumeNumber, ')
@@ -4719,6 +4838,8 @@ typedef $$ComicsTableCreateCompanionBuilder =
       Value<double?> lastPercent,
       Value<DateTime?> lastRead,
       Value<bool> completed,
+      Value<String?> originConnectionId,
+      Value<String?> originComicId,
       Value<String> mediaType,
       Value<String?> seriesName,
       Value<double?> volumeNumber,
@@ -4743,6 +4864,8 @@ typedef $$ComicsTableUpdateCompanionBuilder =
       Value<double?> lastPercent,
       Value<DateTime?> lastRead,
       Value<bool> completed,
+      Value<String?> originConnectionId,
+      Value<String?> originComicId,
       Value<String> mediaType,
       Value<String?> seriesName,
       Value<double?> volumeNumber,
@@ -4970,6 +5093,16 @@ class $$ComicsTableFilterComposer
 
   ColumnFilters<bool> get completed => $composableBuilder(
     column: $table.completed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get originConnectionId => $composableBuilder(
+    column: $table.originConnectionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get originComicId => $composableBuilder(
+    column: $table.originComicId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5288,6 +5421,16 @@ class $$ComicsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get originConnectionId => $composableBuilder(
+    column: $table.originConnectionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get originComicId => $composableBuilder(
+    column: $table.originComicId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get mediaType => $composableBuilder(
     column: $table.mediaType,
     builder: (column) => ColumnOrderings(column),
@@ -5384,6 +5527,16 @@ class $$ComicsTableAnnotationComposer
 
   GeneratedColumn<bool> get completed =>
       $composableBuilder(column: $table.completed, builder: (column) => column);
+
+  GeneratedColumn<String> get originConnectionId => $composableBuilder(
+    column: $table.originConnectionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get originComicId => $composableBuilder(
+    column: $table.originComicId,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get mediaType =>
       $composableBuilder(column: $table.mediaType, builder: (column) => column);
@@ -5668,6 +5821,8 @@ class $$ComicsTableTableManager
                 Value<double?> lastPercent = const Value.absent(),
                 Value<DateTime?> lastRead = const Value.absent(),
                 Value<bool> completed = const Value.absent(),
+                Value<String?> originConnectionId = const Value.absent(),
+                Value<String?> originComicId = const Value.absent(),
                 Value<String> mediaType = const Value.absent(),
                 Value<String?> seriesName = const Value.absent(),
                 Value<double?> volumeNumber = const Value.absent(),
@@ -5690,6 +5845,8 @@ class $$ComicsTableTableManager
                 lastPercent: lastPercent,
                 lastRead: lastRead,
                 completed: completed,
+                originConnectionId: originConnectionId,
+                originComicId: originComicId,
                 mediaType: mediaType,
                 seriesName: seriesName,
                 volumeNumber: volumeNumber,
@@ -5714,6 +5871,8 @@ class $$ComicsTableTableManager
                 Value<double?> lastPercent = const Value.absent(),
                 Value<DateTime?> lastRead = const Value.absent(),
                 Value<bool> completed = const Value.absent(),
+                Value<String?> originConnectionId = const Value.absent(),
+                Value<String?> originComicId = const Value.absent(),
                 Value<String> mediaType = const Value.absent(),
                 Value<String?> seriesName = const Value.absent(),
                 Value<double?> volumeNumber = const Value.absent(),
@@ -5736,6 +5895,8 @@ class $$ComicsTableTableManager
                 lastPercent: lastPercent,
                 lastRead: lastRead,
                 completed: completed,
+                originConnectionId: originConnectionId,
+                originComicId: originComicId,
                 mediaType: mediaType,
                 seriesName: seriesName,
                 volumeNumber: volumeNumber,
