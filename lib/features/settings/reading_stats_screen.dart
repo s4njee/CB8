@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/reading_stats.dart';
 import '../../data/repositories/providers.dart';
+import '../library/widgets/empty_state.dart';
 
 /// A dashboard of the reader's own activity, computed from the on-device
 /// reading-history log. Remote sources don't expose an aggregate yet, so this
@@ -23,19 +24,21 @@ class ReadingStatsScreen extends ConsumerWidget {
           child: Text('Couldn’t load stats:\n$e', textAlign: TextAlign.center),
         ),
         data: (stats) {
+          // Null means "this source can't provide stats" (a remote server);
+          // empty means "local, but nothing logged yet".
           if (stats == null) {
-            return const _Message(
+            return const EmptyState(
               icon: Icons.insights_outlined,
               title: 'Stats live on your device',
-              body: 'Reading stats are tracked for your on-device library. '
+              hint: 'Reading stats are tracked for your on-device library. '
                   'Switch to “This device” to see them.',
             );
           }
           if (stats.isEmpty) {
-            return const _Message(
+            return const EmptyState(
               icon: Icons.auto_stories_outlined,
               title: 'No reading yet',
-              body: 'Open a book or comic and your stats will start to fill in.',
+              hint: 'Open a book or comic and your stats will start to fill in.',
             );
           }
           return _StatsBody(stats: stats);
@@ -227,31 +230,3 @@ class _ActivityChart extends StatelessWidget {
   }
 }
 
-class _Message extends StatelessWidget {
-  const _Message({required this.icon, required this.title, required this.body});
-  final IconData icon;
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 48, color: CbColors.mutedForeground),
-            const SizedBox(height: 12),
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 6),
-            Text(body,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 13, color: CbColors.mutedForeground)),
-          ],
-        ),
-      ),
-    );
-  }
-}

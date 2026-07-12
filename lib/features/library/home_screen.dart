@@ -9,6 +9,7 @@ import '../../data/sources/library_source.dart';
 import 'widgets/comic_action_sheet.dart';
 import 'widgets/comic_card.dart';
 import 'widgets/comic_cover.dart';
+import 'widgets/empty_state.dart';
 
 /// Newest additions for the home "Recently added" shelf.
 const _recentlyAddedQuery = LibraryQuery(
@@ -49,7 +50,14 @@ class HomeScreen extends ConsumerWidget {
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           if (libraryEmpty)
-            const _EmptyState()
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: EmptyState(
+                icon: Icons.auto_stories_outlined,
+                title: 'Your library is empty',
+                hint: 'Import CBZ, PDF, or EPUB files to get started',
+              ),
+            )
           else ...[
             SliverToBoxAdapter(
               child: continueAsync.maybeWhen(
@@ -110,13 +118,14 @@ class _ContinueSection extends StatelessWidget {
   }
 }
 
+/// Large "pick up where you left off" card: cover, title/series, progress, and
+/// an explicit Resume button.
 class _HeroResumeCard extends StatelessWidget {
   const _HeroResumeCard({required this.comic});
   final ComicSummary comic;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: InkWell(
@@ -164,15 +173,7 @@ class _HeroResumeCard extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(height: 10),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(2),
-                      child: LinearProgressIndicator(
-                        value: comic.progress,
-                        minHeight: 4,
-                        backgroundColor: CbColors.surfaceAlt,
-                        valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
-                      ),
-                    ),
+                    _ProgressBar(value: comic.progress, height: 4),
                     const SizedBox(height: 6),
                     Text(
                       comicCaption(comic),
@@ -202,7 +203,6 @@ class _UpNextCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return InkWell(
       onTap: () => context.push('/read/${comic.id}'),
       onLongPress: () => showComicActionSheet(context, comic),
@@ -240,15 +240,7 @@ class _UpNextCard extends StatelessWidget {
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                   ),
                   const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      value: comic.progress,
-                      minHeight: 3,
-                      backgroundColor: CbColors.surfaceAlt,
-                      valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
-                    ),
-                  ),
+                  _ProgressBar(value: comic.progress, height: 3),
                 ],
               ),
             ),
@@ -306,24 +298,21 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+/// Thin rounded accent-colored progress bar under a resume card's text.
+class _ProgressBar extends StatelessWidget {
+  const _ProgressBar({required this.value, required this.height});
+  final double value;
+  final double height;
+
   @override
   Widget build(BuildContext context) {
-    return const SliverFillRemaining(
-      hasScrollBody: false,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.auto_stories_outlined, size: 48, color: CbColors.mutedForeground),
-            SizedBox(height: 12),
-            Text('Your library is empty', style: TextStyle(color: CbColors.mutedForeground)),
-            SizedBox(height: 4),
-            Text('Import CBZ, PDF, or EPUB files to get started',
-                style: TextStyle(fontSize: 12, color: CbColors.mutedForeground)),
-          ],
-        ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(2),
+      child: LinearProgressIndicator(
+        value: value,
+        minHeight: height,
+        backgroundColor: CbColors.surfaceAlt,
+        valueColor: AlwaysStoppedAnimation(Theme.of(context).colorScheme.primary),
       ),
     );
   }

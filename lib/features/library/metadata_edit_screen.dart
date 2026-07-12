@@ -119,7 +119,7 @@ class _MetadataEditScreenState extends ConsumerState<MetadataEditScreen> {
   Future<void> _searchOnline() async {
     final result = await showModalBottomSheet<ScrapedResult>(
       context: context,
-      backgroundColor: const Color(0xFF141414),
+      backgroundColor: CbColors.surface,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (_) => _ScraperSheet(initialQuery: _title.text.trim()),

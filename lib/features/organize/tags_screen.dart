@@ -5,6 +5,7 @@ import '../../core/theme/app_theme.dart';
 import '../../data/repositories/providers.dart';
 import '../../data/sources/library_source.dart';
 import '../library/widgets/browse_grid_screen.dart';
+import '../library/widgets/empty_state.dart';
 
 /// Tags tab — a chip cloud of all tags with counts. Tapping a tag opens its
 /// filtered grid. Mirrors CB8's tag row.
@@ -20,7 +21,11 @@ class TagsScreen extends ConsumerWidget {
       error: (e, _) => Center(child: Text('Failed to load tags:\n$e', textAlign: TextAlign.center)),
       data: (tags) {
         if (tags.isEmpty) {
-          return const _EmptyTags();
+          return const EmptyState(
+            icon: Icons.tag,
+            title: 'No tags yet',
+            hint: 'Long-press a book to add tags',
+          );
         }
         return RefreshIndicator(
           onRefresh: () async {
@@ -52,26 +57,6 @@ class TagsScreen extends ConsumerWidget {
           ),
         ));
       },
-    );
-  }
-}
-
-class _EmptyTags extends StatelessWidget {
-  const _EmptyTags();
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.tag, size: 48, color: CbColors.mutedForeground),
-          SizedBox(height: 12),
-          Text('No tags yet', style: TextStyle(color: CbColors.mutedForeground)),
-          SizedBox(height: 4),
-          Text('Long-press a book to add tags',
-              style: TextStyle(fontSize: 12, color: CbColors.mutedForeground)),
-        ],
-      ),
     );
   }
 }

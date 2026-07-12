@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
 import '../../../data/sources/remote_source.dart';
-import '../../import/import_controller.dart';
 import '../../import/media_probe.dart' show supportedExtensions;
+import '../../import/offline_downloads.dart';
+import '../../organize/widgets/collection_item_picker.dart' show promptCollectionName;
 import '../metadata_edit_screen.dart';
 
 /// Long-press action sheet for a catalog item: favorite, manage tags, and add to
@@ -16,7 +18,7 @@ Future<void> showComicActionSheet(BuildContext context, ComicSummary comic) {
   HapticFeedback.mediumImpact(); // confirm the long-press (mobile)
   return showModalBottomSheet<void>(
     context: context,
-    backgroundColor: const Color(0xFF141414),
+    backgroundColor: CbColors.surface,
     isScrollControlled: true,
     showDragHandle: true,
     builder: (context) => _ComicActionSheet(comic: comic),
@@ -69,9 +71,7 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
     final want = _canManage ? await source.isWantToRead(widget.comic.id) : false;
     final downloaded = source is RemoteSource &&
             supportedExtensions.contains(widget.comic.extension)
-        ? await ref
-            .read(importControllerProvider.notifier)
-            .isDownloaded(source, widget.comic)
+        ? await ref.read(offlineDownloaderProvider).isDownloaded(source, widget.comic)
         : false;
     if (!mounted) return;
     setState(() {
@@ -108,8 +108,7 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
       _downloadProgress = null;
     });
     try {
-      final outcome =
-          await ref.read(importControllerProvider.notifier).downloadFromServer(
+      final outcome = await ref.read(offlineDownloaderProvider).downloadFromServer(
         source,
         widget.comic,
         onProgress: (received, total) {
@@ -155,7 +154,7 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF141414),
+        backgroundColor: CbColors.surface,
         title: const Text('Delete from library?'),
         content: Text(
           'Removes “${widget.comic.title}” from your library. This also deletes '
@@ -204,7 +203,7 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
   }
 
   Future<void> _createCollection() async {
-    final name = await _promptName(context, 'New collection');
+    final name = await promptCollectionName(context);
     if (name == null || name.trim().isEmpty) return;
     final id = await ref.read(activeSourceProvider).createLibrary(name.trim());
     ref.invalidate(librariesProvider);
@@ -293,7 +292,7 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
                     Chip(
                       label: Text(tag),
                       onDeleted: () => _removeTag(tag),
-                      backgroundColor: const Color(0xFF1C1C1C),
+                      backgroundColor: CbColors.surfaceAlt,
                     ),
                 ],
               ),
@@ -357,25 +356,3 @@ class _ComicActionSheetState extends ConsumerState<_ComicActionSheet> {
   }
 }
 
-Future<String?> _promptName(BuildContext context, String title) {
-  final controller = TextEditingController();
-  return showDialog<String>(
-    context: context,
-    builder: (context) => AlertDialog(
-      backgroundColor: const Color(0xFF141414),
-      title: Text(title),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        decoration: const InputDecoration(hintText: 'Name'),
-        onSubmitted: (v) => Navigator.of(context).pop(v),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        TextButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Create')),
-      ],
-    ),
-  );
-}

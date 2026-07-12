@@ -3,6 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/repositories/providers.dart';
 
+/// The reader's globally-persisted view toggles: reading mode (page layout),
+/// reading direction (LTR / RTL-manga), cover-first pairing, and HD upscaling.
+///
+/// Each is a small SharedPreferences-backed Riverpod notifier rather than
+/// per-book state, deliberately: a manga reader wants RTL for *everything*,
+/// not per title. Every reader watches these (the EPUB reader maps
+/// [ReadingMode] onto Readium column counts; the comic/PDF readers use them
+/// directly).
+
 /// How comic pages are laid out. Persisted globally and applied to every comic.
 enum ReadingMode {
   /// Continuous vertical scroll (webtoon-style).

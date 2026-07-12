@@ -97,33 +97,12 @@ class ComicSummary {
   bool get hasServerOrigin =>
       originConnectionId != null && originComicId != null;
 
-  /// Returns a copy with [sourceUri] overridden (used after resolving a remote
-  /// download to a local temp path).
-  ComicSummary copyWith({String? sourceUri}) => ComicSummary(
-        id: id,
-        title: title,
-        pageCount: pageCount,
-        mediaType: mediaType,
-        coverThumbnail: coverThumbnail,
-        coverUrl: coverUrl,
-        lastPage: lastPage,
-        lastLocation: lastLocation,
-        lastPercent: lastPercent,
-        completed: completed,
-        isFavorite: isFavorite,
-        seriesName: seriesName,
-        volumeNumber: volumeNumber,
-        chapterNumber: chapterNumber,
-        extension: extension,
-        sourceUri: sourceUri ?? this.sourceUri,
-        imageHeaders: imageHeaders,
-        originConnectionId: originConnectionId,
-        originComicId: originComicId,
-      );
-
-  /// Returns a copy with reading-position fields overridden — used when adopting
-  /// a newer position pulled from a downloaded copy's origin server.
-  ComicSummary withProgress({
+  /// Returns a copy with the given fields overridden; omitted fields are kept
+  /// (none of these can be cleared back to null through this method).
+  /// [sourceUri] is overridden after resolving a remote download to a local
+  /// temp path; the progress fields back [withProgress].
+  ComicSummary copyWith({
+    String? sourceUri,
     int? lastPage,
     String? lastLocation,
     double? lastPercent,
@@ -145,10 +124,25 @@ class ComicSummary {
         volumeNumber: volumeNumber,
         chapterNumber: chapterNumber,
         extension: extension,
-        sourceUri: sourceUri,
+        sourceUri: sourceUri ?? this.sourceUri,
         imageHeaders: imageHeaders,
         originConnectionId: originConnectionId,
         originComicId: originComicId,
+      );
+
+  /// Returns a copy with reading-position fields overridden — used when adopting
+  /// a newer position pulled from a downloaded copy's origin server.
+  ComicSummary withProgress({
+    int? lastPage,
+    String? lastLocation,
+    double? lastPercent,
+    bool? completed,
+  }) =>
+      copyWith(
+        lastPage: lastPage,
+        lastLocation: lastLocation,
+        lastPercent: lastPercent,
+        completed: completed,
       );
 
   /// Fraction read in the range 0..1, for the progress bar drawn on the card.

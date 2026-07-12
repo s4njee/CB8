@@ -1,3 +1,10 @@
+/// The source contract the whole app is written against: the [LibrarySource]
+/// interface plus the [LibraryQuery]/[LibrarySort]/[ReadStatus] types every
+/// catalog query is expressed in. Implemented by `LocalSource` (on-device
+/// Drift) and `RemoteSource` (CB8 server); the UI only ever sees this file's
+/// types via the providers in `repositories/providers.dart`.
+library;
+
 import '../models/comic_metadata.dart';
 import '../models/comic_summary.dart';
 import '../models/groups.dart';

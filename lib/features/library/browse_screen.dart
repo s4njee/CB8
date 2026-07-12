@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../organize/tags_screen.dart';
 import 'library_screen.dart';
 import 'recent_screen.dart';
+import 'widgets/pill_chip.dart';
 
 /// The ways the Browse tab can slice the catalog. Collections and Series are
 /// their own top-level destinations, so they're not repeated here.
@@ -40,7 +40,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: Row(
             children: [
               for (final p in _Pivot.values)
-                _PivotChip(
+                PillChip(
                   label: p.label,
                   selected: p == _pivot,
                   onTap: () => setState(() => _pivot = p),
@@ -56,39 +56,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
           },
         ),
       ],
-    );
-  }
-}
-
-class _PivotChip extends StatelessWidget {
-  const _PivotChip({required this.label, required this.selected, required this.onTap});
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? primary : CbColors.surfaceAlt,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: selected ? primary : CbColors.border),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              color: selected ? Colors.white : CbColors.foreground,
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

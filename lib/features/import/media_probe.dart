@@ -80,6 +80,8 @@ Future<ProbeResult?> probeFile(String path) async {
   }
 }
 
+/// CBZ/CBT: page count from image entries, cover from the first page, metadata
+/// from a ComicInfo.xml sidecar when present.
 Future<ProbeResult> _probeCbz(String path, SeriesInfo series) async {
   final bytes = await File(path).readAsBytes();
   final archive = decodeComicArchive(bytes);
@@ -114,6 +116,7 @@ Future<ProbeResult> _probeCbz(String path, SeriesInfo series) async {
   );
 }
 
+/// PDF: page count from the document, cover rendered from page one.
 Future<ProbeResult> _probePdf(String path, SeriesInfo series) async {
   final doc = await PdfDocument.openFile(path);
   try {

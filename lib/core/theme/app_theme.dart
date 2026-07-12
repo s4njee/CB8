@@ -1,3 +1,9 @@
+/// CB8's visual identity ported to Flutter: the accent palette, the fixed dark
+/// surface greys, and [buildCbTheme] which turns them into [ThemeData].
+/// `theme_controller.dart` picks the accent; widgets read colors via
+/// `Theme.of(context)` (or [CbColors] for the fixed greys), never hard-code.
+library;
+
 import 'package:flutter/material.dart';
 
 /// Accent themes ported from CB8 `globals.css` (`[data-theme="..."]`).

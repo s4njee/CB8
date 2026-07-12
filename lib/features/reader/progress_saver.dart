@@ -9,6 +9,10 @@ import 'dart:async';
 /// per flip. Scheduling through this class keeps only the latest write and runs
 /// it after a short quiet period; [flush] (called from the reader's `dispose`)
 /// runs any pending write immediately so the final position is never lost.
+///
+/// Every reader screen owns one instance. The scheduled write typically pairs
+/// the local `setProgress` with `mirrorProgressToOrigin` (progress_sync.dart)
+/// so both stores see the same debounced cadence.
 class ProgressSaver {
   /// Creates a saver that waits [delay] after the last schedule before writing.
   ProgressSaver({this.delay = const Duration(milliseconds: 800)});

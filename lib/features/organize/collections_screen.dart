@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../../data/repositories/providers.dart';
 import '../../data/sources/library_source.dart';
 import '../library/widgets/browse_grid_screen.dart';
+import '../library/widgets/empty_state.dart';
 import '../library/widgets/library_grid.dart';
+import 'widgets/collection_item_picker.dart';
 import 'widgets/group_card.dart';
 
 /// Collections tab — user-created named collections (CB8 "libraries"). Create a
@@ -15,7 +16,7 @@ class CollectionsScreen extends ConsumerWidget {
   const CollectionsScreen({super.key});
 
   Future<void> _create(BuildContext context, WidgetRef ref) async {
-    final name = await _promptName(context);
+    final name = await promptCollectionName(context);
     if (name == null || name.trim().isEmpty) return;
     await ref.read(activeSourceProvider).createLibrary(name.trim());
     ref.invalidate(librariesProvider);
@@ -44,7 +45,11 @@ class CollectionsScreen extends ConsumerWidget {
                 Center(child: Text('Failed to load:\n$e', textAlign: TextAlign.center)),
             data: (libraries) {
               if (libraries.isEmpty) {
-                return const _Empty();
+                return const EmptyState(
+                  icon: Icons.collections_bookmark_outlined,
+                  title: 'No collections yet',
+                  hint: 'Create one above, then add books from their long-press menu',
+                );
               }
               return RefreshIndicator(
                 onRefresh: () async {
@@ -93,46 +98,3 @@ class CollectionsScreen extends ConsumerWidget {
   }
 }
 
-class _Empty extends StatelessWidget {
-  const _Empty();
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.collections_bookmark_outlined, size: 48, color: CbColors.mutedForeground),
-          SizedBox(height: 12),
-          Text('No collections yet', style: TextStyle(color: CbColors.mutedForeground)),
-          SizedBox(height: 4),
-          Text('Create one above, then add books from their long-press menu',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: CbColors.mutedForeground)),
-        ],
-      ),
-    );
-  }
-}
-
-Future<String?> _promptName(BuildContext context) {
-  final controller = TextEditingController();
-  return showDialog<String>(
-    context: context,
-    builder: (context) => AlertDialog(
-      backgroundColor: const Color(0xFF141414),
-      title: const Text('New collection'),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        decoration: const InputDecoration(hintText: 'Name'),
-        onSubmitted: (v) => Navigator.of(context).pop(v),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        TextButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Create')),
-      ],
-    ),
-  );
-}

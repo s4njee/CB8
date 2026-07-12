@@ -4,6 +4,14 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 
+/// Comic archive (CBZ/CBT) decoding for the comic reader.
+///
+/// This is the "local pages" half behind `ComicPageSource`
+/// (comic_page_source.dart): it finds the image entries in an archive and
+/// serves their bytes in reading order. Import-time probing
+/// (`features/import/media_probe.dart`) reuses the same helpers, so the pages
+/// the reader shows always match what the importer counted.
+
 /// Image entry extensions found inside comic archives. `avif`/`jxl` are listed
 /// so newer-format pages aren't silently dropped; whether a given page actually
 /// renders depends on the platform image codec (the reader shows a placeholder

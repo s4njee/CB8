@@ -13,6 +13,9 @@ import 'app.dart';
 import 'core/theme/theme_controller.dart';
 import 'data/repositories/providers.dart';
 
+/// App entry point: initializes the platform singletons the providers need
+/// (preferences, PDF engine, session cookies) before the first frame, then
+/// mounts the Riverpod [ProviderScope] with those instances overridden in.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   pdfrxFlutterInitialize();

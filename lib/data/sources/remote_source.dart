@@ -1,3 +1,8 @@
+/// The remote half of the hybrid model: [RemoteSource], a [LibrarySource]
+/// backed by a CB8-compatible server's REST API, and [RemoteSessionState],
+/// the auth states its cookie session can be in.
+library;
+
 import 'dart:io';
 
 import 'package:cookie_jar/cookie_jar.dart';
@@ -316,14 +321,32 @@ class RemoteSource implements LibrarySource {
 
   // --- Organization ---
 
-  @override
-  Future<List<TagCount>> listTags() async {
+  /// GETs [path] expecting a JSON list — either a bare array or one nested
+  /// under [key] in an object (servers have shipped both shapes) — and maps it
+  /// through [parse]. Lenient on purpose: these read-only organization
+  /// endpoints may not exist on older servers, so any error (404, network,
+  /// malformed payload) degrades to an empty list and the tab simply shows
+  /// nothing instead of an error state.
+  Future<List<T>> _getLenientList<T>(
+    String path, {
+    required String key,
+    required List<T> Function(List<dynamic> list) parse,
+  }) async {
     try {
-      final res = await _dio.get<dynamic>('/api/tags');
+      final res = await _dio.get<dynamic>(path);
       final data = res.data;
-      final list = data is List ? data : (data?['tags'] as List? ?? const []);
+      return parse(data is List ? data : (data?[key] as List? ?? const []));
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  @override
+  Future<List<TagCount>> listTags() {
+    return _getLenientList('/api/tags', key: 'tags', parse: (list) {
       return list
           .map((e) {
+            // Older servers return bare tag names; newer ones {name, count}.
             if (e is String) return TagCount(name: e, count: 0);
             final m = e as Map<String, dynamic>;
             return TagCount(
@@ -333,9 +356,7 @@ class RemoteSource implements LibrarySource {
           })
           .where((t) => t.name.isNotEmpty)
           .toList();
-    } catch (_) {
-      return const [];
-    }
+    });
   }
 
   @override
@@ -347,13 +368,8 @@ class RemoteSource implements LibrarySource {
   }
 
   @override
-  Future<List<LibraryInfo>> listLibraries() async {
-    try {
-      final res = await _dio.get<dynamic>('/api/libraries');
-      final data = res.data;
-      final list = data is List
-          ? data
-          : (data?['libraries'] as List? ?? const []);
+  Future<List<LibraryInfo>> listLibraries() {
+    return _getLenientList('/api/libraries', key: 'libraries', parse: (list) {
       return list.map((e) {
         final m = e as Map<String, dynamic>;
         return LibraryInfo(
@@ -362,9 +378,7 @@ class RemoteSource implements LibrarySource {
           count: (m['count'] as num?)?.toInt() ?? 0,
         );
       }).toList();
-    } catch (_) {
-      return const [];
-    }
+    });
   }
 
   @override
@@ -382,20 +396,13 @@ class RemoteSource implements LibrarySource {
     String comicId,
     bool member,
   ) async {
+    final data = {
+      'comicIds': [int.tryParse(comicId)],
+    };
     if (member) {
-      await _dio.post(
-        '/api/libraries/$libraryId/comics',
-        data: {
-          'comicIds': [int.tryParse(comicId)],
-        },
-      );
+      await _dio.post('/api/libraries/$libraryId/comics', data: data);
     } else {
-      await _dio.delete(
-        '/api/libraries/$libraryId/comics',
-        data: {
-          'comicIds': [int.tryParse(comicId)],
-        },
-      );
+      await _dio.delete('/api/libraries/$libraryId/comics', data: data);
     }
   }
 

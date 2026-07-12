@@ -1,11 +1,17 @@
+/// Local SQLite schema (Drift), mirroring CB8's (`src/main/db/schema/create.ts`)
+/// trimmed to the single-user-on-device case. Multi-user/auth tables live on
+/// the server and are reached via the remote source instead.
+///
+/// Only `LocalSource` (and the importers) should query these tables directly;
+/// everything else goes through the [LibrarySource] interface. Schema changes
+/// require a `schemaVersion` bump plus a migration step in [AppDatabase], and
+/// `dart run build_runner build` to regenerate `database.g.dart`.
+library;
+
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 
 part 'database.g.dart';
-
-/// Local SQLite database, mirroring CB8's schema (`src/main/db/schema/create.ts`)
-/// trimmed to the single-user-on-device case. Multi-user/auth tables live on the
-/// server and are reached via the remote source instead.
 
 /// Media kind for a catalog row. CB8 stores this as the `media_type` text column.
 class MediaTypes {

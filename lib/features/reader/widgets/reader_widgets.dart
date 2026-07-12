@@ -7,6 +7,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/window_control.dart';
 import '../comic/reading_mode.dart';
 
+/// Chrome widgets shared across the readers.
+///
+/// The comic and PDF readers draw their chrome as translucent overlays in a
+/// [Stack] (so pages render full-bleed underneath), and both need the same
+/// pieces: an error state, a top bar, a page slider, and the reading-mode
+/// menu. They live here so the two readers can't drift apart visually. The
+/// EPUB reader is the odd one out — it uses a real [AppBar] and its own
+/// progress bar (see `../epub/`) because Readium owns its page canvas — but it
+/// shares [ReaderMessage] and [ReadingModeMenu] from here.
+
 /// Centered message with a Back button — the shared empty/error state used by the
 /// readers. Render it on top of whatever background the caller already provides
 /// (a black [Scaffold], a [Stack], etc.).

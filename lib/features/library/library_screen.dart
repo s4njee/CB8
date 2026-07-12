@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../../data/db/database.dart' show MediaTypes;
 import '../../data/models/comic_summary.dart';
 import '../../data/repositories/providers.dart';
 import '../../data/sources/library_source.dart';
 import 'widgets/comic_action_sheet.dart';
 import 'widgets/comic_card.dart';
+import 'widgets/empty_state.dart';
 import 'widgets/library_grid.dart';
+import 'widgets/pill_chip.dart';
 
 /// The full-catalog grid (Browse's "All" pivot): a media-type filter row and
 /// the responsive cover grid. The continue-reading and want-to-read shelves
@@ -46,7 +47,7 @@ class LibraryScreen extends ConsumerWidget {
               child: Center(child: Text('Failed to load library:\n$e', textAlign: TextAlign.center)),
             ),
             data: (comics) {
-              if (comics.isEmpty) return const _EmptyState();
+              if (comics.isEmpty) return const _EmptyLibrary();
               return SliverPadding(
                 padding: const EdgeInsets.all(16),
                 sliver: _ComicSliverGrid(comics: comics),
@@ -89,6 +90,8 @@ class _ComicSliverGrid extends StatelessWidget {
   }
 }
 
+/// Media-type / favorites / in-progress filter chips above the grid. The
+/// selections live in [libraryQueryProvider], so they survive tab switches.
 class _FilterRow extends ConsumerWidget {
   const _FilterRow({required this.query});
   final LibraryQuery query;
@@ -101,28 +104,28 @@ class _FilterRow extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Row(
         children: [
-          _Chip(
+          PillChip(
             label: 'All',
             selected: query.mediaType == null,
             onTap: () => controller.setMediaType(null),
           ),
-          _Chip(
+          PillChip(
             label: 'Comics',
             selected: query.mediaType == MediaTypes.comic,
             onTap: () => controller.setMediaType(MediaTypes.comic),
           ),
-          _Chip(
+          PillChip(
             label: 'Books',
             selected: query.mediaType == MediaTypes.book,
             onTap: () => controller.setMediaType(MediaTypes.book),
           ),
           const SizedBox(width: 8),
-          _Chip(
+          PillChip(
             label: 'Favorites',
             selected: query.favoritesOnly,
             onTap: controller.toggleFavorites,
           ),
-          _Chip(
+          PillChip(
             label: 'In progress',
             selected: query.readStatus == ReadStatus.inProgress,
             onTap: () => controller.setReadStatus(
@@ -135,57 +138,17 @@ class _FilterRow extends ConsumerWidget {
   }
 }
 
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, required this.selected, required this.onTap});
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? primary : CbColors.surfaceAlt,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: selected ? primary : CbColors.border),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: selected ? Colors.white : CbColors.foreground,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+/// Sliver-shaped empty state (the grid lives in a CustomScrollView).
+class _EmptyLibrary extends StatelessWidget {
+  const _EmptyLibrary();
   @override
   Widget build(BuildContext context) {
     return const SliverFillRemaining(
       hasScrollBody: false,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.auto_stories_outlined, size: 48, color: CbColors.mutedForeground),
-            SizedBox(height: 12),
-            Text('Your library is empty', style: TextStyle(color: CbColors.mutedForeground)),
-            SizedBox(height: 4),
-            Text('Import CBZ, PDF, or EPUB files to get started',
-                style: TextStyle(fontSize: 12, color: CbColors.mutedForeground)),
-          ],
-        ),
+      child: EmptyState(
+        icon: Icons.auto_stories_outlined,
+        title: 'Your library is empty',
+        hint: 'Import CBZ, PDF, or EPUB files to get started',
       ),
     );
   }

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme/app_theme.dart';
 import '../../data/repositories/providers.dart';
 import '../../data/sources/library_source.dart';
 import '../library/widgets/browse_grid_screen.dart';
+import '../library/widgets/empty_state.dart';
 import '../library/widgets/library_grid.dart';
 import 'widgets/group_card.dart';
 
@@ -22,7 +22,7 @@ class SeriesScreen extends ConsumerWidget {
       error: (e, _) => Center(child: Text('Failed to load series:\n$e', textAlign: TextAlign.center)),
       data: (series) {
         if (series.isEmpty) {
-          return const _Empty(
+          return const EmptyState(
             icon: Icons.folder_outlined,
             title: 'No series yet',
             hint: 'Series are detected from file names (e.g. "Title v01")',
@@ -67,34 +67,6 @@ class SeriesScreen extends ConsumerWidget {
           },
         ));
       },
-    );
-  }
-}
-
-class _Empty extends StatelessWidget {
-  const _Empty({required this.icon, required this.title, required this.hint});
-  final IconData icon;
-  final String title;
-  final String hint;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 48, color: CbColors.mutedForeground),
-          const SizedBox(height: 12),
-          Text(title, style: const TextStyle(color: CbColors.mutedForeground)),
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Text(hint,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 12, color: CbColors.mutedForeground)),
-          ),
-        ],
-      ),
     );
   }
 }

@@ -6,6 +6,10 @@ import 'app_theme.dart';
 
 /// SharedPreferences instance, initialized in `main()` and injected here so the
 /// theme controller can persist the selected accent synchronously.
+///
+/// Deliberately separate from the data layer's `sharedPreferencesProvider`
+/// (main() overrides both with the same instance): core/theme must not import
+/// the data layer, and sharing one provider would create that dependency.
 final sharedPrefsProvider = Provider<SharedPreferences>((ref) {
   throw UnimplementedError('sharedPrefsProvider must be overridden in main()');
 });

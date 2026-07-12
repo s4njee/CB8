@@ -7,6 +7,7 @@ import '../../data/models/comic_summary.dart';
 import '../../data/models/groups.dart';
 import '../../data/repositories/providers.dart';
 import 'widgets/comic_cover.dart';
+import 'widgets/empty_state.dart';
 
 /// Lists groups of likely-duplicate catalog items (identical files, or matching
 /// titles) and lets the user delete the redundant copies. Backed by
@@ -24,7 +25,12 @@ class DuplicatesScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to scan:\n$e', textAlign: TextAlign.center)),
         data: (groups) {
-          if (groups.isEmpty) return const _NoDuplicates();
+          if (groups.isEmpty) {
+            return const EmptyState(
+              icon: Icons.verified_outlined,
+              title: 'No duplicates found',
+            );
+          }
           return ListView(
             padding: const EdgeInsets.symmetric(vertical: 8),
             children: [
@@ -99,7 +105,7 @@ class _DuplicateRow extends ConsumerWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF141414),
+        backgroundColor: CbColors.surface,
         title: const Text('Delete this copy?'),
         content: Text('Removes “${item.title}” and its imported file from this device.'),
         actions: [
@@ -111,22 +117,5 @@ class _DuplicateRow extends ConsumerWidget {
     if (confirmed != true) return;
     // The list refreshes automatically via the local source's change stream.
     await source.deleteComic(item.id);
-  }
-}
-
-class _NoDuplicates extends StatelessWidget {
-  const _NoDuplicates();
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.verified_outlined, size: 48, color: CbColors.mutedForeground),
-          SizedBox(height: 12),
-          Text('No duplicates found', style: TextStyle(color: CbColors.mutedForeground)),
-        ],
-      ),
-    );
   }
 }

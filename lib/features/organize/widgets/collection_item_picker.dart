@@ -8,6 +8,31 @@ import '../../../data/repositories/providers.dart';
 import '../../../data/sources/library_source.dart';
 import '../../library/widgets/comic_cover.dart';
 
+/// Asks the user to name a new collection. Returns the entered name, or null
+/// if cancelled. Shared by the Collections tab and the item action sheet.
+Future<String?> promptCollectionName(BuildContext context) {
+  final controller = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: CbColors.surface,
+      title: const Text('New collection'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        decoration: const InputDecoration(hintText: 'Name'),
+        onSubmitted: (v) => Navigator.of(context).pop(v),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Create')),
+      ],
+    ),
+  );
+}
+
 /// Opens the full-screen picker for adding library items to the collection
 /// [collectionId] (named [collectionName]). Membership edits apply immediately.
 Future<void> showAddToCollectionSheet(

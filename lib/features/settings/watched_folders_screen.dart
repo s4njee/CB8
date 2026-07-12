@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../import/watched_folders.dart';
+import '../library/widgets/empty_state.dart';
 
 /// Manages the folders CB8 watches for automatic ingestion: add a folder, force
 /// a rescan, or remove one. See [WatchedFoldersController].
@@ -32,23 +33,21 @@ class _WatchedFoldersScreenState extends ConsumerState<WatchedFoldersScreen> {
     }
   }
 
-  Future<void> _rescan(String id) async {
-    setState(() => _busy = true);
-    final count = await ref.read(watchedFoldersProvider.notifier).rescan(id);
-    if (!mounted) return;
-    setState(() => _busy = false);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(count == 0 ? 'No new files found' : 'Imported $count new file${count == 1 ? '' : 's'}'),
-    ));
-  }
+  Future<void> _rescan(String id) =>
+      _runScan(() => ref.read(watchedFoldersProvider.notifier).rescan(id));
 
-  Future<void> _rescanAll() async {
+  Future<void> _rescanAll() =>
+      _runScan(() => ref.read(watchedFoldersProvider.notifier).rescanAll());
+
+  /// Runs [scan] with the busy spinner up, then reports the import count.
+  Future<void> _runScan(Future<int> Function() scan) async {
     setState(() => _busy = true);
-    final count = await ref.read(watchedFoldersProvider.notifier).rescanAll();
+    final count = await scan();
     if (!mounted) return;
     setState(() => _busy = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(count == 0 ? 'No new files found' : 'Imported $count new file${count == 1 ? '' : 's'}'),
+      content: Text(
+          count == 0 ? 'No new files found' : 'Imported $count new file${count == 1 ? '' : 's'}'),
     ));
   }
 
@@ -76,7 +75,13 @@ class _WatchedFoldersScreenState extends ConsumerState<WatchedFoldersScreen> {
         label: const Text('Add folder'),
       ),
       body: folders.isEmpty
-          ? _Empty(liveWatch: liveWatch)
+          ? EmptyState(
+              icon: Icons.folder_open_outlined,
+              title: 'No watched folders',
+              hint: liveWatch
+                  ? 'Add a folder to auto-import its comics and books, and keep it in sync.'
+                  : 'Add a folder, then rescan it to import its comics and books.',
+            )
           : ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
@@ -112,41 +117,12 @@ class _WatchedFoldersScreenState extends ConsumerState<WatchedFoldersScreen> {
     );
   }
 
+  /// Compact "how long ago" label for the last-scanned subtitle.
   static String _ago(DateTime t) {
     final d = DateTime.now().difference(t);
     if (d.inMinutes < 1) return 'just now';
     if (d.inHours < 1) return '${d.inMinutes}m ago';
     if (d.inDays < 1) return '${d.inHours}h ago';
     return '${d.inDays}d ago';
-  }
-}
-
-class _Empty extends StatelessWidget {
-  const _Empty({required this.liveWatch});
-  final bool liveWatch;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.folder_open_outlined, size: 48, color: CbColors.mutedForeground),
-            const SizedBox(height: 12),
-            const Text('No watched folders', style: TextStyle(color: CbColors.mutedForeground)),
-            const SizedBox(height: 4),
-            Text(
-              liveWatch
-                  ? 'Add a folder to auto-import its comics and books, and keep it in sync.'
-                  : 'Add a folder, then rescan it to import its comics and books.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: CbColors.mutedForeground),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

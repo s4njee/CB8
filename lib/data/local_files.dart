@@ -1,15 +1,20 @@
+/// App-owned storage for library files.
+///
+/// Invariant: `Comics.uri` stores paths RELATIVE to [appStorageDir] for files
+/// the app owns. On iOS the data-container UUID changes on every reinstall, so
+/// an absolute path stored in the DB goes stale even though the files
+/// themselves are migrated. Imported files are copied in so the app always
+/// owns them (no security-scoped bookmark needed for re-reads); absolute paths
+/// appear only for external files (watched folders) and legacy desktop rows.
+library;
+
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-/// App-owned storage for library files.
-///
-/// On iOS the data-container UUID changes on every reinstall, so absolute paths
-/// stored in the DB go stale even though the files are migrated. We therefore
-/// store paths RELATIVE to this base and resolve them at runtime; imported files
-/// are copied in so the app always owns them (no security-scoped bookmark
-/// needed for re-reads).
+/// The base directory all relative library paths resolve against
+/// (the platform's application-support dir).
 Future<Directory> appStorageDir() => getApplicationSupportDirectory();
 
 /// Resolve a stored library uri (relative to [appStorageDir], or a legacy

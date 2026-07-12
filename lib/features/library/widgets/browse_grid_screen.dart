@@ -7,8 +7,8 @@ import '../../../data/models/comic_summary.dart';
 import '../../../data/repositories/providers.dart';
 import '../../../data/sources/library_source.dart';
 import '../../../data/sources/remote_source.dart';
-import '../../import/import_controller.dart';
 import '../../import/media_probe.dart' show supportedExtensions;
+import '../../import/offline_downloads.dart';
 import '../../organize/widgets/collection_item_picker.dart';
 import 'comic_action_sheet.dart';
 import 'library_grid.dart';
@@ -20,7 +20,7 @@ import 'library_grid.dart';
 /// When [collectionId] is set (collection view), the app bar shows an "Add"
 /// action that opens the library picker for adding books/comics to it. In server
 /// mode the app bar also shows "Download all", which saves every readable item in
-/// the grid to this device for offline use (see [ImportController.downloadManyFromServer]).
+/// the grid to this device for offline use (see [OfflineDownloader.downloadManyFromServer]).
 class BrowseGridScreen extends ConsumerWidget {
   /// Creates a titled grid showing the results of [query].
   const BrowseGridScreen({
@@ -120,7 +120,7 @@ class BrowseGridScreen extends ConsumerWidget {
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF141414),
+        backgroundColor: CbColors.surface,
         title: const Text('Download to device?'),
         content: Text('Save $n item${n == 1 ? '' : 's'} from “$title” for offline reading.'),
         actions: [
@@ -166,7 +166,7 @@ class _BulkDownloadDialogState extends ConsumerState<_BulkDownloadDialog> {
   }
 
   Future<void> _run() async {
-    final result = await ref.read(importControllerProvider.notifier).downloadManyFromServer(
+    final result = await ref.read(offlineDownloaderProvider).downloadManyFromServer(
       widget.source,
       widget.comics,
       onItem: (done, total, title) {
@@ -186,7 +186,7 @@ class _BulkDownloadDialogState extends ConsumerState<_BulkDownloadDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: const Color(0xFF141414),
+      backgroundColor: CbColors.surface,
       title: const Text('Downloading to device'),
       content: Column(
         mainAxisSize: MainAxisSize.min,

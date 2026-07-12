@@ -11,7 +11,19 @@ import '../models/groups.dart';
 import '../models/reading_stats.dart';
 import 'library_source.dart';
 
-/// On-device library backed by the Drift database.
+/// On-device library backed by the Drift database — the [LibrarySource] that
+/// is always available in the hybrid model (its sibling is [RemoteSource]).
+///
+/// Invariants worth knowing:
+/// - [LibrarySource] ids are strings (the interface is shared with remote
+///   servers); locally they are stringified rowids. Every method parses with
+///   `int.tryParse` and treats a non-numeric id as a no-op / not-found rather
+///   than throwing.
+/// - List queries project [_summaryColumns], which exclude the cover BLOB;
+///   covers are fetched per visible card via [coverBytes].
+/// - `Comics.uri` is stored *relative* to the app-support dir for imported
+///   (app-owned) files and absolute only for external/watched files — see
+///   `local_files.dart` for why, and [deleteComic] for the ownership rule.
 ///
 /// Search currently uses a `LIKE` scan over title/series/author; the FTS5
 /// virtual table from the plan is a follow-up in the library milestone.
@@ -111,11 +123,25 @@ class LocalSource implements LibrarySource {
   @override
   Future<List<ComicSummary>> listComics(LibraryQuery query) async {
     final favIds = await _favoriteIds();
-    final c = _db.comics;
-    final q = _db.selectOnly(c)..addColumns(_summaryColumns);
+    final conds = _conditionsFor(query, favIds);
+    if (conds == null) return const []; // query provably matches nothing
 
-    // Build conditions, then AND them in a single where so the BLOB-free
-    // projection and the typed builder don't fight over multi-where semantics.
+    final q = _db.selectOnly(_db.comics)..addColumns(_summaryColumns);
+    // AND all conditions into a single where so the BLOB-free projection and
+    // the typed builder don't fight over multi-where semantics.
+    if (conds.isNotEmpty) q.where(conds.reduce((a, b) => a & b));
+    q.orderBy(_orderingFor(query));
+    q.limit(query.limit, offset: query.offset);
+
+    final rows = await q.get();
+    return rows.map((r) => _summaryFromRow(r, favIds)).toList();
+  }
+
+  /// Translates a [LibraryQuery]'s filters into SQL conditions. Returns null
+  /// when the query can't match anything (favorites-only with no favorites, or
+  /// an unparseable collection id), so [listComics] can skip the round-trip.
+  List<Expression<bool>>? _conditionsFor(LibraryQuery query, Set<int> favIds) {
+    final c = _db.comics;
     final conds = <Expression<bool>>[];
     if (query.mediaType != null) {
       conds.add(c.mediaType.equals(query.mediaType!));
@@ -127,6 +153,9 @@ class LocalSource implements LibrarySource {
         c.title.like(like) | c.seriesName.like(like) | c.author.like(like),
       );
     }
+    // "Opened" means any position was ever saved: a page (comics/PDF) or a
+    // locator (EPUB). `completed` is checked separately because finishing a
+    // book keeps its last position.
     switch (query.readStatus) {
       case ReadStatus.unread:
         conds.add(
@@ -145,7 +174,7 @@ class LocalSource implements LibrarySource {
         break;
     }
     if (query.favoritesOnly) {
-      if (favIds.isEmpty) return const [];
+      if (favIds.isEmpty) return null;
       conds.add(c.id.isIn(favIds));
     }
     if (query.tag != null) {
@@ -159,7 +188,7 @@ class LocalSource implements LibrarySource {
     }
     if (query.libraryId != null) {
       final libId = int.tryParse(query.libraryId!);
-      if (libId == null) return const [];
+      if (libId == null) return null;
       final sub = _db.selectOnly(_db.libraryComics)
         ..addColumns([_db.libraryComics.comicId])
         ..where(_db.libraryComics.libraryId.equals(libId));
@@ -169,45 +198,43 @@ class LocalSource implements LibrarySource {
       conds.add(c.seriesName.equals(query.seriesName!));
     }
     if (query.hasBeenRead) conds.add(c.lastRead.isNotNull());
+    return conds;
+  }
 
-    if (conds.isNotEmpty) q.where(conds.reduce((a, b) => a & b));
-
-    // Series views read best ordered by volume then chapter; everything else
-    // uses the requested sort.
+  /// Ordering for a [LibraryQuery]. Series views read best in reading order
+  /// (volume, then chapter, then title); everything else uses the requested
+  /// sort key and direction.
+  List<OrderingTerm> _orderingFor(LibraryQuery query) {
+    final c = _db.comics;
     if (query.seriesName != null) {
-      q.orderBy([
+      return [
         OrderingTerm(expression: c.volumeNumber, nulls: NullsOrder.last),
         OrderingTerm(expression: c.chapterNumber, nulls: NullsOrder.last),
         OrderingTerm(expression: c.title),
-      ]);
-    } else {
-      final mode = query.descending ? OrderingMode.desc : OrderingMode.asc;
-      q.orderBy([
-        switch (query.sort) {
-          LibrarySort.title => OrderingTerm(expression: c.title, mode: mode),
-          LibrarySort.dateAdded => OrderingTerm(
-            expression: c.dateAdded,
-            mode: mode,
-          ),
-          LibrarySort.fileSize => OrderingTerm(
-            expression: c.fileSize,
-            mode: mode,
-          ),
-          LibrarySort.pageCount => OrderingTerm(
-            expression: c.pageCount,
-            mode: mode,
-          ),
-          LibrarySort.lastRead => OrderingTerm(
-            expression: c.lastRead,
-            mode: mode,
-          ),
-        },
-      ]);
+      ];
     }
-    q.limit(query.limit, offset: query.offset);
-
-    final rows = await q.get();
-    return rows.map((r) => _summaryFromRow(r, favIds)).toList();
+    final mode = query.descending ? OrderingMode.desc : OrderingMode.asc;
+    return [
+      switch (query.sort) {
+        LibrarySort.title => OrderingTerm(expression: c.title, mode: mode),
+        LibrarySort.dateAdded => OrderingTerm(
+          expression: c.dateAdded,
+          mode: mode,
+        ),
+        LibrarySort.fileSize => OrderingTerm(
+          expression: c.fileSize,
+          mode: mode,
+        ),
+        LibrarySort.pageCount => OrderingTerm(
+          expression: c.pageCount,
+          mode: mode,
+        ),
+        LibrarySort.lastRead => OrderingTerm(
+          expression: c.lastRead,
+          mode: mode,
+        ),
+      },
+    ];
   }
 
   @override
@@ -418,34 +445,44 @@ class LocalSource implements LibrarySource {
     // Strongest signal first: identical byte size + page count (file_size is
     // populated at import; legacy rows with size 0 are excluded here and fall
     // through to the title pass below).
-    final bySize = await _db
-        .customSelect(
+    await _collectDuplicates(
+      sql:
           'SELECT GROUP_CONCAT(id) AS ids FROM comics '
           'WHERE file_size > 0 '
           'GROUP BY file_size, page_count HAVING COUNT(*) > 1',
-          readsFrom: {_db.comics},
-        )
-        .get();
-    for (final r in bySize) {
-      final ids = _parseIds(r.read<String?>('ids'));
-      if (ids.length < 2) continue;
-      claimed.addAll(ids);
-      final items = await _summariesByIds(ids, favIds);
-      if (items.length > 1) {
-        groups.add(DuplicateGroup(reason: 'Identical files', items: items));
-      }
-    }
+      reason: 'Identical files',
+      claimed: claimed,
+      favIds: favIds,
+      out: groups,
+    );
 
-    // Weaker signal: same normalized title (case-insensitive), for rows the size
-    // pass didn't already claim.
-    final byTitle = await _db
-        .customSelect(
+    // Weaker signal: same normalized title (case-insensitive), for rows the
+    // size pass didn't already claim.
+    await _collectDuplicates(
+      sql:
           'SELECT GROUP_CONCAT(id) AS ids FROM comics '
           'GROUP BY LOWER(TRIM(title)) HAVING COUNT(*) > 1',
-          readsFrom: {_db.comics},
-        )
-        .get();
-    for (final r in byTitle) {
+      reason: 'Matching title',
+      claimed: claimed,
+      favIds: favIds,
+      out: groups,
+    );
+    return groups;
+  }
+
+  /// One duplicate-detection pass. [sql] must yield one row per candidate group
+  /// with a GROUP_CONCAT'd `ids` column. Ids already [claimed] by a stronger
+  /// earlier pass are skipped, and ids grouped here are added to [claimed] so
+  /// weaker passes don't re-report them. Groups land in [out].
+  Future<void> _collectDuplicates({
+    required String sql,
+    required String reason,
+    required Set<int> claimed,
+    required Set<int> favIds,
+    required List<DuplicateGroup> out,
+  }) async {
+    final rows = await _db.customSelect(sql, readsFrom: {_db.comics}).get();
+    for (final r in rows) {
       final ids = _parseIds(
         r.read<String?>('ids'),
       ).where((id) => !claimed.contains(id)).toList();
@@ -453,10 +490,9 @@ class LocalSource implements LibrarySource {
       claimed.addAll(ids);
       final items = await _summariesByIds(ids, favIds);
       if (items.length > 1) {
-        groups.add(DuplicateGroup(reason: 'Matching title', items: items));
+        out.add(DuplicateGroup(reason: reason, items: items));
       }
     }
-    return groups;
   }
 
   static List<int> _parseIds(String? csv) {
