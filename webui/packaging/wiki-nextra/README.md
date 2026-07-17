@@ -6,7 +6,7 @@ Wiki.js setup — the pages under `pages/` are generated from
 [`../wiki/content`](../wiki/content) — but ships as a fast static site served by
 nginx, with no database.
 
-Deployed two ways from one source: on freya at **http://192.168.1.153:4220/**
+Deployed two ways from one source: on freya at **http://192.168.1.156:4220/**
 (k8s namespace `wiki-nextra`), and on **https://s4njee.github.io/CB8/** via
 GitHub Pages (see [Deploy to GitHub Pages](#deploy-to-github-pages)).
 

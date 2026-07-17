@@ -81,15 +81,15 @@ spec:
           emptyDir: {}
         - name: web-uploads
           nfs:
-            server: 192.168.1.153
+            server: 192.168.1.156
             path: /mnt/raid6/CB8
         - name: comics
           nfs:
-            server: 192.168.1.153
+            server: 192.168.1.156
             path: /mnt/raid6/comics
             readOnly: true
         - name: ebooks
           nfs:
-            server: 192.168.1.153
+            server: 192.168.1.156
             path: /mnt/raid6/ebooks
             readOnly: true

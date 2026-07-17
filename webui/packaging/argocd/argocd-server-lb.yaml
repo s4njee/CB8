@@ -2,8 +2,8 @@
 #
 # A separate service from the bundled `argocd-server` ClusterIP (which other Argo
 # components use internally). k3s klipper ServiceLB binds this port on the node
-# IP (192.168.1.153). argocd-server serves TLS on 8080, so the UI is at
-# https://192.168.1.153:4443 (self-signed cert — accept the browser warning).
+# IP (192.168.1.156). argocd-server serves TLS on 8080, so the UI is at
+# https://192.168.1.156:4443 (self-signed cert — accept the browser warning).
 #
 # Ports already taken on the node: 80/443 (traefik), 4218 (cb8), 3000/4210
 # (csearch) — hence 4443.
