@@ -218,7 +218,7 @@ export default function FolioHeader({ onOpenAdminModal }: FolioHeaderProps) {
   );
 
   const wordmark = (
-    <Link to="/" className="font-serif text-[21px] font-medium tracking-tight hover:opacity-90 shrink-0">
+    <Link to="/" className="font-sans text-[21px] font-semibold tracking-[0.01em] hover:opacity-90 shrink-0">
       <span className="text-foreground">CB</span>
       <span className="text-primary">8</span>
     </Link>
