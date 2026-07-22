@@ -107,6 +107,6 @@ describe('forEachRenditionDocument', () => {
     expect(calls).toContain('content:black:Georgia, serif:120:a');
     expect(calls).toContain('content:black:Georgia, serif:120:b');
     expect(calls).toContain('content:black:Georgia, serif:120:c');
-    expect(calls).toContain('iframe:background-color:#000000:important');
+    expect(calls).toContain('iframe:background-color:#0d0b0a:important');
   });
 });

@@ -1,11 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useLocation, Routes, Route, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import Navbar from './Navbar';
-import Sidebar from './Sidebar';
-import TabBar from './TabBar';
-import TabPanel from './TabPanel';
-import SortSheet from './SortSheet';
+import FolioHeader from './FolioHeader';
 import CommandPalette from './CommandPalette';
 import { Toaster } from '@/components/ui/sonner';
 import { cn } from '@/lib/utils';
@@ -21,6 +17,12 @@ import ContinuePage from '@/pages/ContinuePage';
 import LibraryPage from '@/pages/LibraryPage';
 import TagPage from '@/pages/TagPage';
 import ReaderPage from '@/pages/ReaderPage';
+import {
+  CollectionsPage,
+  FoldersPage,
+  TagsPage,
+  FinishedPage,
+} from '@/pages/LandingPages';
 import {
   FolderPage,
   FolderSeriesPage,
@@ -60,7 +62,6 @@ const AdminModal = React.lazy(() => import('@/components/admin/AdminModal'));
 
 /** The top-level layout shell that wraps and routes all pages. */
 export default function AppShell() {
-  const [sortOpen, setSortOpen] = useState(false);
   const [adminPanel, setAdminPanel] = useState<string | null>(null);
   // Whether the lazy AdminModal chunk has ever been requested. Kept mounted
   // after the first open so the dialog's close animation still plays.
@@ -112,23 +113,15 @@ export default function AppShell() {
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
-      {/* 1. Navbar (only visible when not reading) */}
-      {!isReader && (
-        <Navbar
-          onOpenSortSheet={() => setSortOpen(true)}
-          onOpenAdminModal={openAdminModal}
-        />
-      )}
+      {/* 1. Folio top header (hidden while reading) */}
+      {!isReader && <FolioHeader onOpenAdminModal={openAdminModal} />}
 
       {/* 2. Main Shell Layout Container */}
-      <div className={cn("flex-1 min-h-0 flex flex-col overflow-hidden", !isReader && "pt-2")}>
-        <div className={cn("flex-1 min-h-0 flex overflow-hidden", !isReader && "border-t border-border")}>
-          {/* Sidebar (Desktop only) */}
-          {!isReader && <Sidebar onOpenAdminModal={openAdminModal} />}
-
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 flex overflow-hidden">
           {/* Library pages container (hidden when reader is open, but stays mounted) */}
           <div className={cn("flex-1 min-h-0 flex flex-col overflow-hidden", isReader && "hidden")}>
-            <main ref={mainScrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-y-none pb-tab-bar md:pb-0">
+            <main ref={mainScrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-y-none">
             {showPullRefreshIndicator && (
               <div
                 className={cn("ptr-indicator", pullState)}
@@ -151,6 +144,10 @@ export default function AppShell() {
               <Route path="/" element={<AllPage />} />
               <Route path="recent" element={<RecentPage />} />
               <Route path="continue" element={<ContinuePage />} />
+              <Route path="finished" element={<FinishedPage />} />
+              <Route path="collections" element={<CollectionsPage />} />
+              <Route path="folders" element={<FoldersPage />} />
+              <Route path="tags" element={<TagsPage />} />
               <Route path="login" element={<LoginPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="users" element={<UsersPage />} />
@@ -183,12 +180,7 @@ export default function AppShell() {
         </div>
       </div>
 
-      {/* 3. Mobile TabBar */}
-      {!isReader && <TabBar />}
-
-      {/* 4. Sheets & Dialogs */}
-      <SortSheet open={sortOpen} onOpenChange={setSortOpen} />
-      <TabPanel />
+      {/* Global command palette (⌘K) */}
       <CommandPalette />
 
       {/* Admin Action Modal Dialog (lazy: only fetched once an admin opens it) */}

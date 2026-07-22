@@ -1,70 +1,139 @@
 import React from 'react';
-import { useUiStore, ReadStatusFilter } from '@/store/uiStore';
-import { Button } from '@/components/ui/button';
-import { Heart } from 'lucide-react';
+import { useUiStore, ReadStatusFilter, MediaTypeFilter, SortByFilter } from '@/store/uiStore';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Heart, ChevronDown, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const READ_STATUS_PILLS = [
+const MEDIA_PILLS: { value: MediaTypeFilter; label: string }[] = [
+  { value: '', label: 'All' },
+  { value: 'comic', label: 'Comics' },
+  { value: 'book', label: 'Books' },
+];
+
+const READ_STATUS_PILLS: { status: ReadStatusFilter; label: string }[] = [
   { status: '', label: 'All Status' },
   { status: 'unread', label: 'Unread' },
   { status: 'in-progress', label: 'In Progress' },
   { status: 'completed', label: 'Completed' },
 ];
 
+const SORT_OPTIONS: { value: SortByFilter; label: string }[] = [
+  { value: 'dateAdded', label: 'Recent' },
+  { value: 'title', label: 'Title' },
+  { value: 'lastRead', label: 'Recently read' },
+  { value: 'fileSize', label: 'File size' },
+  { value: 'pageCount', label: 'Pages' },
+];
+
+/** A Folio filter pill (accent-filled when active, warm surface otherwise). */
+function Pill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'h-8 shrink-0 rounded-full border px-3.5 text-[13px] transition-colors',
+        active
+          ? 'border-primary bg-primary text-primary-foreground font-medium'
+          : 'border-border bg-card text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function FilterStrips() {
   const {
+    mediaType,
+    setMediaType,
     readStatus,
-    favoritesOnly,
     setReadStatus,
+    favoritesOnly,
     setFavoritesOnly,
+    sortBy,
+    setSortBy,
   } = useUiStore();
 
-  const filterButtonClass = (active: boolean) =>
-    cn(
-      "h-8 shrink-0 px-3 text-xs",
-      active
-        ? "font-semibold shadow-xs"
-        : "border-border bg-secondary text-muted-foreground hover:bg-muted hover:text-foreground"
-    );
+  const currentSort = SORT_OPTIONS.find((o) => o.value === sortBy) ?? SORT_OPTIONS[0];
 
   return (
-    <div className="bg-card/45 border-b border-border/80 p-3 select-none">
+    <div className="px-4 md:px-10 pt-5 pb-3 select-none">
+      {/* Section label + sort */}
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="text-[11.5px] font-medium uppercase tracking-[0.14em] text-section">
+          All books
+        </h2>
+        <DropdownMenu>
+          <DropdownMenuTrigger className="flex items-center gap-0.5 text-xs text-faint hover:text-foreground">
+            Sort: {currentSort.label}
+            <ChevronDown className="h-3.5 w-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="bg-popover border-popover-border">
+            {SORT_OPTIONS.map((o) => (
+              <DropdownMenuItem
+                key={o.value}
+                onClick={() => setSortBy(o.value)}
+                className="gap-2 cursor-pointer focus:bg-muted"
+              >
+                <Check
+                  className={cn('h-4 w-4', o.value === sortBy ? 'text-primary' : 'text-transparent')}
+                />
+                {o.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Filter pills */}
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-        {READ_STATUS_PILLS.map((pill) => {
-          const active = readStatus === pill.status;
-          return (
-            <Button
-              key={pill.status}
-              type="button"
-              variant={active ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setReadStatus(pill.status as ReadStatusFilter)}
-              aria-pressed={active}
-              className={filterButtonClass(active)}
-            >
-              {pill.label}
-            </Button>
-          );
-        })}
+        {MEDIA_PILLS.map((p) => (
+          <Pill key={p.value} active={mediaType === p.value} onClick={() => setMediaType(p.value)}>
+            {p.label}
+          </Pill>
+        ))}
 
-        <div className="mx-1 h-6 w-px shrink-0 bg-border/80" />
+        <div className="mx-1 h-6 w-px shrink-0 bg-border" />
 
-        <Button
+        {READ_STATUS_PILLS.map((p) => (
+          <Pill
+            key={p.status}
+            active={readStatus === p.status}
+            onClick={() => setReadStatus(p.status)}
+          >
+            {p.label}
+          </Pill>
+        ))}
+
+        <button
           type="button"
-          variant={favoritesOnly ? 'outline' : 'outline'}
-          size="sm"
           onClick={() => setFavoritesOnly(!favoritesOnly)}
           aria-pressed={favoritesOnly}
           className={cn(
-            "h-8 shrink-0 px-3 text-xs",
+            'flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-[13px] transition-colors',
             favoritesOnly
-              ? "border-red-500/40 bg-red-500/10 text-red-500 hover:bg-red-500/15 hover:text-red-500"
-              : "border-border bg-secondary text-muted-foreground hover:bg-muted hover:text-foreground"
+              ? 'border-primary bg-primary/10 text-primary'
+              : 'border-border bg-card text-muted-foreground hover:text-foreground',
           )}
         >
-          <Heart className={cn("h-3.5 w-3.5", favoritesOnly ? "fill-red-500 text-red-500" : "text-muted-foreground")} />
+          <Heart className={cn('h-3.5 w-3.5', favoritesOnly && 'fill-current')} />
           <span>Favorites</span>
-        </Button>
+        </button>
       </div>
     </div>
   );

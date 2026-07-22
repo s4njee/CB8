@@ -1,11 +1,12 @@
 import React, { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WebComicRecord } from '@/lib/api';
-import { comicCaption, isFinished, progressPercentFor, PLACEHOLDER_BOOK_SVG_DATA_URI } from '@/lib/utils';
+import { isFinished, progressPercentFor } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Check, Heart } from 'lucide-react';
 import { useSelectionStore } from '@/store/selectionStore';
 import { cn } from '@/lib/utils';
+import TypographicCover from './TypographicCover';
 
 interface ComicCardProps {
   record: WebComicRecord;
@@ -16,10 +17,13 @@ interface ComicCardProps {
 
 function ComicCard({ record, isAdmin, orderedIds, onContextMenu }: ComicCardProps) {
   const navigate = useNavigate();
-  const [imgSrc, setImgSrc] = useState<string>(
+  const [imgSrc] = useState<string>(
     `/api/comics/${record.id}/thumbnail?v=${encodeURIComponent(record.dateAdded)}`
   );
   const [imgLoading, setImgLoading] = useState(true);
+  // On a 404 (no cover), fall back to a generated typographic cover rather than
+  // a generic placeholder — matches the Folio design.
+  const [hasError, setHasError] = useState(false);
 
   // Granular subscriptions: derive booleans instead of subscribing to the
   // selectedIds array itself, so toggling a selection only re-renders the
@@ -86,32 +90,37 @@ function ComicCard({ record, isAdmin, orderedIds, onContextMenu }: ComicCardProp
       onTouchEnd={handleTouchEnd}
       onTouchMove={cancelLongPress}
       onTouchCancel={cancelLongPress}
-      className={cn(
-        "relative flex flex-col group rounded-lg overflow-hidden bg-card border transition-all duration-200 shadow-md select-none cursor-pointer h-full",
-        isSelected
-          ? "border-primary ring-1 ring-primary"
-          : "border-border hover:border-primary/50"
-      )}
+      className="relative flex flex-col group select-none cursor-pointer h-full"
       data-id={record.id}
     >
       {/* 1. Thumbnail Area */}
-      <div className="relative aspect-[2/3] w-full overflow-hidden bg-secondary border-b border-border">
-        {/* Lazy loaded thumbnail image */}
-        <img
-          src={imgSrc}
-          alt={record.title}
-          loading="lazy"
-          decoding="async"
-          className={cn(
-            "object-cover w-full h-full transition-transform duration-300 group-hover:scale-105",
-            imgLoading ? "opacity-30 blur-xs" : isCompleted ? "opacity-55" : "opacity-100"
-          )}
-          onLoad={() => setImgLoading(false)}
-          onError={() => {
-            setImgLoading(false);
-            setImgSrc(PLACEHOLDER_BOOK_SVG_DATA_URI);
-          }}
-        />
+      <div
+        className={cn(
+          "relative aspect-[2/3] w-full overflow-hidden rounded-[5px] bg-secondary transition-shadow",
+          isSelected && "ring-2 ring-primary"
+        )}
+      >
+        {hasError ? (
+          <div className={cn("h-full w-full", isCompleted && "opacity-55")}>
+            <TypographicCover title={record.title} />
+          </div>
+        ) : (
+          <img
+            src={imgSrc}
+            alt={record.title}
+            loading="lazy"
+            decoding="async"
+            className={cn(
+              "object-cover w-full h-full transition-transform duration-300 group-hover:scale-105",
+              imgLoading ? "opacity-30 blur-xs" : isCompleted ? "opacity-55" : "opacity-100"
+            )}
+            onLoad={() => setImgLoading(false)}
+            onError={() => {
+              setImgLoading(false);
+              setHasError(true);
+            }}
+          />
+        )}
 
         {/* Checkbox (Admin bulk select) */}
         {isAdmin && (
@@ -154,14 +163,18 @@ function ComicCard({ record, isAdmin, orderedIds, onContextMenu }: ComicCardProp
         )}
       </div>
 
-      {/* 2. Info Area */}
-      <div className="p-2 flex-1 flex flex-col justify-between gap-1">
-        <h4 className="text-xs font-semibold line-clamp-2 text-foreground group-hover:text-primary transition-colors leading-tight">
+      {/* 2. Info Area — title + Folio status line (Read / New / accent %). */}
+      <div className="pt-2.5 flex flex-col gap-1">
+        <h4 className="text-[12.5px] line-clamp-2 text-foreground leading-[1.25]">
           {record.title}
         </h4>
-        {/* Reading state caption */}
-        <span className="text-[10px] text-muted-foreground mt-auto">
-          {comicCaption(record)}
+        <span
+          className={cn(
+            "text-[11.5px]",
+            progressPercent > 0 && !isCompleted ? "text-primary" : "text-section"
+          )}
+        >
+          {isCompleted ? 'Read' : progressPercent > 0 ? `${progressPercent}%` : 'New'}
         </span>
       </div>
     </div>

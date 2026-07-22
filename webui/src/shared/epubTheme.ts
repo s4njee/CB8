@@ -4,16 +4,20 @@ export interface FontFamily {
 }
 
 export const FONT_FAMILIES: FontFamily[] = [
+  { label: 'Serif', value: 'Newsreader, Georgia, "Times New Roman", serif' },
+  { label: 'Sans', value: '"Instrument Sans", Arial, Helvetica, sans-serif' },
   { label: 'System', value: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
-  { label: 'Serif', value: 'Georgia, "Times New Roman", serif' },
-  { label: 'Sans', value: 'Arial, Helvetica, sans-serif' },
   { label: 'Mono', value: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' },
 ];
 
 export const FONT_SIZES = [70, 80, 90, 100, 110, 120, 130];
 export const EPUB_BASE_FONT_SCALE = 0.85;
 
-export type ThemeMode = 'black' | 'white';
+// The three reading themes, matching the Flutter "Hearth Noir" reader:
+//  black  → true-black warm page, warm off-white text
+//  white  → warm off-white page
+//  sepia  → warm paper tone
+export type ThemeMode = 'black' | 'white' | 'sepia';
 
 export interface ThemeColors {
   background: string;
@@ -22,9 +26,15 @@ export interface ThemeColors {
 }
 
 export function getThemeColors(mode: ThemeMode): ThemeColors {
-  return mode === 'black'
-    ? { background: '#000000', text: '#f3f4f6', link: '#93c5fd' }
-    : { background: '#ffffff', text: '#111827', link: '#1d4ed8' };
+  switch (mode) {
+    case 'white':
+      return { background: '#f4efe4', text: '#2b2620', link: '#9a4a38' };
+    case 'sepia':
+      return { background: '#e8dcc2', text: '#4a3d28', link: '#8a5320' };
+    case 'black':
+    default:
+      return { background: '#0d0b0a', text: '#ddd4c3', link: '#e08a6f' };
+  }
 }
 
 export const EPUB_FONT_SIZE_STYLE_ID = 'cb8-epub-font-size';

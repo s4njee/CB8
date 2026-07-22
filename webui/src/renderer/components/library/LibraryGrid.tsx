@@ -111,9 +111,9 @@ export default function LibraryGrid({
   }
 
   return (
-    <div className="p-4 select-none">
+    <div className="px-4 md:px-10 py-4 select-none">
       {/* 3. Core Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-x-5 gap-y-6">
         {/* Render Folder Cards */}
         {folders.map((folder) => (
           <div key={folder.id} className="h-full">

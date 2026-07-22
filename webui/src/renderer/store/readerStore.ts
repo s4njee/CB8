@@ -25,7 +25,7 @@ export interface EpubPrefs {
   spread: boolean;
   fontSize: number;
   fontFamily: string;
-  themeMode: 'black' | 'white';
+  themeMode: 'black' | 'white' | 'sepia';
   googleFont: string;
 }
 

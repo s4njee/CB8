@@ -2,63 +2,102 @@
 @tailwind components;
 @tailwind utilities;
 
+/* "Hearth Noir" typefaces, self-hosted (offline-safe on a LAN). Newsreader is a
+   serif variable font (book titles, reading text, wordmark); Instrument Sans is
+   the UI face. Weight ranges let the browser interpolate the variable axis. */
+@font-face {
+  font-family: 'Newsreader';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/Newsreader.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Newsreader';
+  font-style: italic;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/Newsreader-Italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Instrument Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/InstrumentSans.woff2') format('woff2');
+}
+
 @layer base {
   :root {
-    --background: 0 0% 3.9%;      /* #0a0a0a */
-    --foreground: 0 0% 91%;       /* #e8e8e8 */
+    /* --- Hearth Noir (Folio) palette --- */
+    --background: 20 13% 4.5%;    /* #0d0b0a */
+    --foreground: 40 30% 88%;     /* #eae4d8 */
 
-    --card: 0 0% 7.8%;            /* #141414 */
-    --card-foreground: 0 0% 91%;
+    --card: 18 13% 7.5%;          /* #161211 */
+    --card-foreground: 40 30% 88%;
 
-    --popover: 0 0% 7.8%;         /* #141414 */
-    --popover-foreground: 0 0% 91%;
+    --popover: 18 13% 7%;         /* #151110 */
+    --popover-foreground: 40 30% 88%;
 
-    --primary: 0 83.5% 62%;       /* #ef4d4d (red by default) */
-    --primary-foreground: 0 0% 98%;
+    --primary: 8 72% 58%;         /* #e15b47 (warm red by default) */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 0 0% 11%;         /* #1c1c1c */
-    --secondary-foreground: 0 0% 91%;
+    --secondary: 29 24% 10%;      /* #1f1913 */
+    --secondary-foreground: 40 30% 88%;
 
-    --muted: 0 0% 11%;            /* #1c1c1c */
-    --muted-foreground: 0 0% 53.3%;/* #888888 */
+    --muted: 29 24% 10%;          /* #1f1913 */
+    --muted-foreground: 35 10% 53%;/* #948a7c */
 
-    --accent: 0 0% 11%;
-    --accent-foreground: 0 0% 91%;
+    --accent: 29 24% 10%;
+    --accent-foreground: 40 30% 88%;
 
-    --destructive: 0 70.8% 60%;   /* #e05252 */
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 5 71% 58%;     /* #e0574a */
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 0 0% 16.5%;         /* #2a2a2a */
-    --input: 0 0% 16.5%;          /* #2a2a2a */
-    --ring: 0 83.5% 62%;          /* Same as primary */
+    --border: 32 21% 12%;         /* #262019 */
+    --input: 32 21% 12%;          /* #262019 */
+    --ring: 8 72% 58%;            /* Same as primary */
 
-    --radius: 0.375rem;           /* 6px */
+    --radius: 0.5rem;             /* 8px */
+
+    /* --- Extended Folio tokens (mapped to Tailwind colors) --- */
+    --header-rule: 31 18% 11%;    /* #211c17 */
+    --reading-text: 39 28% 82%;   /* #ddd4c3 */
+    --section-label: 35 12% 47%;  /* #847a6c */
+    --faint: 35 14% 36%;          /* #685f52 */
+    --placeholder: 35 13% 42%;    /* #776d5f */
+    --hero: 16 12% 7%;            /* #141110 */
+    --drawer: 20 10% 3.5%;        /* #0a0808 */
+    --popover-border: 32 21% 14%; /* #2b241c */
+    --accent-tint: 8 33% 11%;     /* #241412 */
+    --avatar: 13 33% 13%;         /* #2e1c17 */
+    --progress-track: 36 23% 13%; /* #282219 */
   }
 
-  /* Specific theme overrides */
+  /* Accent overrides — retuned warm to sit on the true-black surfaces. */
   [data-theme="red"] {
-    --primary: 0 83.5% 62%;       /* #ef4d4d */
-    --ring: 0 83.5% 62%;
+    --primary: 8 72% 58%;         /* #e15b47 */
+    --ring: 8 72% 58%;
   }
   [data-theme="blue"] {
-    --primary: 212 100% 64.5%;    /* #4a9eff */
-    --ring: 212 100% 64.5%;
+    --primary: 209 49% 57%;       /* #5b93c7 */
+    --ring: 209 49% 57%;
   }
   [data-theme="green"] {
-    --primary: 135 58.5% 49%;     /* #34c759 */
-    --ring: 135 58.5% 49%;
+    --primary: 113 24% 52%;       /* #6fa368 */
+    --ring: 113 24% 52%;
   }
   [data-theme="purple"] {
-    --primary: 260 100% 72.7%;    /* #a374ff */
-    --ring: 260 100% 72.7%;
+    --primary: 268 35% 62%;       /* #9b7bc0 */
+    --ring: 268 35% 62%;
   }
   [data-theme="orange"] {
-    --primary: 27 90.7% 60.8%;    /* #f59342 */
-    --ring: 27 90.7% 60.8%;
+    --primary: 27 65% 57%;        /* #d98a4b */
+    --ring: 27 65% 57%;
   }
   [data-theme="teal"] {
-    --primary: 172 66% 50.4%;     /* #2dd4bf */
-    --ring: 172 66% 50.4%;
+    --primary: 171 30% 51%;       /* #5ba79c */
+    --ring: 171 30% 51%;
   }
 }
 
@@ -67,7 +106,7 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
@@ -246,8 +285,8 @@
 }
 .reader-tool-btn {
   background: transparent;
-  color: #bbb;
-  border: 1px solid #333;
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
   width: 34px;
   height: 34px;
@@ -260,13 +299,13 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .reader-tool-btn:hover {
-  background: #2a2a2a;
-  color: #fff;
-  border-color: #555;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--popover-border));
 }
 .reader-tool-btn.active {
   background: hsl(var(--primary));
-  color: #fff;
+  color: hsl(var(--foreground));
   border-color: hsl(var(--primary));
 }
 
@@ -306,7 +345,7 @@
 }
 .epub-container {
   flex: 1;
-  background: #1a1a1a;
+  background: #0d0b0a;
   overflow: hidden;
 }
 .epub-page-turn-cue {
@@ -346,6 +385,6 @@
   align-items: center;
   justify-content: center;
   overflow: auto;
-  background: #1a1a1a;
+  background: #0d0b0a;
 }
 #pdf-canvas { display: block; max-width: 100%; }

@@ -16,12 +16,12 @@ export type ThemeSwatch = { id: ThemeType; label: string; color: string };
 
 /** The accent themes offered in the settings panel. */
 export const THEME_LIST: ThemeSwatch[] = [
-  { id: 'red', label: 'Red', color: '#ef4d4d' },
-  { id: 'blue', label: 'Blue', color: '#4a9eff' },
-  { id: 'green', label: 'Green', color: '#34c759' },
-  { id: 'purple', label: 'Purple', color: '#a374ff' },
-  { id: 'orange', label: 'Orange', color: '#f59342' },
-  { id: 'teal', label: 'Teal', color: '#2dd4bf' },
+  { id: 'red', label: 'Red', color: '#e15b47' },
+  { id: 'blue', label: 'Blue', color: '#5b93c7' },
+  { id: 'green', label: 'Green', color: '#6fa368' },
+  { id: 'purple', label: 'Purple', color: '#9b7bc0' },
+  { id: 'orange', label: 'Orange', color: '#d98a4b' },
+  { id: 'teal', label: 'Teal', color: '#5ba79c' },
 ];
 
 /**

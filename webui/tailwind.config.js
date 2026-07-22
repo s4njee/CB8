@@ -13,12 +13,28 @@ module.exports = {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ['Instrument Sans', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        serif: ['Newsreader', 'Georgia', 'Cambria', 'Times New Roman', 'serif'],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+        // Extended Folio tokens
+        "header-rule": "hsl(var(--header-rule))",
+        reading: "hsl(var(--reading-text))",
+        section: "hsl(var(--section-label))",
+        faint: "hsl(var(--faint))",
+        placeholder: "hsl(var(--placeholder))",
+        hero: "hsl(var(--hero))",
+        drawer: "hsl(var(--drawer))",
+        "popover-border": "hsl(var(--popover-border))",
+        "accent-tint": "hsl(var(--accent-tint))",
+        avatar: "hsl(var(--avatar))",
+        "progress-track": "hsl(var(--progress-track))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",

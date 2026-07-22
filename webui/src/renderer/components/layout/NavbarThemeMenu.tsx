@@ -18,12 +18,12 @@ const THEME_LABELS: Record<ThemeType, string> = {
 };
 
 const THEME_DOT_CLASSES: Record<ThemeType, string> = {
-  red: 'bg-[#ef4d4d]',
-  blue: 'bg-[#4a9eff]',
-  green: 'bg-[#34c759]',
-  purple: 'bg-[#a374ff]',
-  orange: 'bg-[#f59342]',
-  teal: 'bg-[#2dd4bf]',
+  red: 'bg-[#e15b47]',
+  blue: 'bg-[#5b93c7]',
+  green: 'bg-[#6fa368]',
+  purple: 'bg-[#9b7bc0]',
+  orange: 'bg-[#d98a4b]',
+  teal: 'bg-[#5ba79c]',
 };
 
 interface NavbarThemeMenuProps {
