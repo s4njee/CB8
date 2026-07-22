@@ -442,18 +442,18 @@ packages:
     dependency: "direct main"
     description:
       name: flutter_readium
-      sha256: e9f500ac3fa03f119a7fb60644a005222215249e3af91e54da0940f44b3d4f78
+      sha256: "99b6bc80740eda849bb37ededef2daa9471d6e0626411c3a3cdcf73e40817380"
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.0"
+    version: "0.1.1"
   flutter_readium_platform_interface:
     dependency: transitive
     description:
       name: flutter_readium_platform_interface
-      sha256: "59ce207046ab237c5b23300acf91db49b256cdf0c8e586c0653d238e0aa4213f"
+      sha256: f02e4fb71842862c9d056425e9008760b8b03370ddba9b81d61ed75fde3b4b9b
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.0"
+    version: "0.1.1"
   flutter_riverpod:
     dependency: "direct main"
     description:
