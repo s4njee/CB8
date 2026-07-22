@@ -28,8 +28,8 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('Accent', style: TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 12),
+          Text('ACCENT', style: cbSectionLabel()),
+          const SizedBox(height: 14),
           Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -43,7 +43,7 @@ class SettingsScreen extends ConsumerWidget {
             ],
           ),
           const Divider(height: 40),
-          const Text('Reading', style: TextStyle(fontWeight: FontWeight.w600)),
+          Text('READING', style: cbSectionLabel()),
           const SizedBox(height: 4),
           ListTile(
             contentPadding: EdgeInsets.zero,
@@ -56,7 +56,7 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           const Divider(height: 40),
-          const Text('Library', style: TextStyle(fontWeight: FontWeight.w600)),
+          Text('LIBRARY', style: cbSectionLabel()),
           const SizedBox(height: 4),
           ListTile(
             contentPadding: EdgeInsets.zero,

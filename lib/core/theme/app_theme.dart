@@ -1,34 +1,45 @@
-/// CB8's visual identity ported to Flutter: the accent palette, the fixed dark
-/// surface greys, and [buildCbTheme] which turns them into [ThemeData].
+/// CB8's visual identity, redrawn as **"Hearth Noir"** (the Folio design language):
+/// a true-black, warm-neutral surface palette, a warm-red accent, serif book
+/// typography (Newsreader) over a sans UI (Instrument Sans), and [buildCbTheme]
+/// which turns them into [ThemeData].
+///
 /// `theme_controller.dart` picks the accent; widgets read colors via
-/// `Theme.of(context)` (or [CbColors] for the fixed greys), never hard-code.
+/// `Theme.of(context)` (or [CbColors] for the fixed warm greys), never hard-code.
 library;
 
 import 'package:flutter/material.dart';
 
-/// Accent themes ported from CB8 `globals.css` (`[data-theme="..."]`).
+/// Serif family — book titles, reading text, the wordmark. Bundled in pubspec.
+const String kSerifFamily = 'Newsreader';
+
+/// Sans family — all UI chrome (nav, labels, buttons). Bundled in pubspec.
+const String kSansFamily = 'Instrument Sans';
+
+/// Accent themes. Ported from CB8 but **retuned for the warm-black Hearth Noir
+/// surfaces** — the default `red` is now Folio's `#e15b47`, and the others are
+/// nudged to lower-chroma, warmer variants so they read well on `#0d0b0a`.
 ///
-/// Each maps to the `--primary` HSL the web app used. We expose them as plain
-/// [Color]s so the Flutter app can swap the seed/primary at runtime exactly like
-/// CB8 swapped the `data-theme` attribute.
+/// We expose them as plain [Color]s so the app can swap the seed/primary at
+/// runtime exactly like CB8 swapped the `data-theme` attribute. All six members
+/// are kept — the accent picker in Settings is a first-class menu option.
 enum AccentTheme {
-  /// Default coral red (CB8's signature accent).
-  red(Color(0xFFEF4D4D)),
+  /// Hearth Noir warm red (the signature accent).
+  red(Color(0xFFE15B47)),
 
-  /// Blue accent.
-  blue(Color(0xFF4A9EFF)),
+  /// Muted steel blue.
+  blue(Color(0xFF5B93C7)),
 
-  /// Green accent.
-  green(Color(0xFF34C759)),
+  /// Warm sage green.
+  green(Color(0xFF6FA368)),
 
-  /// Purple accent.
-  purple(Color(0xFFA374FF)),
+  /// Dusty mauve/purple.
+  purple(Color(0xFF9B7BC0)),
 
-  /// Orange accent.
-  orange(Color(0xFFF59342)),
+  /// Warm amber/orange.
+  orange(Color(0xFFD98A4B)),
 
-  /// Teal accent.
-  teal(Color(0xFF2DD4BF));
+  /// Muted teal.
+  teal(Color(0xFF5BA79C));
 
   const AccentTheme(this.color);
 
@@ -36,37 +47,112 @@ enum AccentTheme {
   final Color color;
 }
 
-/// Fixed surface palette from CB8's dark-first `:root` block in `globals.css`.
-///
-/// CB8 was dark-only in practice; we mirror those exact greys so the Flutter
-/// app reads as the same product.
+/// Fixed surface palette for the Hearth Noir dark-only theme, straight from the
+/// Folio handoff tokens. CB8 is dark-only in practice; these warm near-blacks are
+/// what make the app read as "Folio".
 abstract final class CbColors {
-  /// App background (`--background`, 0 0% 3.9%).
-  static const background = Color(0xFF0A0A0A);
+  /// App background (page). Folio `#0d0b0a`.
+  static const background = Color(0xFF0D0B0A);
 
-  /// Card/surface color (`--card`, 0 0% 7.8%).
-  static const surface = Color(0xFF141414);
+  /// Card/surface color (search field, cards). Folio `#161211`.
+  static const surface = Color(0xFF161211);
 
-  /// Secondary surface (`--secondary`, 0 0% 11%).
-  static const surfaceAlt = Color(0xFF1C1C1C);
+  /// Secondary surface (chips, control fills, thumbnails). A touch above surface.
+  static const surfaceAlt = Color(0xFF1F1913);
 
-  /// Primary text color (`--foreground`, 0 0% 91%).
-  static const foreground = Color(0xFFE8E8E8);
+  /// Primary text color. Folio `#eae4d8`.
+  static const foreground = Color(0xFFEAE4D8);
 
-  /// Muted/secondary text color (`--muted-foreground`, 0 0% 53.3%).
-  static const mutedForeground = Color(0xFF888888);
+  /// Muted/secondary text color. Folio `#948a7c`.
+  static const mutedForeground = Color(0xFF948A7C);
 
-  /// Border/divider color (`--border`, 0 0% 16.5%).
-  static const border = Color(0xFF2A2A2A);
+  /// Border/divider color (inputs, controls). Folio `#262019`.
+  static const border = Color(0xFF262019);
 
-  /// Destructive/error color (`--destructive`, 0 70.8% 60%).
-  static const destructive = Color(0xFFE05252);
+  /// Destructive/error color — kept warm-red to sit in the palette.
+  static const destructive = Color(0xFFE0574A);
+
+  // --- Extended Folio tokens (new; used by the redesigned surfaces) ---
+
+  /// Hairline rule under the header / between panes. Folio `#211c17`.
+  static const headerRule = Color(0xFF211C17);
+
+  /// Reading/body text on the book canvas. Folio `#ddd4c3`.
+  static const readingText = Color(0xFFDDD4C3);
+
+  /// Uppercase section labels ("CONTINUE READING"). Folio `#847a6c`.
+  static const sectionLabel = Color(0xFF847A6C);
+
+  /// Faint text — footers, page numbers, "Sort:" hints. Folio `#685f52`.
+  static const faint = Color(0xFF685F52);
+
+  /// Even fainter placeholder / search hint text. Folio `#776d5f`.
+  static const placeholder = Color(0xFF776D5F);
+
+  /// Continue-reading hero card fill. Folio `#141110`.
+  static const heroSurface = Color(0xFF141110);
+
+  /// Reading-view contents drawer background. Folio `#0a0808`.
+  static const drawerBg = Color(0xFF0A0808);
+
+  /// Settings popover background. Folio `#151110`.
+  static const popover = Color(0xFF151110);
+
+  /// Popover / drawer border. Folio `#2b241c`.
+  static const popoverBorder = Color(0xFF2B241C);
+
+  /// Active TOC-row tint (accent text sits on this). Folio `#241412`.
+  static const accentTint = Color(0xFF241412);
+
+  /// Circular avatar background. Folio `#2e1c17`.
+  static const avatarBg = Color(0xFF2E1C17);
+
+  /// Progress-bar track. Folio `#282219`.
+  static const progressTrack = Color(0xFF282219);
 }
 
-/// CB8 used `--radius: 0.375rem` (6px) globally.
-const double kCbRadius = 6.0;
+/// Corner radii used across the redesign (Folio uses a small set).
+const double kCbRadius = 8.0; // buttons, inputs, controls
+const double kCardRadius = 12.0; // hero card, popover, cards
+const double kCoverRadius = 5.0; // covers in the grid
+const double kHeroCoverRadius = 4.0; // the small hero cover
 
-/// Builds the dark [ThemeData] for a given [AccentTheme], mirroring CB8.
+/// A serif display style for book titles / wordmarks (Newsreader).
+TextStyle cbSerif({
+  double size = 22,
+  FontWeight weight = FontWeight.w400,
+  Color color = CbColors.foreground,
+  double? height,
+  FontStyle? style,
+}) =>
+    TextStyle(
+      fontFamily: kSerifFamily,
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+      height: height,
+      fontStyle: style,
+    );
+
+/// An uppercase, letter-spaced section label (Instrument Sans) — "CONTINUE
+/// READING", "ALL BOOKS", "THEME", etc.
+TextStyle cbSectionLabel({
+  double size = 11.5,
+  Color color = CbColors.sectionLabel,
+  double letterSpacing = 0.14 * 11.5,
+}) =>
+    TextStyle(
+      fontFamily: kSansFamily,
+      fontSize: size,
+      fontWeight: FontWeight.w500,
+      color: color,
+      // Flutter letter-spacing is in logical px, not em, so callers pass an
+      // absolute value; the default here ≈ .14em at 11.5px.
+      letterSpacing: letterSpacing,
+      height: 1.0,
+    );
+
+/// Builds the dark [ThemeData] for a given [AccentTheme], mirroring Folio.
 ThemeData buildCbTheme(AccentTheme accent) {
   final scheme = ColorScheme.dark(
     primary: accent.color,
@@ -81,20 +167,29 @@ ThemeData buildCbTheme(AccentTheme accent) {
 
   final radius = BorderRadius.circular(kCbRadius);
 
+  // Instrument Sans is the base UI face; serif is opt-in via [cbSerif].
+  final base = Typography.whiteMountainView.apply(
+    fontFamily: kSansFamily,
+    bodyColor: CbColors.foreground,
+    displayColor: CbColors.foreground,
+  );
+
   return ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
     colorScheme: scheme,
+    fontFamily: kSansFamily,
     scaffoldBackgroundColor: CbColors.background,
     canvasColor: CbColors.background,
-    dividerColor: CbColors.border,
+    dividerColor: CbColors.headerRule,
     splashFactory: InkRipple.splashFactory,
+    dividerTheme: const DividerThemeData(color: CbColors.headerRule, space: 1, thickness: 1),
     cardTheme: CardThemeData(
       color: CbColors.surface,
       elevation: 0,
       shape: RoundedRectangleBorder(
         side: const BorderSide(color: CbColors.border),
-        borderRadius: radius,
+        borderRadius: BorderRadius.circular(kCardRadius),
       ),
     ),
     appBarTheme: const AppBarTheme(
@@ -108,15 +203,67 @@ ThemeData buildCbTheme(AccentTheme accent) {
       indicatorColor: accent.color.withValues(alpha: 0.18),
       elevation: 0,
     ),
+    navigationRailTheme: const NavigationRailThemeData(
+      backgroundColor: CbColors.surface,
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: CbColors.surfaceAlt,
+      side: const BorderSide(color: CbColors.border),
+      labelStyle: const TextStyle(fontFamily: kSansFamily, color: CbColors.foreground),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kCbRadius)),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: CbColors.surface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: CbColors.border),
+        borderRadius: BorderRadius.circular(kCardRadius),
+      ),
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: CbColors.surface,
+      surfaceTintColor: Colors.transparent,
+    ),
+    popupMenuTheme: PopupMenuThemeData(
+      color: CbColors.popover,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: CbColors.popoverBorder),
+        borderRadius: BorderRadius.circular(kCbRadius),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: accent.color,
+        side: BorderSide(color: accent.color),
+        shape: RoundedRectangleBorder(borderRadius: radius),
+        textStyle: const TextStyle(fontFamily: kSansFamily, fontWeight: FontWeight.w500),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: radius),
+        textStyle: const TextStyle(fontFamily: kSansFamily, fontWeight: FontWeight.w500),
+      ),
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: CbColors.surfaceAlt,
-      border: OutlineInputBorder(borderRadius: radius, borderSide: BorderSide.none),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      fillColor: CbColors.surface,
+      hintStyle: const TextStyle(color: CbColors.placeholder, fontFamily: kSansFamily),
+      border: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: const BorderSide(color: CbColors.border),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: const BorderSide(color: CbColors.border),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: accent.color),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
     ),
-    textTheme: Typography.whiteMountainView.apply(
-      bodyColor: CbColors.foreground,
-      displayColor: CbColors.foreground,
-    ),
+    textTheme: base,
   );
 }

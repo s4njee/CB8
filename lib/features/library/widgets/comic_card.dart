@@ -32,7 +32,8 @@ class ComicCard extends StatefulWidget {
 }
 
 /// One-line reading-state caption: "Finished", "Page 5 of 12", "38% read",
-/// or, for unstarted items, "EPUB · 42 chapters".
+/// or, for unstarted items, "EPUB · 42 chapters". Used on the hero/resume cards
+/// where the extra detail is welcome; grid cells use [comicStatusLine] instead.
 String comicCaption(ComicSummary comic) {
   if (comic.completed) return 'Finished';
   final isBook = comic.mediaType == 'book';
@@ -49,6 +50,17 @@ String comicCaption(ComicSummary comic) {
     if (comic.extension != null) comic.extension!.toUpperCase(),
     if (comic.pageCount > 0) '${comic.pageCount} $unit',
   ].join(' · ');
+}
+
+/// Folio-style compact status line for a grid cell. In-progress items report
+/// their percentage in the accent color; finished ("Read") and unstarted
+/// ("New") items use muted text. Returns the label and whether it's an accent.
+({String label, bool accent}) comicStatusLine(ComicSummary comic) {
+  if (comic.completed) return (label: 'Read', accent: false);
+  if (comic.progress > 0) {
+    return (label: '${(comic.progress * 100).round()}%', accent: true);
+  }
+  return (label: 'New', accent: false);
 }
 
 class _ComicCardState extends State<ComicCard> {
@@ -70,7 +82,7 @@ class _ComicCardState extends State<ComicCard> {
           child: InkWell(
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
-            borderRadius: BorderRadius.circular(kCbRadius),
+            borderRadius: BorderRadius.circular(kCoverRadius),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -78,7 +90,7 @@ class _ComicCardState extends State<ComicCard> {
                 // never overflows its grid cell regardless of font scaling.
                 Expanded(
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(kCbRadius),
+                    borderRadius: BorderRadius.circular(kCoverRadius),
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
@@ -115,20 +127,30 @@ class _ComicCardState extends State<ComicCard> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 9),
                 Text(
                   comic.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(height: 1.2),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    height: 1.25,
+                    color: CbColors.foreground,
+                  ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  comicCaption(comic),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(color: CbColors.mutedForeground),
-                ),
+                const SizedBox(height: 3),
+                Builder(builder: (context) {
+                  final status = comicStatusLine(comic);
+                  return Text(
+                    status.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: status.accent ? theme.colorScheme.primary : CbColors.sectionLabel,
+                    ),
+                  );
+                }),
               ],
             ),
           ),

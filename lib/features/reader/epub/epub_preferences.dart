@@ -41,14 +41,14 @@ enum EpubFont {
 /// Page color schemes for the book canvas. Only the canvas re-colors — the
 /// reader chrome stays dark (see `epub_reader_style.dart`).
 enum EpubReaderTheme {
-  /// Near-black page, light text (the app's default look).
-  dark('Dark', Icons.dark_mode, 0xFF121212, 0xFFE6E6E6),
+  /// True-black warm page, warm off-white text (the Hearth Noir reading look).
+  dark('Dark', Icons.dark_mode, 0xFF0D0B0A, 0xFFDDD4C3),
 
-  /// White page, near-black text.
-  light('Light', Icons.light_mode, 0xFFFFFFFF, 0xFF111111),
+  /// Warm off-white page, near-black text (matches the Folio "light" swatch).
+  light('Light', Icons.light_mode, 0xFFF4EFE4, 0xFF2B2620),
 
-  /// Warm paper tone, brown text.
-  sepia('Sepia', Icons.local_cafe, 0xFFF4ECD8, 0xFF5B4636);
+  /// Warm paper tone, brown text (matches the Folio "sepia" swatch).
+  sepia('Sepia', Icons.local_cafe, 0xFFE8DCC2, 0xFF4A3D28);
 
   const EpubReaderTheme(this.label, this.icon, this._bg, this._fg);
 

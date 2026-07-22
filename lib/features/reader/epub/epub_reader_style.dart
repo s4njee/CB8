@@ -9,13 +9,14 @@ import 'package:flutter/material.dart';
 /// colors are shared by `unified_reader_screen.dart` and every sheet under
 /// `epub/`; keeping them here is what keeps that chrome visually in sync.
 
-/// Translucent near-black behind the app bar and the progress bar, so a hint
-/// of the page shows through at the edges instead of a hard opaque band.
-const readerChromeColor = Color(0xF2141414);
+/// Translucent warm near-black behind the app bar and the progress bar, so a
+/// hint of the page shows through at the edges instead of a hard opaque band.
+const readerChromeColor = Color(0xF20D0B0A);
 
-/// Opaque near-black used as the background of every modal bottom sheet.
-const readerPanelColor = Color(0xFF141414);
+/// Opaque warm near-black used as the background of every modal bottom sheet
+/// (the Folio popover surface).
+const readerPanelColor = Color(0xFF151110);
 
-/// Slightly lighter surface for interactive controls sitting on a sheet
+/// Slightly lighter warm surface for interactive controls sitting on a sheet
 /// (choice buttons, text fields, dropdowns), so they read against the panel.
-const readerControlColor = Color(0xFF1E1E1E);
+const readerControlColor = Color(0xFF211B14);
