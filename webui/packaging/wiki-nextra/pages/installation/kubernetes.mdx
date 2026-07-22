@@ -98,7 +98,7 @@ work unchanged** on your cluster. Edit these before deploying:
 - **`nodeSelector`.** `cb8.yaml`, `worker.yaml`, and `postgres.yaml` pin pods to
   `kubernetes.io/hostname: freya`. Change or remove this for your nodes.
 - **Library volume sources.** `cb8.yaml` and `worker.yaml` mount `web-uploads`,
-  `comics`, and `ebooks` as **NFS** volumes from `192.168.1.153:/mnt/raid6/...`.
+  `comics`, and `ebooks` as **NFS** volumes from `192.168.1.156:/mnt/raid6/...`.
   (NFS is a way to share folders over the network; a volume is storage attached to
   a pod — see [Glossary](/glossary).) Repoint these at your own NFS export (or
   switch to hostPaths / PVCs that suit your storage). The comics and ebooks mounts
