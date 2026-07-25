@@ -20,12 +20,19 @@ const OWN_AUTH_ENDPOINTS = new Set([
   '/api/auth/register',
   '/api/auth/sign-up/email',
   '/api/auth/sign-up/username',
+  // QR device pairing. Better Auth knows nothing about these; without the
+  // entries the requests would be delegated and 404 inside better-auth.
+  '/api/auth/pair-token',
+  '/api/auth/pair',
 ]);
 
 /** API endpoints reachable without an authenticated session. */
 const PUBLIC_API_ENDPOINTS = new Set([
   '/api/auth/session',
   '/api/auth/login',
+  // Redeeming a pairing code is how a device *gets* its session, so it cannot
+  // require a session. Minting (pair-token) is signed-in only and is NOT public.
+  '/api/auth/pair',
 ]);
 
 /**

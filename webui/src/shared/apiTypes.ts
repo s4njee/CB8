@@ -2,6 +2,23 @@ export interface OkResponse {
   ok: true;
 }
 
+/**
+ * Response of `POST /api/auth/pair-token` — a freshly minted QR pairing token.
+ * The plaintext appears only here; the server stores sha256(token).
+ */
+export interface PairTokenResponse {
+  token: string;
+  expiresAt: string;
+}
+
+/**
+ * Response of `GET /api/settings/pair-info` — addresses a phone could reach this server on.
+ */
+export interface PairInfoResponse {
+  origins: string[];
+}
+
+
 export interface InitialCredentialsResponse {
   username: string;
   password: string | null;

@@ -32,6 +32,7 @@ import * as folders from './db/folders';
 import * as comics from './db/comics';
 import * as jobs from './db/jobs';
 import * as ingestErrors from './db/ingestErrors';
+import * as pairTokens from './db/pairTokens';
 import * as maintenance from './db/maintenance';
 import * as ebookSearch from './db/ebookSearch';
 import * as searchIndexer from './search/indexer';
@@ -282,6 +283,18 @@ export class LibraryDatabase {
   isFavorite(userId: number, comicId: number) { return favorites.isFavorite(this.db, userId, comicId); }
   getFavoritedComicIds(userId: number, comicIds: number[]) {
     return favorites.getFavoritedComicIds(this.db, userId, comicIds);
+  }
+
+  // --- QR pairing tokens ---
+  // Plaintext never crosses this boundary. See db/pairTokens.ts for why consume is a single DELETE.
+  createPairToken(userId: number, tokenHash: string, expiresAt: Date) {
+    return pairTokens.createPairToken(this.db, userId, tokenHash, expiresAt);
+  }
+  consumePairToken(tokenHash: string) {
+    return pairTokens.consumePairToken(this.db, tokenHash);
+  }
+  sweepExpiredPairTokens() {
+    return pairTokens.sweepExpiredPairTokens(this.db);
   }
 
   // --- background jobs (scan_jobs progress mirror) ---

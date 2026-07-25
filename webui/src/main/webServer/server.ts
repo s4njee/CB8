@@ -196,7 +196,11 @@ export async function buildServer(
     if (
       pathname === '/api/auth/login' ||
       pathname === '/api/auth/sign-in/username' ||
-      pathname === '/api/auth/sign-in/email'
+      pathname === '/api/auth/sign-in/email' ||
+      // Pair redeem is an unauthenticated session mint — same brute-force risk as login.
+      // pair-token is signed-in but still on the limiter so a stolen session can't grind tokens.
+      pathname === '/api/auth/pair' ||
+      pathname === '/api/auth/pair-token'
     ) {
       if (!loginLimiter.check(`${ip}:login`)) {
         reply.code(429).send({ error: 'Too many login attempts. Try again later.' });

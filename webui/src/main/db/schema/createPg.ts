@@ -304,4 +304,15 @@ CREATE TABLE IF NOT EXISTS ingest_errors (
   message     TEXT NOT NULL,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- QR device-pairing tokens (short-lived, single-use). Only sha256(token) is
+-- stored. Consume is DELETE…RETURNING so single-use is atomic — see pairTokens.ts.
+CREATE TABLE IF NOT EXISTS pair_tokens (
+  id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pair_tokens_expires_at ON pair_tokens(expires_at);
 `;

@@ -1,4 +1,6 @@
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'node:crypto';
+import * as os from 'node:os';
 import { fromNodeHeaders } from 'better-auth/node';
 import {
   GUEST_ACCESS_KEY,
@@ -8,9 +10,22 @@ import {
 } from '../middleware';
 import { getAuth } from '../auth';
 import { requireAdmin, type RouteHandler } from '../context';
-import type { InitialCredentialsResponse } from '../../../shared/apiTypes';
-import { readJsonBody, requireString, requireTrimmedString } from './validation';
+import type { InitialCredentialsResponse, PairInfoResponse, PairTokenResponse } from '../../../shared/apiTypes';
+import { pairOriginsForRequest } from '../pairPayload';
+import { readJsonBody, requireCurrentUser, requireString, requireTrimmedString } from './validation';
 const AUTO_RESCAN_INTERVAL_KEY = 'auto_rescan_interval_min';
+
+/** How long a freshly minted pairing token stays redeemable (120 s). */
+const PAIR_TOKEN_TTL_MS = 120_000;
+/** Entropy per pairing token. */
+const PAIR_TOKEN_BYTES = 32;
+/** Opaque failure for every /api/auth/pair rejection. */
+const PAIR_FAILURE_MESSAGE = 'Invalid or expired pairing code';
+
+function hashPairToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
 
 /**
  * @module
@@ -68,7 +83,66 @@ export const handle: RouteHandler = async (ctx) => {
     return true;
   }
 
-  // Register (admin only)
+  // ---------------------------------------------------------------- QR pairing
+  if (method === 'POST' && pathname === '/api/auth/pair-token') {
+    const user = requireCurrentUser(ctx);
+    if (!user) return true;
+    await db.sweepExpiredPairTokens();
+    const token = crypto.randomBytes(PAIR_TOKEN_BYTES).toString('base64url');
+    const expiresAt = new Date(Date.now() + PAIR_TOKEN_TTL_MS);
+    await db.createPairToken(user.id, hashPairToken(token), expiresAt);
+    const body: PairTokenResponse = { token, expiresAt: expiresAt.toISOString() };
+    sendJson(res, 200, body);
+    return true;
+  }
+
+  if (method === 'POST' && pathname === '/api/auth/pair') {
+    const parsed = await readJsonBody<{ token?: unknown }>(req, res);
+    if (!parsed.ok) return true;
+    const token = parsed.value.token;
+    if (typeof token !== 'string' || token.length === 0) {
+      sendError(res, 401, PAIR_FAILURE_MESSAGE);
+      return true;
+    }
+    const userId = await db.consumePairToken(hashPairToken(token));
+    if (userId === null) {
+      sendError(res, 401, PAIR_FAILURE_MESSAGE);
+      return true;
+    }
+    try {
+      const result = await getAuth().api.cb8EstablishPairSession({
+        body: { userId: String(userId) },
+        headers: fromNodeHeaders(req.headers),
+        returnHeaders: true,
+      });
+      const cookies = result.headers?.getSetCookie?.() ?? [];
+      if (cookies.length) res.setHeader('Set-Cookie', cookies);
+      const user = result.response.user;
+      sendJson(res, 200, {
+        ok: true,
+        user: { id: user.id, username: user.username ?? user.name, isAdmin: user.isAdmin === true },
+      });
+    } catch {
+      sendError(res, 401, PAIR_FAILURE_MESSAGE);
+    }
+    return true;
+  }
+
+  if (method === 'GET' && pathname === '/api/settings/pair-info') {
+    const user = requireCurrentUser(ctx);
+    if (!user) return true;
+    const proto = process.env.CB8_TRUST_PROXY_HEADERS === '1'
+      ? String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() || 'http'
+      : 'http';
+    const body: PairInfoResponse = {
+      origins: pairOriginsForRequest(req.headers.host, proto, os.networkInterfaces()),
+    };
+    sendJson(res, 200, body);
+    return true;
+  }
+
+
+  // Register
   if (method === 'POST' && pathname === '/api/auth/register') {
     if (!requireAdmin(ctx)) return true;
     const parsed = await readJsonBody<{ username?: string; password?: string; isAdmin?: boolean }>(req, res);

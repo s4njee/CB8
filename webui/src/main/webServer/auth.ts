@@ -17,6 +17,8 @@
 
 import { betterAuth } from 'better-auth';
 import { username as usernamePlugin } from 'better-auth/plugins';
+import { APIError, createAuthEndpoint } from 'better-auth/api';
+import { setSessionCookie } from 'better-auth/cookies';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
@@ -50,6 +52,59 @@ function trustProxyHeaders(): boolean {
 // passed; caching it as the generic return type causes variance errors between
 // the plugin-augmented user shape and the base `User`. Narrow publicly to the
 // subset of the API we actually consume.
+
+/**
+ * Endpoint path (relative to better-auth's `/api/auth` base) of the internal
+ * "establish a session for this user, no password" endpoint used by QR pairing.
+ *
+ * SECURITY — read before touching this:
+ * This endpoint signs in as an arbitrary user id with no credential whatsoever.
+ * It is safe *only* because it is unreachable over HTTP: the same constant is
+ * passed to better-auth's `disabledPaths`, which makes the router answer 404
+ * before the handler runs, while server-side `auth.api.*` calls (which do not go
+ * through the router) still work. The two references must stay in lockstep.
+ */
+export const PAIR_SESSION_PATH = '/pair/establish-session';
+
+type PairSessionUser = {
+  id: number | string;
+  email: string;
+  name: string;
+  isAdmin?: boolean | null;
+  username?: string | null;
+};
+
+function pairSessionPlugin() {
+  return {
+    id: 'cb8-pair-session',
+    endpoints: {
+      cb8EstablishPairSession: createAuthEndpoint(
+        PAIR_SESSION_PATH,
+        {
+          method: 'POST',
+          metadata: { SERVER_ONLY: true },
+        },
+        async (ctx) => {
+          const userId = (ctx.body as { userId?: unknown } | undefined)?.userId;
+          if (typeof userId !== 'string' || userId.length === 0) {
+            throw new APIError('BAD_REQUEST', { message: 'userId is required' });
+          }
+          const user = await ctx.context.internalAdapter.findUserById(userId);
+          if (!user) {
+            throw new APIError('UNAUTHORIZED', { message: 'User not found' });
+          }
+          const session = await ctx.context.internalAdapter.createSession(String(user.id), false);
+          if (!session) {
+            throw new APIError('UNAUTHORIZED', { message: 'Failed to create session' });
+          }
+          await setSessionCookie(ctx, { session, user });
+          return ctx.json({ user: user as unknown as PairSessionUser });
+        },
+      ),
+    },
+  };
+}
+
 export type AuthUser = {
   id: number | string;
   email: string;
@@ -88,6 +143,12 @@ export interface AuthInstance {
       returnHeaders: true;
     }) => Promise<AuthResponseWithHeaders<SignInResponse>>;
     signOut: (args: { headers: Headers; returnHeaders: true }) => Promise<AuthResponseWithHeaders<{ success: boolean }>>;
+    /** Server-only: mint standard session for userId (QR pair redeem). */
+    cb8EstablishPairSession: (args: {
+      body: { userId: string };
+      headers?: Headers;
+      returnHeaders: true;
+    }) => Promise<AuthResponseWithHeaders<{ user: PairSessionUser }>>;
   };
 }
 
@@ -162,6 +223,8 @@ function buildAuth(database: Pool, secret: string) {
       database: { generateId: false },
       cookiePrefix: 'cb8',
     },
+    // Keep the pairing session-minter off the network. See PAIR_SESSION_PATH.
+    disabledPaths: [PAIR_SESSION_PATH],
     // Our SQLite schema uses snake_case columns (user_id, expires_at, …)
     // but better-auth's default adapter issues queries with camelCase field
     // names verbatim. Without these mappings, every session / account
@@ -262,6 +325,7 @@ function buildAuth(database: Pool, secret: string) {
         minUsernameLength: 3,
         maxUsernameLength: 30,
       }),
+      pairSessionPlugin(),
     ],
     // Per-request trusted origins: always include the configured static set,
     // and additionally trust the Origin header when it points at the same
